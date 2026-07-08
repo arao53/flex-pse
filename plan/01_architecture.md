@@ -305,7 +305,7 @@ physical subclasses add the flow↔energy relationship and any bounds.
 | Class | Base | Notes |
 |---|---|---|
 | `Pump` | `SISOBlock` | `electrical_power[t] = energy_intensity * flow_vol[t]` |
-| `StorageTank` | `SISOBlock` | holdup `V[t+1] = V[t] + dt*(in − out)`; level bounds; initial level is rolling-horizon state. **Logic/unit-commitment constraints disabled** (a tank has no on/off status) |
+| `Tank` | `SISOBlock` | holdup `V[t+1] = V[t] + dt*(in − out)`; level bounds; initial level is rolling-horizon state. **Logic/unit-commitment constraints disabled** (a tank has no on/off status) |
 | `Separator` | `SIDOBlock` | one feed split into two product streams (replaces the old `Electrolyzer` name) |
 | `Exchanger` | `DIDOBlock` | two inlet / two outlet streams exchanging mass/energy |
 | `ElectrolysisSeparator` | `Separator` | electrolysis modeled as a separation; exercises `thermal_power` |
@@ -315,14 +315,8 @@ physical subclasses add the flow↔energy relationship and any bounds.
 | `BatteryModel` | `OpsBlockData` (no fluid ports) | SOC dynamics, charge/discharge power + efficiency, capacity as fixable design var; optional mutually-exclusive charge/discharge binary; first-class `external_dispatch` (DERMS, §3.6) |
 | `ConstantEnergyIntensityModel` | `SISOBlock` | generic "energy factor × flow" unit — the default building block for anything without a bespoke physical topology (e.g. a whole plant modeled as a single surrogate, as in the api-freeze script's `svcw.plant`) |
 
-The general pattern (the platform's core idea): a unit model defines flows
-in/out (its topology) and energy draw; **every unit defaults to a constant
-energy-intensity relationship**. FlexParameterize (§5) is what upgrades that
-relationship to a fitted linear/multiconvex/NN/ARIMA form — by swapping the
-unit's energy-relationship constraint in place, not by introducing a different
-unit class. Same base topology, controllable functional form. `StorageTank`
-inheriting `SISOBlock` but *disabling* logic constraints is the canonical
-example of a physical subclass turning off a base capability.
+The general pattern (the platform's core idea): a unit model defines flows in/out (its topology) and energy draw; **every unit defaults to a constant energy-intensity relationship**. FlexParameterize (§5) is what upgrades that relationship to a fitted linear/multiconvex/NN/ARIMA form — by swapping the
+unit's energy-relationship constraint in place, not by introducing a different unit class. These are usually energy relationships but can also modify the input/output relationship for quantities like biogas production, salt and permeate flux, etc., not by introducing a different unit class. Same base topology, controllable functional form. `Tank` inheriting `SISOBlock` but *disabling* logic constraints is the canonical example of a physical subclass turning off a base capability.
 
 ### 3.5 logic layer (`flexops/logic/`) — customizable unit commitment
 
@@ -506,7 +500,7 @@ Pipeline: **tabular data → tag aliasing → sufficiency validation → regress
 | R3 | Pydantic v2 is the schema authority; the whole model+run builds from one version-controlled config (canonical format YAML, JSON accepted); no essential config lives only in code | config-driven-everything requirement; files are both human-tracked and written programmatically by external modules |
 | R4 | FlexCosting subclasses IDAES costing and delegates tariff cost to EECO — convex-relaxed cost in the objective + post-solve EECO evaluation for reporting; owns CapEx, modes, clear naming; DR is containers-only in v0 | reuse the lab's maintained cost engine; the objective is a relaxed proxy so the reported cost must be re-evaluated post-hoc |
 | R5 | Solver facade never transforms models silently | relaxed-MIP schedules sent to a real plant are a correctness hazard; explicit SolveSequence instead |
-| R6 | Unit models organized by IO topology (SISO/SIDO/DIDO bases) then specialized physically; `Electrolyzer`→`Separator` etc. | one place for ports/mass-balance per topology; physical zoo (RO skid, combustor, exchangers) reuses it; StorageTank = SISO with logic disabled |
+| R6 | Unit models organized by IO topology (SISO/SIDO/DIDO bases) then specialized physically; `Electrolyzer`→`Separator` etc. | one place for ports/mass-balance per topology; physical zoo (RO skid, combustor, exchangers) reuses it; Tank = SISO with logic disabled |
 | R7 | `NetworkBlock` composes plants; `PlantBlock` composes units | explicit two-level composition instead of overloading PlantBlock to nest into itself |
 | R8 | Customizable unit commitment: `status` base, optional startup/shutdown/dwell/delays/conditional; parallel-train degeneracy detection is model-level, not per-unit | a unit can't see its siblings, so symmetry-breaking lives above the unit; everything else is opt-in per unit |
 | R9 | Never report the solver objective as the user-facing result; report EECO's post-solve cost; battery/all units accept external (DERMS) dispatch commands | objective is relaxed/scalarized; third-party-controlled assets need their dispatch fixed from outside |
