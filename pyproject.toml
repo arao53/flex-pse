@@ -15,7 +15,7 @@ dependencies = ["pyomo", "idaes-pse", "pandas", "pydantic>=2", "eeco"]
 # M06); verify the exact PyPI distribution name when pinning in M01.
 
 [project.optional-dependencies]
-parameterize = ["scikit-learn", "pandas>=2.0"]
+parameterize = ["pandas>=2.0"]
 solvers = ["highspy"]
 dev = ["pytest", "pytest-cov", "import-linter", "ruff", "black", "pre-commit", "diff-cover"]
 docs = ["sphinx", "myst-nb", "furo"]
@@ -42,4 +42,4 @@ pydocstyle.convention = "google"
 
 [tool.black]
 line-length = 88
-target-version = ["py311", "py315"]
+target-version = ["py311", "py314"]

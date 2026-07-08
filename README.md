@@ -16,5 +16,4 @@ pre-commit install --hook-type pre-push
 ## Development
 
 This project is built milestone-by-milestone. See [`PLAN.md`](PLAN.md) for the
-roadmap and [`plan/00_conventions.md`](plan/00_conventions.md) for the rules
-that govern every change.
+roadmap and [`plan/00_conventions.md`](plan/00_conventions.md) for the rules that govern every change.
