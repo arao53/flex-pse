@@ -29,7 +29,19 @@ class FlexConfigError(FlexError):
     that fails validation, a Pyomo ``ConfigDict`` entry given an invalid value,
     or a config referencing a field/unit/tag that does not exist. The message
     must name the exact field that was wrong and what value would fix it.
+
+    Attributes:
+        field: Dotted name of the config field, unit, or tag that was invalid,
+            if known.
+        value: The invalid value that was supplied, if known.
     """
+
+    def __init__(
+        self, message: str, *, field: str | None = None, value: object = None
+    ) -> None:
+        super().__init__(message)
+        self.field = field
+        self.value = value
 
 
 class FlexSolverError(FlexError):
@@ -40,7 +52,23 @@ class FlexSolverError(FlexError):
     classification (e.g. NLP vs. MILP), or the solver process itself errors
     out before returning a status. The message must tell the user which
     solver was requested and how to install or substitute one.
+
+    Attributes:
+        solver: Name of the solver that was requested or attempted, if known.
+        problem_class: Name of the problem classification (e.g. ``"MINLP"``)
+            the solver needed to support, if known.
     """
+
+    def __init__(
+        self,
+        message: str,
+        *,
+        solver: str | None = None,
+        problem_class: str | None = None,
+    ) -> None:
+        super().__init__(message)
+        self.solver = solver
+        self.problem_class = problem_class
 
 
 class FlexDataError(FlexError):
@@ -50,4 +78,11 @@ class FlexDataError(FlexError):
     missing historian tags, insufficient data to regress a parameter, or data
     that fails a sufficiency/validity check. The message must name the missing
     or invalid data and what additional data or action would resolve it.
+
+    Attributes:
+        field: Name of the missing or invalid historian tag or field, if known.
     """
+
+    def __init__(self, message: str, *, field: str | None = None) -> None:
+        super().__init__(message)
+        self.field = field
