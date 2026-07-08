@@ -73,6 +73,8 @@ instance/
 
 # Sphinx documentation
 docs/_build/
+# autosummary-generated stub pages (regenerated at build time)
+docs/reference/**/generated/
 
 # PyBuilder
 .pybuilder/

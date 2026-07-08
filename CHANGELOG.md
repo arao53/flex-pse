@@ -9,3 +9,4 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 - Project scaffold: four-package `src/` layout (`flexcore`, `flexops`, `flexparameterize`, `flexschedule`), import-linter DAG contract, pytest tier markers with collection-time enforcement, and CI skeleton (M00).
 - Exception hierarchy; pinned idaes-pse/pyomo versions (M01).
+- Added `TimeBlock`: the discrete-time substrate (ordered integer time set, unit-carrying `dt`, datetime↔index utilities, rolling-horizon initial-state registry and window metadata); minimal Sphinx docs skeleton (M02).
