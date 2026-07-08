@@ -56,6 +56,7 @@ ordered milestones. Your job in any one session is exactly **one milestone**.
   ambiguous), make the smallest choice consistent with
   `plan/01_architecture.md`, and record the deviation prominently in your PR
   description under a "Deviations from spec" heading.
+- **Code simplicity.**: Write minimal code to accomplish the task such that a human can easily parse and verify all functionality. Keep all APIs simple and explicit. Do not use redundant functions or classes within this codebase. 
 
 ## Definition of Done (applies to every milestone, in addition to the
 milestone-specific checklist)
