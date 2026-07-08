@@ -14,7 +14,7 @@ on an essentially empty codebase.
 ## Read first
 
 - `plan/00_conventions.md` §1 (repository layout — build exactly this tree), §3
-  (style & tooling), §6 (import discipline — the three contracts), §7 (testing summary)
+  (style & tooling), §6 (import discipline — the layered contract), §7 (testing summary)
 - `plan/02_testing_and_ci.md` §1 (test tiers + collection-time enforcement — the
   conftest hook you implement here), §3 (ci.yml spec)
 - `plan/01_architecture.md` §1 (package dependency DAG)
@@ -24,19 +24,19 @@ on an essentially empty codebase.
 ## Files to create or modify
 
 - `pyproject.toml` — packaging, deps, extras, pytest/ruff/black config
-- `.importlinter` — the three import contracts from conventions §6
+- `.importlinter` — the layered import contract from conventions §6
 - `.pre-commit-config.yaml` — black, ruff, import-linter hooks
 - `conftest.py` (repo root) — tier-marker enforcement + unit-tier solver-block stub
 - `CHANGELOG.md` — Keep a Changelog format, empty "Unreleased" section
-- `LICENSE` — BSD-3-Clause text
+- `LICENSE` — Apache License 2.0
 - `README.md` — stub: one-paragraph description, install command, plan link
 - `CLAUDE.md` — agent rules copied from conventions §9 + the generic
   Definition-of-Done checklist that all milestone DoDs reference
 - `.github/workflows/ci.yml` — lint job (fast fail) + test matrix
 - `src/flexcore/`, `src/flexops/`, `src/flexparameterize/`, `src/flexschedule/` —
   full package tree from conventions §1 as **directories with empty
-  `__init__.py` files only** (subpackages: `flexcore/{compat,solvers,config,tests}`,
-  `flexops/{core,unit_models,logic,costing,properties,testing,tests}`,
+  `__init__.py` files only** (subpackages: `flexcore/{solvers,config,tests}`,
+  `flexops/{core,unit_models,logic,costing,costing/unit_models,properties,testing,tests}`,
   `flexparameterize/{regression,tests}`, `flexschedule/tests`). Do NOT create the
   future module files (`pump.py`, `tariff.py`, …) — later milestones own those.
   Also create `src/flexcore/config/schemas/` with a `.gitkeep`.
@@ -57,10 +57,11 @@ name = "flex-pse"
 version = "0.0.1.dev0"
 description = "Industrial energy-flexibility optimization platform"
 requires-python = ">=3.10"
-license = { text = "BSD-3-Clause" }
+license = { text = "Apache 2.0" }
 dependencies = ["pyomo", "idaes-pse", "pandas", "pydantic>=2", "eeco"]
-# eeco = external tariff/DR/cost engine, used only by flexops.costing (M06).
-# Verify the exact PyPI distribution name and pin a minimum version in M06.
+# pyomo / idaes-pse / eeco are left unpinned here; M01 pins them to exact tested
+# versions (decision R12). eeco = external tariff/DR/cost engine (flexops.costing,
+# M06); verify the exact PyPI distribution name when pinning in M01.
 
 [project.optional-dependencies]
 parameterize = ["scikit-learn", "pandas>=2.0"]
@@ -75,13 +76,13 @@ where = ["src"]
 Register pytest markers under `[tool.pytest.ini_options]` with
 `addopts = "--strict-markers"` (unknown markers become errors) and
 `testpaths = ["src"]`. Markers, each with a one-line description:
-`unit`, `component`, `integration`, `upstream`, `needs_highs`, `needs_ipopt`,
+`unit`, `component`, `integration`, `needs_highs`, `needs_ipopt`,
 `needs_cbc`, `needs_gurobi` (exact names — `plan/02_testing_and_ci.md` §1).
 Pin the ruff rule set in `[tool.ruff.lint]` — `select = ["E", "F", "I", "B", "UP"]`
 with google pydocstyle convention configured but `D` rules deferred
 (implementer's choice); black with default settings.
 
-### .importlinter (all three contracts from conventions §6)
+### .importlinter (the layered contract from conventions §6)
 
 ```ini
 [importlinter]
@@ -90,7 +91,6 @@ root_packages =
     flexops
     flexparameterize
     flexschedule
-include_external_packages = True
 
 [importlinter:contract:layers]
 name = flexcore <- flexops <- {flexparameterize, flexschedule}
@@ -99,46 +99,19 @@ layers =
     flexparameterize | flexschedule
     flexops
     flexcore
-
-[importlinter:contract:idaes-compat-only]
-name = idaes only imported inside flexcore.compat
-type = forbidden
-source_modules =
-    flexcore
-    flexops
-    flexparameterize
-    flexschedule
-forbidden_modules = idaes
-ignore_imports =
-    flexcore.compat.idaes -> idaes
-
-[importlinter:contract:eeco-costing-only]
-name = eeco only imported inside flexops.costing
-type = forbidden
-source_modules =
-    flexcore
-    flexops
-    flexparameterize
-    flexschedule
-forbidden_modules = eeco
-ignore_imports =
-    flexops.costing.tariff -> eeco
 ```
 
-(The `eeco` package is not installed-and-imported until M06; the contract is
-harmless before then since nothing imports `eeco` yet. It is declared now so the
-localization rule is in force the moment M06 adds the first import.)
-
-Note: `ignore_imports` matching is exact-module; when M01 adds real imports like
-`idaes.core`, extend the ignore list (or use wildcard support in the installed
-import-linter version). Verify `lint-imports` passes both now and with a
-deliberate violation (temporarily add `import idaes` to `flexops/__init__.py`,
-confirm failure, revert).
+Note: this is the **only** import-linter contract. There are no
+dependency-isolation (`forbidden`) contracts — `idaes`/`pyomo`/`eeco` are
+imported directly at point of use and pinned in `pyproject.toml` (decision R12).
+Verify `lint-imports` passes both now and with a deliberate violation
+(temporarily add `import flexops` to `flexcore/__init__.py`, confirm the layered
+contract fails, revert).
 
 ### Root conftest.py (the CI-credit guard, 02_testing_and_ci.md §1)
 
 ```python
-TIER_MARKERS = {"unit", "component", "integration", "upstream"}
+TIER_MARKERS = {"unit", "component", "integration"}
 
 def pytest_collection_modifyitems(config, items):
     errors = []
@@ -147,7 +120,7 @@ def pytest_collection_modifyitems(config, items):
         if len(tiers) != 1:
             errors.append(
                 f"{item.nodeid}: needs exactly one tier marker "
-                f"(unit/component/integration/upstream), got {sorted(tiers) or 'none'}"
+                f"(unit/component/integration), got {sorted(tiers) or 'none'}"
             )
     if errors:
         raise pytest.UsageError("\n".join(errors))
@@ -201,7 +174,7 @@ def test_import():
 
 1. **Forgetting `__init__.py` in a subpackage** — setuptools find will silently
    skip it and a later milestone's import fails confusingly. After scaffolding,
-   run `python -c "import flexops.core, flexcore.compat, flexops.costing"` etc.
+   run `python -c "import flexops.core, flexcore.solvers, flexops.costing"` etc.
 2. **The marker-enforcement hook killing pytester's inner runs** — the meta-test
    spawns an inner pytest session; make sure the inner session gets its own
    conftest (see Tests) and the outer hook only sees outer items.
@@ -210,10 +183,8 @@ def test_import():
    errors collection.
 4. **Putting tests in a top-level `tests/`** — tests are colocated under
    `src/<pkg>/tests/` (conventions §1) so they move with a future repo split.
-5. **`include_external_packages` omitted in .importlinter** — the idaes/pyomo
-   forbidden contracts silently never match external packages without it.
-6. **Version pinning zeal** — do not pin pyomo/idaes-pse versions here; M01's
-   `versions.py` owns supported ranges.
+5. **Pinning happens in M01, not here** — M00 lists `pyomo`/`idaes-pse`/`eeco` as
+   unpinned dependencies; M01 pins them to exact tested versions (decision R12).
 
 ## Tests
 
@@ -251,7 +222,7 @@ All in this milestone are `@pytest.mark.unit`:
 - [ ] `pytest -m unit` green (4 placeholder import tests + 2 meta-tests pass)
 - [ ] `pytest -m "unit or component"` green (component set is empty; collection succeeds)
 - [ ] A deliberately unmarked test fails collection with an actionable message
-- [ ] `lint-imports` passes; a deliberate `import idaes` in `flexops` makes it fail (verified, then reverted)
+- [ ] `lint-imports` passes; a deliberate `import flexops` in `flexcore` makes the layered contract fail (verified, then reverted)
 - [ ] `pre-commit run --all-files` clean; pre-push hook installed and runs the full suite
 - [ ] CI green on the PR: lint, fast-tests matrix (py310, py312), and integration jobs all required
 - [ ] CHANGELOG, LICENSE, README, CLAUDE.md present

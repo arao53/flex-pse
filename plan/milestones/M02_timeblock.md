@@ -26,8 +26,6 @@ models constantly.
 
 - `src/flexops/core/time_block.py` — `TimeBlock` / `TimeBlockData`
 - `src/flexops/__init__.py` — export `TimeBlock` (API-freeze script uses `fo.TimeBlock`)
-- `src/flexcore/compat/idaes.py` — add `ProcessBlockData` to the whitelist
-  (comment: `# flexops.core.time_block (M02)`) per conventions §6
 - `src/flexops/tests/core/test_time_block.py` (+ `__init__.py` for `tests/core/`)
 - `docs/` — minimal Sphinx skeleton + first reference/explanation pages (see
   Documentation tasks)
@@ -40,7 +38,7 @@ PlantBlock does not exist yet; TimeBlock is a `declare_process_block_class`
 block usable directly on a `ConcreteModel`:
 
 ```python
-from flexcore.compat.idaes import declare_process_block_class, ProcessBlockData
+from idaes.core import declare_process_block_class, ProcessBlockData
 
 @declare_process_block_class("TimeBlock")
 class TimeBlockData(ProcessBlockData):
@@ -177,8 +175,8 @@ hand-written difference equations, never `dynamic=True`/DAE) and cross-links
 6. **Keyword-only:** block construction goes through CONFIG so positional abuse
    is unlikely, but do not add any positional parameters to helper methods'
    public signatures that take dates.
-7. **`ProcessBlockData` not in compat yet** — add it to the whitelist in this
-   milestone; do not import `idaes.core` directly in `time_block.py`.
+7. **Import `idaes.core` directly** in `time_block.py` (decision R12 — no compat
+   layer to route through).
 
 ## Tests
 
@@ -252,7 +250,7 @@ on a fresh `ConcreteModel`, 1 day at 15 min (96 points).
 - [ ] Over-one-calendar-month span rejected (calendar-based, not 30 days);
       exactly-one-month (incl. February) builds; non-divisible `dt` rejected;
       coarse (1-hr) and fine (1-min) resolutions build
-- [ ] `ProcessBlockData` added to compat whitelist with consumer comment; `lint-imports` passes
+- [ ] `ProcessBlockData` imported directly from `idaes.core`; `lint-imports` passes
 - [ ] `TimeBlock` importable as `flexops.TimeBlock`
 - [ ] `NB_EXECUTION_MODE=off sphinx-build -W --keep-going -b html docs docs/_build` passes locally with the new pages
 - [ ] Explanation page states R2; module/class docstrings Google-style with `doc=` on every component

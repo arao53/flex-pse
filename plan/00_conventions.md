@@ -11,12 +11,11 @@ flex-pse/
 ├── .importlinter                   # import DAG contracts (see §6)
 ├── .pre-commit-config.yaml         # black, ruff, import-linter
 ├── CHANGELOG.md                    # Keep a Changelog format, "Unreleased" section on top
-├── LICENSE                         # BSD-3-Clause
-├── .github/workflows/              # ci.yml, nightly.yml, upstream-canary.yml, docs.yml
+├── LICENSE                         # Apache 2.0
+├── .github/workflows/              # ci.yml, nightly.yml, docs.yml
 ├── src/
 │   ├── flexcore/                   # shared substrate — never imports the other three
-│   │   ├── compat/                 # idaes.py (primary idaes import point), pyomo_ext.py,
-│   │   │                           # versions.py, tracked.py (allowlist of tracked idaes/pyomo tool imports)
+│   │   ├── exceptions.py           # FlexError hierarchy (no compat layer — idaes/pyomo imported directly, R12)
 │   │   ├── solvers/                # classify.py, registry.py, facade.py
 │   │   ├── config/                 # schema.py (pydantic: Unit/Plant/Network/Time/Costing/ModelConfig),
 │   │   │                           # io.py (YAML canonical), schemas/ (exported JSON Schema)
@@ -31,7 +30,8 @@ flex-pse/
 │   │   │                           # constant_intensity.py
 │   │   ├── logic/                  # status.py, startup_shutdown.py, dwell.py, delays.py,
 │   │   │                           # conditional.py, degeneracy.py (model-level), bypass.py
-│   │   ├── costing/                # flex_costing.py, unit_costing.py, tariff.py (sole eeco import point)
+│   │   ├── costing/                # flex_costing.py, tariff.py (eeco calls collected here by convention)
+│   │   │   └── unit_models/        # unit_costing.py (per-unit costing methods, one costing package per unit)
 │   │   ├── design/                 # multi-period design wrapper (M16): DesignModel, merge_for_design
 │   │   ├── properties/             # simple_aqueous.py
 │   │   ├── testing/                # harness.py (public, shipped)
@@ -58,9 +58,9 @@ When a package is later split into its own repo, its tests move with it.
 - Pyomo model components follow IDAES conventions where one exists
   (`flow_vol`, `pressure`, `temperature`), and this project's energy
   nomenclature otherwise (see `plan/01_architecture.md` §4):
-  - `electrical_work[t]` — electrical draw of a unit, **kW** (a power, despite
+  - `electrical_power[t]` — electrical draw of a unit, **kW** (a power, despite
     the name — the name is the project-wide standard).
-  - `thermal_work[t]` — thermal/gas-driven duty of a unit, **kW**.
+  - `thermal_power[t]` — thermal/gas-driven duty of a unit, **kW**.
   - Never introduce variables named bare `power`, `energy`, or `work`.
 - Time index is always named `t`, iterating `time_block.time_points`.
 - User-facing constructors take **keyword arguments only** (enforce with `*` in
@@ -71,7 +71,7 @@ When a package is later split into its own repo, its tests move with it.
 
 ## 3. Style & tooling
 
-- Python ≥ 3.10. Target the oldest supported version in code (no 3.11+-only syntax).
+- Python ≥ 3.11. Target the oldest supported version in code.
 - Format with **black** (default settings); lint with **ruff** (rule set pinned in
   `pyproject.toml`; do not inline-silence rules without a comment explaining why).
 - **Type hints on all public functions, methods, and class attributes.** Internal
@@ -90,19 +90,34 @@ When a package is later split into its own repo, its tests move with it.
 
 ## 4. Configuration rules
 
-Two config layers, never mixed:
+There are **exactly two** kinds of config, and they never mix. Pick by asking
+one question: *does this get saved to a file, or is it only used while building
+a model in memory?*
 
-1. **Persisted config** (files a user or FlexParameterize writes): pydantic v2
-   models in `flexcore.config.schema`, serialized to JSON with `schema_version`.
-   Every field has a description (they render into docs). Validation errors must
-   name the field path.
-2. **Runtime construction options** (what a Pyomo/IDAES block takes when built):
-   declared Pyomo `ConfigDict` entries with `description=` set. Populated *from*
-   a validated pydantic model at the boundary when construction is config-driven.
+| | **Layer 1 — Persisted config** | **Layer 2 — Runtime options** |
+|---|---|---|
+| **What it is** | Settings saved to disk and reloaded later | Options a Pyomo/IDAES block takes when it's built |
+| **Who writes it** | A user, or FlexParameterize | Our code, at the moment of construction |
+| **How it's defined** | pydantic v2 model in `flexcore.config.schema` | Pyomo `ConfigDict` entries |
+| **How it's stored** | JSON file, tagged with a `schema_version` | Never stored — lives only in memory |
+| **Every field must have** | a `description` (these render into the docs) | `description=` set on the entry |
 
-Never persist a ConfigDict. Never pass a raw dict through more than one call
-without validating it. No opaque nested JSON à la "FlowsNPC config files" —
-if you can't document a key, it doesn't exist.
+**How they connect:** persisted config is the source of truth. When a model is
+built from config, a validated Layer-1 pydantic object is read *once* at the
+boundary and used to populate the Layer-2 `ConfigDict`. Data flows one way:
+`JSON file → pydantic (validate) → ConfigDict → built model`.
+
+**Four hard rules:**
+
+1. **Never save a `ConfigDict` to disk.** Runtime options are throwaway; only
+   Layer-1 pydantic models get persisted.
+2. **Never pass a raw dict through more than one function call without
+   validating it.** Turn it into a pydantic model (or `ConfigDict`) first.
+3. **Every config key must be documented.** If you can't write a description for
+   a key, it doesn't get to exist. No opaque nested JSON blobs (the old
+   "FlowsNPC config files" are the anti-pattern to avoid).
+4. **Validation errors must name the exact field** that was wrong (e.g. the
+   field path), so a user knows what to fix.
 
 ## 5. Commits & PRs
 
@@ -118,24 +133,14 @@ Enforced by import-linter in CI (`.importlinter`):
 
 - Layered contract: `flexcore` ← `flexops` ← {`flexparameterize`, `flexschedule`}.
   Lower layers never import higher ones; `flexparameterize` and `flexschedule`
-  are mutually independent.
-- Forbidden contract: `idaes` may only be imported inside `flexcore.compat`,
-  **plus a tracked allowlist** (`flexcore/compat/tracked.py`) for IDAES/Pyomo
-  debugging, diagnostic, and construction/evaluation tools that are impractical
-  to re-export (architecture §2.1). The contract's `ignore_imports` is generated
-  from that allowlist; adding an entry is a deliberate, reviewed act. The intent
-  is to **track and limit** these imports, not to forbid them absolutely.
-- Forbidden contract: the external `eeco` package may only be imported inside
-  `flexops.costing` (ideally only `flexops/costing/tariff.py`). EECO is under
-  active upstream rework; localizing its import point keeps that churn to one
-  place, exactly like the `idaes`-in-`compat` rule.
+  are mutually independent. **This is the only import-linter contract.**
 
-If you need something from IDAES that `flexcore.compat.idaes` does not re-export,
-first try adding it to the compat whitelist (with a comment naming the consumer).
-Only if it is a debugging/diagnostic/construction tool that does not fit the
-whitelist, add a tracked-allowlist entry in `flexcore/compat/tracked.py` with a
-reason — never import `idaes` directly and untracked. Likewise, route `eeco`
-calls through `flexops/costing/tariff.py`.
+**No dependency-isolation contracts.** Per decision R12 (architecture §2.1)
+`idaes.*`, `pyomo.*`, and `eeco` are imported **directly at point of use** — no
+compat layer, no whitelist, no forbidden contract. The project pins exact tested
+versions of these in `pyproject.toml` and maintainers bump them manually. By
+convention `eeco` calls are collected in `flexops/costing/tariff.py` (a thin
+wrapper), but this is not enforced.
 
 ## 7. Testing (summary — full spec in plan/02_testing_and_ci.md)
 

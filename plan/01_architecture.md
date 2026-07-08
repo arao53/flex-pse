@@ -49,35 +49,34 @@ later.
 
 ## 2. flexcore
 
-### 2.1 compat — the upstream-survival layer
+### 2.1 upstream dependencies — pin, don't isolate
 
-- `flexcore/compat/idaes.py` is the **only** file in the codebase that imports
-  `idaes.*`. It re-exports a whitelist: `declare_process_block_class`,
-  `UnitModelBlockData`, `FlowsheetBlockData`, `FlowsheetCostingBlockData`,
-  `PhysicalParameterBlock`, `StateBlock`/`StateBlockData`, initialization and
-  scaling helpers, `assert_units_consistent` conveniences. Each re-export has a
-  one-line comment naming the first consumer.
-- `flexcore/compat/pyomo_ext.py` — anything from Pyomo beyond its stable public
-  API (private-ish utilities, `pyunits` re-export point).
-- `flexcore/compat/versions.py` — `SUPPORTED_PYOMO`, `SUPPORTED_IDAES` version
-  ranges plus `check_environment()` which raises an actionable error listing
-  installed vs. supported versions.
-- When IDAES or Pyomo breaks us, the fix lands in these files; the weekly
-  upstream-canary CI job (M01) is what tells us the week it happens.
-- **Tracked exceptions — debugging & diagnostic tooling.** IDAES and Pyomo ship
-  genuinely useful model-debugging tools (`idaes.core.util.model_statistics`,
-  `DiagnosticsToolbox`, degeneracy hunter, scaling reports) and some unit
-  operations that help at the construction/evaluation phases. Forcing every one
-  of these through the compat whitelist is not always practical. Policy:
-  - Re-export through `flexcore/compat/idaes.py` **where practical** (preferred).
-  - Where not, direct `idaes`/`pyomo` use is allowed **only from an explicit
-    tracked allowlist** kept in `flexcore/compat/tracked.py` — a list of
-    `(module_glob, symbol, reason)` entries that the import-linter contract's
-    `ignore_imports` is generated from. Adding an entry is a deliberate, reviewed
-    act; the goal is to *track and limit*, not to leak.
-  - A lint (M01) **reports** (does not silently allow) any `idaes`/`pyomo`
-    diagnostic import outside compat that is not on the allowlist, so usage stays
-    visible and bounded.
+**Decision R12: pin exact `idaes-pse`/`pyomo` versions; import both directly; no
+compat/isolation layer.** There is no re-export gateway, no whitelist, no
+tracked-import allowlist, no `check_environment()`, and no upstream canary.
+`idaes.*` and `pyomo.*` are imported **directly at point of use** throughout the
+codebase.
+
+A re-export whitelist only ever guards against *mechanical import-path drift* —
+the cheapest upstream failure to fix, at a bureaucratic cost that exceeds the
+saving. The *expensive* failure, semantic/behavioral drift, is invisible to a
+re-export layer anyway. So the isolation layer buys little. (WaterTAP, the
+closest sibling project, imports `idaes.*` directly throughout.) Instead we
+follow a standard dependency-management cycle:
+
+- `pyproject.toml` **pins `idaes-pse` and `pyomo` to exact tested versions**
+  (`==`), defaulting to the latest release at implementation time (M00 sets
+  them).
+- Maintainers **bump the pins manually**, roughly quarterly, only after the full
+  test suite passes against the newer versions. If manual bumps ever become
+  hectic, revisit automating a compatibility check then — not before.
+- `pyunits` is imported directly (`from pyomo.environ import units as pyunits`);
+  the canonical energy names live in `flexcore.nomenclature` (§4).
+
+The external **EECO** package (§2.4) is handled the same way: no import-linter
+whitelist or isolation contract — `eeco` is imported directly where it is used
+(naturally, that is `flexops/costing/`), its version is pinned in
+`pyproject.toml`, and a maintainer bumps it manually.
 
 ### 2.2 solvers — capability-detecting facade
 
@@ -168,15 +167,16 @@ EECO is used in **two** ways (§3.6):
 
 Consequences for this architecture:
 
-- There is no `flexcore.econ` module. `flexcore` holds only `compat`,
-  `solvers`, and `config`.
+- There is no `flexcore.econ` module. `flexcore` holds only `solvers` and
+  `config`.
 - The EECO integration lives under **`flexops.costing`** (see §3.6): a thin
   interface layer (`flexops/costing/tariff.py`) plus the `FlexCosting` block.
   The user's tariff files are in **EECO's own format**, handed to EECO's loaders.
-- **EECO is imported only within `flexops.costing`** (an import-linter forbidden
-  contract, mirroring the `idaes`-in-`compat` rule). EECO is under active rework;
-  localizing its import point keeps that churn to one package. Route all `eeco.*`
-  calls through `flexops/costing/tariff.py`.
+- **`eeco` is imported directly where used** — no import-linter whitelist or
+  isolation contract (decision R12). Keeping EECO calls collected in
+  `flexops/costing/tariff.py` is a sensible design convention (one thin wrapper
+  for a package under active rework), not an enforced boundary. EECO's version is
+  pinned in `pyproject.toml` and a maintainer bumps it manually.
 - **Demand response (DR) is not implemented in v0** — provide **containers only**
   (a `DRConfig` slot in `CostingConfig`, a `dr` placeholder on `FlexCosting`, and
   a no-op DR hook) so the wiring exists and turning DR on later is additive.
@@ -223,7 +223,7 @@ plus a property package. ProcessBlock comes from IDAES as-is (no custom version)
 The base class of every flex-pse unit model.
 
 - **R1 (decision): inherit IDAES `UnitModelBlockData`** (via
-  `declare_process_block_class`, imported through compat), because it provides
+  `declare_process_block_class`, imported directly from `idaes.core`), because it provides
   ConfigBlock machinery, Port construction, the initialization framework, and
   the costing registration hooks FlexCosting needs — and keeps the "WaterTAP
   ecosystem" positioning honest. **Do NOT use IDAES ControlVolumes**: they drag
@@ -239,7 +239,7 @@ The base class of every flex-pse unit model.
     draw into plant/costing aggregation.
   - Registries are dataclasses in `flexops/core/registration.py`
     (`IORegistry`), discoverable model-wide via `iter_io_registry(model)`.
-- Base-class-provided `electrical_work[t]` / `thermal_work[t]` Vars (kW),
+- Base-class-provided `electrical_power[t]` / `thermal_power[t]` Vars (kW),
   created when the unit declares it consumes that energy kind.
 - Config flags every unit inherits: `relaxation` policy for its discrete
   structure, a `unit_commitment` sub-config (§3.5), `allow_bypass`, and an
@@ -264,7 +264,7 @@ Two levels of composition, mirroring the "collection of" pattern:
 
 - **`PlantBlock`** (`plant_block.py`) = a collection of **unit** blocks (a
   facility). Holds arcs between its units and aggregates
-  `total_electrical_work[t]`, `total_thermal_work[t]`, and chemical-use
+  `total_electrical_power[t]`, `total_thermal_power[t]`, and chemical-use
   Expressions over its registered child units.
 - **`NetworkBlock`** (`network_block.py`) = a composition of **plant** blocks
   (a portfolio / campus / multi-facility system), with inter-plant arcs and
@@ -283,7 +283,7 @@ Two levels of composition, mirroring the "collection of" pattern:
   parent via the IDAES `flowsheet()` chain). Auto-discovery of a unique
   root-model TimeBlock may be a convenience default, but explicit must work
   first. Aggregation composes: `NetworkBlock` totals = sum of child
-  `PlantBlock` totals = sum of their unit `electrical_work`/`thermal_work`.
+  `PlantBlock` totals = sum of their unit `electrical_power`/`thermal_power`.
 
 ### 3.4 Unit model library — IO-topology base classes + a physical zoo
 
@@ -304,11 +304,11 @@ physical subclasses add the flow↔energy relationship and any bounds.
 
 | Class | Base | Notes |
 |---|---|---|
-| `Pump` | `SISOBlock` | `electrical_work[t] = energy_intensity * flow_vol[t]` |
+| `Pump` | `SISOBlock` | `electrical_power[t] = energy_intensity * flow_vol[t]` |
 | `StorageTank` | `SISOBlock` | holdup `V[t+1] = V[t] + dt*(in − out)`; level bounds; initial level is rolling-horizon state. **Logic/unit-commitment constraints disabled** (a tank has no on/off status) |
 | `Separator` | `SIDOBlock` | one feed split into two product streams (replaces the old `Electrolyzer` name) |
 | `Exchanger` | `DIDOBlock` | two inlet / two outlet streams exchanging mass/energy |
-| `ElectrolysisSeparator` | `Separator` | electrolysis modeled as a separation; exercises `thermal_work` |
+| `ElectrolysisSeparator` | `Separator` | electrolysis modeled as a separation; exercises `thermal_power` |
 | `ElectrolysisExchanger` | `Exchanger` | electrolysis with two coupled streams |
 | `ReverseOsmosisSkid` | `Separator` | RO skid: feed → permeate + concentrate |
 | `Combustor` | `Separator` | combustion as a separation of products |
@@ -377,13 +377,13 @@ A composable unit-commitment (UC) formulation, applied per unit via its
     names, mapping totals into IDAES aggregates (`aggregate_operating_cost`,
     `aggregate_capital_cost`) — objective and downstream code never touch raw
     EECO internals (§2.4).
-  - **Aggregation.** Sum registered units' `electrical_work[t]` (and
-    `thermal_work[t]`) into the kW series EECO consumes, in-model and as the
+  - **Aggregation.** Sum registered units' `electrical_power[t]` (and
+    `thermal_power[t]`) into the kW series EECO consumes, in-model and as the
     post-solve numpy array.
   - **CapEx + modes** (below).
 - EECO receives a **kW series**; kWh conversion is EECO's. Keep the LP/relaxable
-  character (epigraph demand charges, not `max()`). Only `flexops.costing`
-  imports `eeco`; route calls through `flexops/costing/tariff.py`.
+  character (epigraph demand charges, not `max()`). By convention `eeco` calls
+  are collected in `flexops/costing/tariff.py` (not enforced — see §2.4).
 - **CapEx + operations vs. single-model design.** Sizing Vars (battery capacity,
   tank volume) are created by units and registered with costing; constructor
   values initialize them. `set_operations_mode()` fixes all sizing vars
@@ -416,8 +416,8 @@ A composable unit-commitment (UC) formulation, applied per unit via its
 
 | Name | Meaning | Units | Consumer |
 |---|---|---|---|
-| `electrical_work[t]` | unit-level electrical draw (motor/drive) | kW | FlexCosting → EECO (energy + demand charges + DR); plant aggregation |
-| `thermal_work[t]` | unit-level heat/gas-driven duty | kW | separate thermal aggregation/costing |
+| `electrical_power[t]` | unit-level electrical draw (motor/drive) | kW | FlexCosting → EECO (energy + demand charges + DR); plant aggregation |
+| `thermal_power[t]` | unit-level heat/gas-driven duty | kW | separate thermal aggregation/costing |
 
 Rules: every unit model registers at least one of these via `register_energy`.
 FlexCosting aggregates them into a kW time series and hands it to EECO both
@@ -512,3 +512,4 @@ Pipeline: **tabular data → tag aliasing → sufficiency validation → regress
 | R9 | Never report the solver objective as the user-facing result; report EECO's post-solve cost; battery/all units accept external (DERMS) dispatch commands | objective is relaxed/scalarized; third-party-controlled assets need their dispatch fixed from outside |
 | R10 | FlexParameterize↔FlexOps coupling is two-way at runtime (FlexOps builds containers; FlexParameterize fixes params and swaps a unit's energy-relationship constraint in place) though the import stays one-way | matches how parameterization actually works; keeps the layering + serialized-config split seam intact |
 | R11 | Every unit defaults to a constant energy-intensity relationship; there is no separate `LinearRegressionModel` unit class — FlexParameterize upgrades a unit's relationship via an in-place constraint swap, reusing the same registered IO variables | keeps the unit library small and one generic class (`ConstantEnergyIntensityModel`) covers anything without a bespoke physical topology; regression sophistication is FlexParameterize's concern, not FlexOps' |
+| R12 | No compat/isolation layer or import-linter whitelist for `idaes`/`pyomo`/`eeco`; import them directly, pin exact versions in `pyproject.toml`, and have maintainers bump them manually (~quarterly) after tests pass | a re-export whitelist guards only cheap import-path drift, not semantic drift; standard pinning is simpler and the sibling project (WaterTAP) imports `idaes` directly. Collecting `eeco` calls in `costing/tariff.py` stays a convention, not an enforced boundary |

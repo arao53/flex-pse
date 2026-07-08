@@ -16,8 +16,7 @@ ordered milestones. Your job in any one session is exactly **one milestone**.
 
 ## Operating rules
 
-- **One milestone per branch/PR.** Never mix milestones. Never build ahead of
-  the current milestone "while you're in there."
+- **One milestone per branch/PR.** Never mix milestones. Never build ahead of the current milestone "while you're in there."
 - **Do not refactor previous milestones** unless the current milestone file
   explicitly instructs it.
 - **Work test-first.** The milestone's Tests section is the behavioral spec:
@@ -42,8 +41,11 @@ ordered milestones. Your job in any one session is exactly **one milestone**.
 - **Docs are part of Done.** If you added or changed public API, update the
   corresponding `docs/reference/` page and confirm `sphinx-build -W` passes
   (notebook execution off): `sphinx-build -W --keep-going -b html docs docs/_build`.
-- **Never import `idaes.*` outside `src/flexcore/compat/`.** Import what you
-  need from `flexcore.compat` instead. import-linter enforces this.
+- **Import `idaes.*`/`pyomo.*`/`eeco` directly at point of use.** There is no
+  compat layer or dependency-isolation contract (decision R12); exact versions
+  are pinned in `pyproject.toml` and bumped manually. By convention `eeco` calls
+  are collected in `flexops/costing/tariff.py`, but that is not enforced. The
+  only import-linter contract is the package DAG below.
 - **Respect the package DAG**: `flexcore` imports no sibling packages;
   `flexops` imports only `flexcore`; `flexparameterize` and `flexschedule`
   import `flexcore`/`flexops` but never each other.

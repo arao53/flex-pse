@@ -61,8 +61,8 @@ Three tools in one repository (monorepo now, engineered to split later):
 | **FlexSchedule** | `flexschedule` | Scheduling engine: rolling-horizon driver, relaxation/warm-start solve sequences, set-point extraction and smoothing for plant control. |
 
 Plus a shared substrate, `flexcore`, holding everything the three tools have in
-common: the IDAES/Pyomo compatibility layer, the solver facade, and the
-versioned config schema (the contract between FlexParameterize and FlexOps).
+common: the exception hierarchy, the solver facade, and the versioned config
+schema (the contract between FlexParameterize and FlexOps).
 Tariffs, demand response (including DR constraints), and time-indexed operating
 costs come from the external **EECO** package (`eeco` on PyPI); `flexops.costing`
 wraps it — flex-pse does not build its own tariff/cost engine.
@@ -111,9 +111,10 @@ The reasons are recorded as decisions R2 in `plan/01_architecture.md`.)
 
 ### Design constraints (why the architecture looks the way it does)
 
-- **Survive Pyomo/IDAES upstream churn.** All `idaes.*` imports live in one file
-  (`flexcore/compat/idaes.py`), enforced by import-linter; a weekly CI job tests
-  against `pyomo@main` and `idaes-pse@main` and files an issue when they break us.
+- **Manage Pyomo/IDAES upstream churn by pinning, not isolating** (decision R12).
+  `idaes.*`/`pyomo.*` are imported directly at point of use; `pyproject.toml`
+  pins exact tested versions and maintainers bump them manually (~quarterly)
+  after the suite passes. No compat layer, no upstream canary.
 - **Testable in blocks, test-first, fully gated.** Development is test-driven:
   each milestone's tests are written before its implementation, and the full
   suite runs locally before every push. Every test carries exactly one tier
@@ -144,9 +145,9 @@ Dependencies are strict unless marked ∥ (parallelizable with the previous one)
 | # | Title | Effort | Depends on | Headline deliverable |
 |---|---|---|---|---|
 | [M00](plan/milestones/M00_repo_scaffold.md) | Repo scaffold & CI skeleton | 1 | — | `pip install -e ".[dev]"` works; PR CI green; import-linter contracts active |
-| [M01](plan/milestones/M01_compat_layer.md) | Compat layer & upstream canary | 1–2 | M00 | Sole IDAES import point; weekly canary workflow |
+| [M01](plan/milestones/M01_compat_layer.md) | Exception hierarchy & dependency pinning | 0.5 | M00 | `FlexError` hierarchy; pinned idaes-pse/pyomo versions |
 | [M02](plan/milestones/M02_timeblock.md) | TimeBlock | 2 | M01 | Discrete ≤1-month substrate, any resolution (15-min default); horizon builds < 1 s |
-| [M03](plan/milestones/M03_properties_opsblock.md) | SimpleAqueousFlow + OpsBlock base | 2–3 | M02 | IO/parameter registration; `electrical_work`/`thermal_work`; external-dispatch + UC config hooks; config schema (`UnitConfig`…`ModelConfig`) |
+| [M03](plan/milestones/M03_properties_opsblock.md) | SimpleAqueousFlow + OpsBlock base | 2–3 | M02 | IO/parameter registration; `electrical_power`/`thermal_power`; external-dispatch + UC config hooks; config schema (`UnitConfig`…`ModelConfig`) |
 | [M04](plan/milestones/M04_harness_pump_tank.md) | Test harness + SISO base + Pump + StorageTank | 2–3 | M03 | Public `UnitModelTestHarness`; `SISOBlock`; Pump; StorageTank (logic disabled) |
 | [M05](plan/milestones/M05_solver_facade.md) | Solver abstraction | 2 | M00 ∥ | Model classifier + capability-matrix `get_solver()` |
 | [M06](plan/milestones/M06_eeco_integration.md) | EECO integration (tariffs & costs) | 2 | M00 ∥ | `eeco` wired; tariff-signal helpers; in-objective cost + post-solve numpy evaluator; DR containers |

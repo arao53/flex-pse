@@ -1,10 +1,11 @@
 # 02 — Testing & CI
 
-The testing architecture exists to keep three promises: (1) every block of the
-platform is testable in isolation, (2) **every test in the repository runs and
-passes before any merge** — the packages are open source, CI minutes on public
-repos are free, so nothing is deferred to after-merge schedules — and
-(3) upstream Pyomo/IDAES breakage is detected by us, weekly, not by users.
+The testing architecture exists to keep two promises: (1) every block of the
+platform is testable in isolation, and (2) **every test in the repository runs
+and passes before any merge** — the packages are open source, CI minutes on
+public repos are free, so nothing is deferred to after-merge schedules. Upstream
+Pyomo/IDAES versions are pinned (decision R12) and bumped manually; there is no
+upstream canary.
 
 Development is **test-driven**: tests are written before the implementation,
 and the full suite runs locally before every push (see §1a).
@@ -24,8 +25,7 @@ separate job so the fast signal reports first.
 | `unit` | < 1 s each | **No** | TDD inner loop; PR CI |
 | `component` | < 30 s each | HiGHS / IPOPT only | pre-commit loop; PR CI |
 | `integration` | minutes | any | pre-push loop; PR CI (dedicated job) |
-| `upstream` | — | — | upstream-canary only (tests that poke IDAES internals directly) |
-| `needs_highs`, `needs_ipopt`, `needs_cbc`, `needs_gurobi` | — | availability skip | any |
+| `needs_highs`, `needs_ipopt`, `needs_cbc`, `needs_gurobi`, `needs_scip` | — | availability skip | any |
 
 - `unit` tests verify construction, units-consistency, registration, constraint
   *bodies* (evaluate expressions at fixed variable values and compare by hand —
@@ -40,11 +40,8 @@ separate job so the fast signal reports first.
 `conftest.py` at the repo root implements `pytest_collection_modifyitems`:
 
 - **Fail collection** if any test carries zero or more than one tier marker.
-- Under `-m unit`, install a fixture that monkeypatches solver invocation
-  (`flexcore.solvers.facade`) to raise immediately, and block sockets — a "quick
-  test" that secretly solves a 30-day MIP fails instantly instead of melting CI.
-- Solver-availability markers consult `flexcore.solvers.registry` and `skip`
-  (not fail) when the solver is absent.
+- Under `-m unit`, automatically attach a guard fixture to every collected test that (a) monkeypatches the solver facade (`flexcore.solvers.facade`) so any attempt to invoke a solver raises immediately, and (b) blocks socket access so no test can reach the network. A `unit` test that secretly builds and solves a 30-day MIP then fails instantly and loudly — at the offending call — instead of silently turning the sub-second loop into a multi-minute one. The guard is installed *only* under `-m unit`; `component` and `integration` runs are meant to solve, so they leave it off. 
+- Solver-availability markers consult `flexcore.solvers.registry` and `skip` (not fail) when the solver is absent.
 
 This is the mechanical guard against the failure mode where heavy tests
 accumulate in the fast lane until the sub-second TDD loop stops being
@@ -76,10 +73,10 @@ For each unit of work inside a milestone:
    pytest -q          # ALL tiers: unit + component + integration
    ```
 
-   Never push with a red or skipped-for-convenience suite. A pre-push git hook
-   running exactly these commands is installed by `pre-commit install
-   --hook-type pre-push` (configured in M00); do not bypass it with
-   `--no-verify` except for WIP branches that no one will merge.
+   Always push with a fully green suite — every test passing, none skipped for
+   convenience. A pre-push git hook running exactly these commands is installed
+   by `pre-commit install --hook-type pre-push` (configured in M00); always let
+   it run, reserving `--no-verify` for WIP branches that no one will merge.
 
 Milestone Definition-of-Done checklists assume this ordering: a milestone whose
 tests were written after the implementation is not done, it is untested code
@@ -108,7 +105,7 @@ class UnitModelTestHarness:
     # test_build             — constructs without exception; ports exist
     # test_units_consistent  — assert_units_consistent(unit)
     # test_io_registration   — registered IO vars exist, have units, are time-indexed
-    # test_energy_naming     — electrical_work/thermal_work present iff declared
+    # test_energy_naming     — electrical_power/thermal_power present iff declared
     # test_dof               — degrees of freedom == expected_dof after fixing declared inputs
     # test_solve             — (component tier) get_solver() solve is optimal
     # test_solution          — solved values match expected_solution within tolerance
@@ -132,7 +129,7 @@ reports first, but nothing is deferred:
 - Job 2 `fast-tests` (needs lint): matrix `py310 / py312` ×
   `pytest -m "unit or component" --cov --cov-report=xml` — reports in a few
   minutes.
-- Job 3 `integration` (needs lint, runs in parallel with Job 2):
+- Job 3 `integration` (needs lint):
   `pytest -m integration --cov --cov-report=xml`. If this job's wall clock
   grows past ~30 min, shard it with a pytest-split matrix — do not demote tests
   out of the gate.
@@ -159,14 +156,6 @@ catch flakes and environment drift.
   with a green PR history means flakiness or environment drift — fix the flake,
   don't relax the gate.
 
-### upstream-canary.yml
-
-- Trigger: cron (weekly) + manual dispatch. **Never a PR gate.**
-- `pip install git+https://github.com/Pyomo/pyomo git+https://github.com/IDAES/idaes-pse`,
-  then `pytest -m "unit or component or upstream"`.
-- On failure: `actions/github-script` opens (or updates) a pinned
-  "Upstream breakage" issue with the failing versions and log excerpt.
-
 ### docs.yml
 
 - PR: `sphinx-build -W --keep-going` **with notebook execution on** (myst-nb
@@ -180,8 +169,7 @@ catch flakes and environment drift.
 - PR gate: diff coverage (85 % changed lines) over all tiers combined.
 - Per-subpackage totals reported on every PR run; M15 turns on gentle
   per-subpackage floors as required checks.
-- Excluded from denominators: `flexops/testing/` and `flexcore/compat/`
-  (pure re-export lines carry `# pragma: no cover`).
+- Excluded from denominators: `flexops/testing/` (harness code).
 
 ## 5. Test-writing guidance for implementers
 
