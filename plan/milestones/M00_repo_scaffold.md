@@ -38,7 +38,7 @@ on an essentially empty codebase.
   `__init__.py` files only** (subpackages: `flexcore/{solvers,config,tests}`,
   `flexops/{core,unit_models,logic,costing,costing/unit_models,properties,testing,tests}`,
   `flexparameterize/{regression,tests}`, `flexschedule/tests`). Do NOT create the
-  future module files (`pump.py`, `tariff.py`, …) — later milestones own those.
+  future module files (`pump.py`, `opex.py`, …) — later milestones own those.
   Also create `src/flexcore/config/schemas/` with a `.gitkeep`.
 - One placeholder test per package: `src/<pkg>/tests/test_import.py`
 - `src/flexcore/tests/test_marker_enforcement.py` — meta-test via pytester

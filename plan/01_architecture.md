@@ -170,11 +170,11 @@ Consequences for this architecture:
 - There is no `flexcore.econ` module. `flexcore` holds only `solvers` and
   `config`.
 - The EECO integration lives under **`flexops.costing`** (see §3.6): a thin
-  interface layer (`flexops/costing/tariff.py`) plus the `FlexCosting` block.
+  interface layer (`flexops/costing/opex.py`) plus the `FlexCosting` block.
   The user's tariff files are in **EECO's own format**, handed to EECO's loaders.
 - **`eeco` is imported directly where used** — no import-linter whitelist or
   isolation contract (decision R12). Keeping EECO calls collected in
-  `flexops/costing/tariff.py` is a sensible design convention (one thin wrapper
+  `flexops/costing/opex.py` is a sensible design convention (one thin wrapper
   for a package under active rework), not an enforced boundary. EECO's version is
   pinned in `pyproject.toml` and a maintainer bumps it manually.
 - **Demand response (DR) is not implemented in v0** — provide **containers only**
@@ -186,7 +186,7 @@ Consequences for this architecture:
 - Clear naming: `FlexCosting` re-exposes EECO's cost quantities under stable
   flex-pse names and maps totals into IDAES aggregates (§3.6).
 - Tariff **signal helpers** for writing logic/heuristic constraints (peak
-  detection, windowing, price gradient) live in `flexops/costing/tariff.py` and
+  detection, windowing, price gradient) live in `flexops/costing/opex.py` and
   return plain pandas objects aligned to `time_block.datetime_index`. Prefer
   EECO's own helpers; wrap only what EECO lacks.
 
@@ -383,7 +383,7 @@ A composable unit-commitment (UC) formulation, applied per unit via its
   - **CapEx + modes** (below).
 - EECO receives a **kW series**; kWh conversion is EECO's. Keep the LP/relaxable
   character (epigraph demand charges, not `max()`). By convention `eeco` calls
-  are collected in `flexops/costing/tariff.py` (not enforced — see §2.4).
+  are collected in `flexops/costing/opex.py` (not enforced — see §2.4).
 - **CapEx + operations vs. single-model design.** Sizing Vars (battery capacity,
   tank volume) are created by units and registered with costing; constructor
   values initialize them. `set_operations_mode()` fixes all sizing vars
@@ -512,4 +512,4 @@ Pipeline: **tabular data → tag aliasing → sufficiency validation → regress
 | R9 | Never report the solver objective as the user-facing result; report EECO's post-solve cost; battery/all units accept external (DERMS) dispatch commands | objective is relaxed/scalarized; third-party-controlled assets need their dispatch fixed from outside |
 | R10 | FlexParameterize↔FlexOps coupling is two-way at runtime (FlexOps builds containers; FlexParameterize fixes params and swaps a unit's energy-relationship constraint in place) though the import stays one-way | matches how parameterization actually works; keeps the layering + serialized-config split seam intact |
 | R11 | Every unit defaults to a constant energy-intensity relationship; there is no separate `LinearRegressionModel` unit class — FlexParameterize upgrades a unit's relationship via an in-place constraint swap, reusing the same registered IO variables | keeps the unit library small and one generic class (`ConstantEnergyIntensityModel`) covers anything without a bespoke physical topology; regression sophistication is FlexParameterize's concern, not FlexOps' |
-| R12 | No compat/isolation layer or import-linter whitelist for `idaes`/`pyomo`/`eeco`; import them directly, pin exact versions in `pyproject.toml`, and have maintainers bump them manually (~quarterly) after tests pass | a re-export whitelist guards only cheap import-path drift, not semantic drift; standard pinning is simpler and the sibling project (WaterTAP) imports `idaes` directly. Collecting `eeco` calls in `costing/tariff.py` stays a convention, not an enforced boundary |
+| R12 | No compat/isolation layer or import-linter whitelist for `idaes`/`pyomo`/`eeco`; import them directly, pin exact versions in `pyproject.toml`, and have maintainers bump them manually (~quarterly) after tests pass | a re-export whitelist guards only cheap import-path drift, not semantic drift; standard pinning is simpler and the sibling project (WaterTAP) imports `idaes` directly. Collecting `eeco` calls in `costing/opex.py` stays a convention, not an enforced boundary |
