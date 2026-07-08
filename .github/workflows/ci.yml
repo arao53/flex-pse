@@ -1,0 +1,64 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.15"
+      - run: pip install -e ".[dev]"
+      - run: ruff check .
+      - run: black --check .
+      - run: lint-imports
+
+  fast-tests:
+    name: fast-tests (py${{ matrix.python-version }})
+    needs: lint
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.15"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e ".[dev]"
+      # TODO(M04/M05): install/cache HiGHS (highspy) and IPOPT (idaes get-extensions)
+      # once component-tier tests start solving models.
+      - run: pytest -m "unit or component" --cov --cov-report=xml
+
+  integration:
+    name: integration
+    needs: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.15"
+      - run: pip install -e ".[dev]"
+      # The integration set is empty until M12; pytest exits 5 (no tests
+      # collected) in that case, which is treated as success so this job is
+      # structural from day one rather than aspirational.
+      - run: |
+          set +e
+          pytest -m integration --cov --cov-report=xml
+          exit_code=$?
+          set -e
+          if [ "$exit_code" -eq 5 ]; then
+            exit 0
+          fi
+          exit "$exit_code"

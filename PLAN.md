@@ -36,9 +36,9 @@ If you are the implementer (human or agent), for each work session:
 6. A milestone is done when every item in its **Definition of Done** checklist
    passes, including tests and docs. "Code complete, tests later" is never done —
    and neither is "tests written after the code."
+7. .gitkeep files are added to empty directories. Remove .gitkeep files when a file is placed in that directory and add it to the associated commit. 
 
-One milestone ≈ one pull request ≈ 1–3 junior-engineer days ≈ one focused
-agent session.
+One milestone ≈ one pull request ≈ 1–3 junior-engineer days ≈ one focused agent session.
 
 ### Reading order for a brand-new contributor
 

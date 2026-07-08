@@ -1,0 +1,45 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "flex-pse"
+version = "0.0.1.dev0"
+description = "Industrial energy-flexibility optimization platform"
+readme = "README.md"
+requires-python = ">=3.11"
+license = { text = "Apache 2.0" }
+dependencies = ["pyomo", "idaes-pse", "pandas", "pydantic>=2", "eeco"]
+# pyomo / idaes-pse / eeco are left unpinned here; M01 pins them to exact tested
+# versions (decision R12). eeco = external tariff/DR/cost engine (flexops.costing,
+# M06); verify the exact PyPI distribution name when pinning in M01.
+
+[project.optional-dependencies]
+parameterize = ["scikit-learn", "pandas>=2.0"]
+solvers = ["highspy"]
+dev = ["pytest", "pytest-cov", "import-linter", "ruff", "black", "pre-commit", "diff-cover"]
+docs = ["sphinx", "myst-nb", "furo"]
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.pytest.ini_options]
+addopts = "--strict-markers"
+testpaths = ["src"]
+markers = [
+    "unit: fast (<1s), no-solver tests; the TDD inner loop",
+    "component: solves small models (<=~100 timesteps) with HiGHS/IPOPT only",
+    "integration: end-to-end tests (minutes); any solver",
+    "needs_highs: skip if the HiGHS solver is unavailable",
+    "needs_ipopt: skip if the IPOPT solver is unavailable",
+    "needs_cbc: skip if the CBC solver is unavailable",
+    "needs_gurobi: skip if the Gurobi solver is unavailable",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B", "UP"]
+pydocstyle.convention = "google"
+
+[tool.black]
+line-length = 88
+target-version = ["py311", "py315"]

@@ -1,0 +1,25 @@
+repos:
+  - repo: https://github.com/psf/black
+    rev: 26.5.1
+    hooks:
+      - id: black
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.8.0
+    hooks:
+      - id: ruff
+
+  - repo: local
+    hooks:
+      - id: import-linter
+        name: import-linter
+        entry: lint-imports
+        language: system
+        pass_filenames: false
+
+      - id: pre-push-suite
+        name: full test suite (pre-push)
+        entry: bash -c 'ruff check . && black --check . && lint-imports && pytest -q'
+        language: system
+        pass_filenames: false
+        stages: [pre-push]
