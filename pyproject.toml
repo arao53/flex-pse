@@ -15,6 +15,7 @@ dependencies = [
     "eeco==0.2.1",
     "pandas",
     "pydantic>=2",
+    "python-dateutil",
 ]
 # Dependency policy (decision R12, plan/01_architecture.md §2.1): idaes-pse,
 # pyomo, and eeco are pinned to exact tested versions on purpose, with no
