@@ -44,7 +44,7 @@ ordered milestones. Your job in any one session is exactly **one milestone**.
 - **Import `idaes.*`/`pyomo.*`/`eeco` directly at point of use.** There is no
   compat layer or dependency-isolation contract (decision R12); exact versions
   are pinned in `pyproject.toml` and bumped manually. By convention `eeco` calls
-  are collected in `flexops/costing/tariff.py`, but that is not enforced. The
+  are collected in `flexops/costing/opex.py`, but that is not enforced. The
   only import-linter contract is the package DAG below.
 - **Respect the package DAG**: `flexcore` imports no sibling packages;
   `flexops` imports only `flexcore`; `flexparameterize` and `flexschedule`

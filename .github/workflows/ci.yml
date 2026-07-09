@@ -1,0 +1,132 @@
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    name: lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install -e ".[dev]"
+      - run: ruff check .
+      - run: black --check .
+      - run: lint-imports
+
+  fast-tests:
+    name: fast-tests (${{ matrix.os }}, py${{ matrix.python-version }})
+    needs: lint
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # Full Python matrix on Linux; a single representative version on
+        # macOS/Windows to confirm cross-OS behavior without paying the 10x
+        # (macOS) / 2x (Windows) runner-minute multipliers on every version.
+        include:
+          - { os: ubuntu-latest, python-version: "3.11" }
+          - { os: ubuntu-latest, python-version: "3.12" }
+          - { os: ubuntu-latest, python-version: "3.13" }
+          - { os: ubuntu-latest, python-version: "3.14" }
+          - { os: macos-latest, python-version: "3.13" }
+          - { os: windows-latest, python-version: "3.13" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e ".[dev]"
+      # TODO(M04/M05): install/cache HiGHS (highspy) and IPOPT (idaes get-extensions)
+      # once component-tier tests start solving models.
+      - run: pytest -m "unit or component" --cov --cov-report=xml
+
+  # TODO: uncomment this job once the repo is public. It installs from the
+  # remote git ref (git+https://…), which only works unauthenticated on a public
+  # repo; until then it would fail on every PR. When re-enabling, verify the
+  # git+@refs/pull/<n>/merge fetch resolves on a real PR (untested to date).
+  # standard-install:
+  #   name: standard-install (py${{ matrix.python-version }})
+  #   needs: lint
+  #   runs-on: ubuntu-latest
+  #   strategy:
+  #     matrix:
+  #       python-version: ["3.11", "3.12", "3.13","3.14"]
+  #   steps:
+  #     # No checkout: install from the remote git ref exactly as an end user
+  #     # would (pip install "git+<repo>@<ref>"), unlike the editable `-e` used by
+  #     # the dev/test jobs. This builds and installs over the network, so a
+  #     # subpackage missing from setuptools package discovery (a dropped
+  #     # __init__.py, M00 Pitfall #1) or a needed file left uncommitted is
+  #     # silently absent from the distribution and fails here rather than in a
+  #     # later milestone. On pull_request, github.ref is the PR merge ref
+  #     # (refs/pull/<n>/merge), which pip fetches directly.
+  #     - uses: actions/setup-python@v5
+  #       with:
+  #         python-version: ${{ matrix.python-version }}
+  #     - run: pip install "git+${{ format('{0}/{1}@{2}', github.server_url, github.repository, github.ref) }}"
+  #     # Run from a scratch dir (no repo checkout exists) so the *installed*
+  #     # package is exercised.
+  #     - working-directory: ${{ runner.temp }}
+  #       run: |
+  #         python - <<'PY'
+  #         import importlib
+  #
+  #         modules = [
+  #             "flexcore", "flexcore.config", "flexcore.solvers",
+  #             "flexops", "flexops.core", "flexops.unit_models",
+  #             "flexops.unit_models.base", "flexops.logic", "flexops.costing",
+  #             "flexops.costing.unit_models", "flexops.design",
+  #             "flexops.properties", "flexops.testing",
+  #             "flexparameterize", "flexparameterize.regression",
+  #             "flexschedule",
+  #         ]
+  #         for name in modules:
+  #             importlib.import_module(name)
+  #         print(f"OK: imported {len(modules)} modules from the installed wheel")
+  #         PY
+
+  integration:
+    name: integration (${{ matrix.os }}, py${{ matrix.python-version }})
+    needs: lint
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        # See fast-tests: full Python matrix on Linux, one version elsewhere.
+        include:
+          - { os: ubuntu-latest, python-version: "3.11" }
+          - { os: ubuntu-latest, python-version: "3.12" }
+          - { os: ubuntu-latest, python-version: "3.13" }
+          - { os: ubuntu-latest, python-version: "3.14" }
+          - { os: macos-latest, python-version: "3.13" }
+          - { os: windows-latest, python-version: "3.13" }
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install -e ".[dev]"
+      # The integration set is empty until M12; pytest exits 5 (no tests
+      # collected) in that case, which is treated as success so this job is
+      # structural from day one rather than aspirational. `shell: bash` forces
+      # Git Bash on the Windows runner so this script is identical on all OSes.
+      - shell: bash
+        run: |
+          set +e
+          pytest -m integration --cov --cov-report=xml
+          exit_code=$?
+          set -e
+          if [ "$exit_code" -eq 5 ]; then
+            exit 0
+          fi
+          exit "$exit_code"

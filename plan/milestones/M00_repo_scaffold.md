@@ -8,8 +8,10 @@ Stand up the repository skeleton so that every later milestone drops code into a
 structure that already enforces the rules: the four-package src layout, the
 import-linter DAG, pytest tier markers with collection-time enforcement, and a
 green PR CI pipeline. Nothing here contains domain logic — the deliverable is
-that `pip install -e ".[dev]"`, `pytest -m unit`, `lint-imports`, and CI all pass
-on an essentially empty codebase.
+that the environment install (`conda` from `environment.yml` for the Python
+version + `pyomo`/`idaes-pse`, then `uv pip install -e ".[dev]"` for the rest —
+see README), `pytest -m unit`, `lint-imports`, and CI all pass on an essentially
+empty codebase.
 
 ## Read first
 
@@ -24,6 +26,8 @@ on an essentially empty codebase.
 ## Files to create or modify
 
 - `pyproject.toml` — packaging, deps, extras, pytest/ruff/black config
+- `environment.yml` — conda environment for the conda-installed stack (Python
+  version, `pyomo`, `idaes-pse`)
 - `.importlinter` — the layered import contract from conventions §6
 - `.pre-commit-config.yaml` — black, ruff, import-linter hooks
 - `conftest.py` (repo root) — tier-marker enforcement + unit-tier solver-block stub
@@ -38,7 +42,7 @@ on an essentially empty codebase.
   `__init__.py` files only** (subpackages: `flexcore/{solvers,config,tests}`,
   `flexops/{core,unit_models,logic,costing,costing/unit_models,properties,testing,tests}`,
   `flexparameterize/{regression,tests}`, `flexschedule/tests`). Do NOT create the
-  future module files (`pump.py`, `tariff.py`, …) — later milestones own those.
+  future module files (`pump.py`, `opex.py`, …) — later milestones own those.
   Also create `src/flexcore/config/schemas/` with a `.gitkeep`.
 - One placeholder test per package: `src/<pkg>/tests/test_import.py`
 - `src/flexcore/tests/test_marker_enforcement.py` — meta-test via pytester
@@ -208,7 +212,9 @@ All in this milestone are `@pytest.mark.unit`:
 ## Documentation tasks
 
 - `README.md` stub: what flex-pse is (one paragraph, lift from PLAN.md §2),
-  `pip install -e ".[dev]"`, pointer to `PLAN.md` and `plan/00_conventions.md`.
+  install instructions (`conda env create -f environment.yml` for the
+  optimization stack, `uv pip install -e ".[dev]"` for the rest), pointer to
+  `PLAN.md` and `plan/00_conventions.md`.
 - `CHANGELOG.md` initialized ("Unreleased" heading; entry: project scaffold).
 - `CLAUDE.md`: conventions §9 agent rules verbatim + a "Generic Definition of
   Done" checklist (all tests green, lint/black/import-linter clean, CHANGELOG
@@ -218,7 +224,7 @@ All in this milestone are `@pytest.mark.unit`:
 
 ## Definition of Done
 
-- [ ] Fresh venv: `pip install -e ".[dev]"` succeeds on Python 3.10 and 3.12
+- [ ] Fresh conda env from `environment.yml` + `uv pip install -e ".[dev]"` succeeds
 - [ ] `pytest -m unit` green (4 placeholder import tests + 2 meta-tests pass)
 - [ ] `pytest -m "unit or component"` green (component set is empty; collection succeeds)
 - [ ] A deliberately unmarked test fails collection with an actionable message

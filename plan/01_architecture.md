@@ -170,11 +170,11 @@ Consequences for this architecture:
 - There is no `flexcore.econ` module. `flexcore` holds only `solvers` and
   `config`.
 - The EECO integration lives under **`flexops.costing`** (see §3.6): a thin
-  interface layer (`flexops/costing/tariff.py`) plus the `FlexCosting` block.
+  interface layer (`flexops/costing/opex.py`) plus the `FlexCosting` block.
   The user's tariff files are in **EECO's own format**, handed to EECO's loaders.
 - **`eeco` is imported directly where used** — no import-linter whitelist or
   isolation contract (decision R12). Keeping EECO calls collected in
-  `flexops/costing/tariff.py` is a sensible design convention (one thin wrapper
+  `flexops/costing/opex.py` is a sensible design convention (one thin wrapper
   for a package under active rework), not an enforced boundary. EECO's version is
   pinned in `pyproject.toml` and a maintainer bumps it manually.
 - **Demand response (DR) is not implemented in v0** — provide **containers only**
@@ -186,7 +186,7 @@ Consequences for this architecture:
 - Clear naming: `FlexCosting` re-exposes EECO's cost quantities under stable
   flex-pse names and maps totals into IDAES aggregates (§3.6).
 - Tariff **signal helpers** for writing logic/heuristic constraints (peak
-  detection, windowing, price gradient) live in `flexops/costing/tariff.py` and
+  detection, windowing, price gradient) live in `flexops/costing/opex.py` and
   return plain pandas objects aligned to `time_block.datetime_index`. Prefer
   EECO's own helpers; wrap only what EECO lacks.
 
@@ -305,7 +305,7 @@ physical subclasses add the flow↔energy relationship and any bounds.
 | Class | Base | Notes |
 |---|---|---|
 | `Pump` | `SISOBlock` | `electrical_power[t] = energy_intensity * flow_vol[t]` |
-| `StorageTank` | `SISOBlock` | holdup `V[t+1] = V[t] + dt*(in − out)`; level bounds; initial level is rolling-horizon state. **Logic/unit-commitment constraints disabled** (a tank has no on/off status) |
+| `Tank` | `SISOBlock` | holdup `V[t+1] = V[t] + dt*(in − out)`; level bounds; initial level is rolling-horizon state. **Logic/unit-commitment constraints disabled** (a tank has no on/off status) |
 | `Separator` | `SIDOBlock` | one feed split into two product streams (replaces the old `Electrolyzer` name) |
 | `Exchanger` | `DIDOBlock` | two inlet / two outlet streams exchanging mass/energy |
 | `ElectrolysisSeparator` | `Separator` | electrolysis modeled as a separation; exercises `thermal_power` |
@@ -315,14 +315,8 @@ physical subclasses add the flow↔energy relationship and any bounds.
 | `BatteryModel` | `OpsBlockData` (no fluid ports) | SOC dynamics, charge/discharge power + efficiency, capacity as fixable design var; optional mutually-exclusive charge/discharge binary; first-class `external_dispatch` (DERMS, §3.6) |
 | `ConstantEnergyIntensityModel` | `SISOBlock` | generic "energy factor × flow" unit — the default building block for anything without a bespoke physical topology (e.g. a whole plant modeled as a single surrogate, as in the api-freeze script's `svcw.plant`) |
 
-The general pattern (the platform's core idea): a unit model defines flows
-in/out (its topology) and energy draw; **every unit defaults to a constant
-energy-intensity relationship**. FlexParameterize (§5) is what upgrades that
-relationship to a fitted linear/multiconvex/NN/ARIMA form — by swapping the
-unit's energy-relationship constraint in place, not by introducing a different
-unit class. Same base topology, controllable functional form. `StorageTank`
-inheriting `SISOBlock` but *disabling* logic constraints is the canonical
-example of a physical subclass turning off a base capability.
+The general pattern (the platform's core idea): a unit model defines flows in/out (its topology) and energy draw; **every unit defaults to a constant energy-intensity relationship**. FlexParameterize (§5) is what upgrades that relationship to a fitted linear/multiconvex/NN/ARIMA form — by swapping the
+unit's energy-relationship constraint in place, not by introducing a different unit class. These are usually energy relationships but can also modify the input/output relationship for quantities like biogas production, salt and permeate flux, etc., not by introducing a different unit class. Same base topology, controllable functional form. `Tank` inheriting `SISOBlock` but *disabling* logic constraints is the canonical example of a physical subclass turning off a base capability.
 
 ### 3.5 logic layer (`flexops/logic/`) — customizable unit commitment
 
@@ -383,7 +377,7 @@ A composable unit-commitment (UC) formulation, applied per unit via its
   - **CapEx + modes** (below).
 - EECO receives a **kW series**; kWh conversion is EECO's. Keep the LP/relaxable
   character (epigraph demand charges, not `max()`). By convention `eeco` calls
-  are collected in `flexops/costing/tariff.py` (not enforced — see §2.4).
+  are collected in `flexops/costing/opex.py` (not enforced — see §2.4).
 - **CapEx + operations vs. single-model design.** Sizing Vars (battery capacity,
   tank volume) are created by units and registered with costing; constructor
   values initialize them. `set_operations_mode()` fixes all sizing vars
@@ -506,10 +500,10 @@ Pipeline: **tabular data → tag aliasing → sufficiency validation → regress
 | R3 | Pydantic v2 is the schema authority; the whole model+run builds from one version-controlled config (canonical format YAML, JSON accepted); no essential config lives only in code | config-driven-everything requirement; files are both human-tracked and written programmatically by external modules |
 | R4 | FlexCosting subclasses IDAES costing and delegates tariff cost to EECO — convex-relaxed cost in the objective + post-solve EECO evaluation for reporting; owns CapEx, modes, clear naming; DR is containers-only in v0 | reuse the lab's maintained cost engine; the objective is a relaxed proxy so the reported cost must be re-evaluated post-hoc |
 | R5 | Solver facade never transforms models silently | relaxed-MIP schedules sent to a real plant are a correctness hazard; explicit SolveSequence instead |
-| R6 | Unit models organized by IO topology (SISO/SIDO/DIDO bases) then specialized physically; `Electrolyzer`→`Separator` etc. | one place for ports/mass-balance per topology; physical zoo (RO skid, combustor, exchangers) reuses it; StorageTank = SISO with logic disabled |
+| R6 | Unit models organized by IO topology (SISO/SIDO/DIDO bases) then specialized physically; `Electrolyzer`→`Separator` etc. | one place for ports/mass-balance per topology; physical zoo (RO skid, combustor, exchangers) reuses it; Tank = SISO with logic disabled |
 | R7 | `NetworkBlock` composes plants; `PlantBlock` composes units | explicit two-level composition instead of overloading PlantBlock to nest into itself |
 | R8 | Customizable unit commitment: `status` base, optional startup/shutdown/dwell/delays/conditional; parallel-train degeneracy detection is model-level, not per-unit | a unit can't see its siblings, so symmetry-breaking lives above the unit; everything else is opt-in per unit |
 | R9 | Never report the solver objective as the user-facing result; report EECO's post-solve cost; battery/all units accept external (DERMS) dispatch commands | objective is relaxed/scalarized; third-party-controlled assets need their dispatch fixed from outside |
 | R10 | FlexParameterize↔FlexOps coupling is two-way at runtime (FlexOps builds containers; FlexParameterize fixes params and swaps a unit's energy-relationship constraint in place) though the import stays one-way | matches how parameterization actually works; keeps the layering + serialized-config split seam intact |
 | R11 | Every unit defaults to a constant energy-intensity relationship; there is no separate `LinearRegressionModel` unit class — FlexParameterize upgrades a unit's relationship via an in-place constraint swap, reusing the same registered IO variables | keeps the unit library small and one generic class (`ConstantEnergyIntensityModel`) covers anything without a bespoke physical topology; regression sophistication is FlexParameterize's concern, not FlexOps' |
-| R12 | No compat/isolation layer or import-linter whitelist for `idaes`/`pyomo`/`eeco`; import them directly, pin exact versions in `pyproject.toml`, and have maintainers bump them manually (~quarterly) after tests pass | a re-export whitelist guards only cheap import-path drift, not semantic drift; standard pinning is simpler and the sibling project (WaterTAP) imports `idaes` directly. Collecting `eeco` calls in `costing/tariff.py` stays a convention, not an enforced boundary |
+| R12 | No compat/isolation layer or import-linter whitelist for `idaes`/`pyomo`/`eeco`; import them directly, pin exact versions in `pyproject.toml`, and have maintainers bump them manually (~quarterly) after tests pass | a re-export whitelist guards only cheap import-path drift, not semantic drift; standard pinning is simpler and the sibling project (WaterTAP) imports `idaes` directly. Collecting `eeco` calls in `costing/opex.py` stays a convention, not an enforced boundary |
