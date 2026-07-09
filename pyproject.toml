@@ -43,6 +43,7 @@ markers = [
     "needs_ipopt: skip if the IPOPT solver is unavailable",
     "needs_cbc: skip if the CBC solver is unavailable",
     "needs_gurobi: skip if the Gurobi solver is unavailable",
+    "needs_scip: skip if the SCIP solver is unavailable",
 ]
 
 [tool.ruff.lint]
