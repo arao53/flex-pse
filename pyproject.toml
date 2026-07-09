@@ -9,10 +9,19 @@ description = "Industrial energy-flexibility optimization platform"
 readme = "README.md"
 requires-python = ">=3.11"
 license = { text = "Apache 2.0" }
-dependencies = ["pyomo", "idaes-pse", "pandas", "pydantic>=2", "eeco"]
-# pyomo / idaes-pse / eeco are left unpinned here; M01 pins them to exact tested
-# versions (decision R12). eeco = external tariff/DR/cost engine (flexops.costing,
-# M06); verify the exact PyPI distribution name when pinning in M01.
+dependencies = [
+    "idaes-pse==2.12.0",
+    "pyomo==6.10.1",
+    "eeco==0.2.1",
+    "pandas",
+    "pydantic>=2",
+    "python-dateutil",
+]
+# Dependency policy (decision R12, plan/01_architecture.md §2.1): idaes-pse,
+# pyomo, and eeco are pinned to exact tested versions on purpose, with no
+# compat/isolation layer -- all three are imported directly at point of use.
+# Maintainers bump these pins manually, roughly quarterly, only after the full
+# test suite passes against the newer versions.
 
 [project.optional-dependencies]
 parameterize = ["pandas>=2.0"]
