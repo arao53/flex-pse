@@ -1,0 +1,10 @@
+# conda environment for the optimization stack installed outside uv (see README "Install").
+# Everything else is installed via `uv pip install -e ".[dev]"`.
+# Usage: conda env create -f environment.yml
+name: flex-pse
+channels:
+  - conda-forge
+dependencies:
+  - python=3.13
+  - pyomo
+  - idaes-pse

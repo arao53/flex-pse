@@ -24,12 +24,22 @@ jobs:
       - run: lint-imports
 
   fast-tests:
-    name: fast-tests (py${{ matrix.python-version }})
+    name: fast-tests (${{ matrix.os }}, py${{ matrix.python-version }})
     needs: lint
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13","3.14"]
+        # Full Python matrix on Linux; a single representative version on
+        # macOS/Windows to confirm cross-OS behavior without paying the 10x
+        # (macOS) / 2x (Windows) runner-minute multipliers on every version.
+        include:
+          - { os: ubuntu-latest, python-version: "3.11" }
+          - { os: ubuntu-latest, python-version: "3.12" }
+          - { os: ubuntu-latest, python-version: "3.13" }
+          - { os: ubuntu-latest, python-version: "3.14" }
+          - { os: macos-latest, python-version: "3.13" }
+          - { os: windows-latest, python-version: "3.13" }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -86,12 +96,20 @@ jobs:
   #         PY
 
   integration:
-    name: integration (py${{ matrix.python-version }})
+    name: integration (${{ matrix.os }}, py${{ matrix.python-version }})
     needs: lint
-    runs-on: ubuntu-latest
+    runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
-        python-version: ["3.11", "3.12", "3.13", "3.14"]
+        # See fast-tests: full Python matrix on Linux, one version elsewhere.
+        include:
+          - { os: ubuntu-latest, python-version: "3.11" }
+          - { os: ubuntu-latest, python-version: "3.12" }
+          - { os: ubuntu-latest, python-version: "3.13" }
+          - { os: ubuntu-latest, python-version: "3.14" }
+          - { os: macos-latest, python-version: "3.13" }
+          - { os: windows-latest, python-version: "3.13" }
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -100,8 +118,10 @@ jobs:
       - run: pip install -e ".[dev]"
       # The integration set is empty until M12; pytest exits 5 (no tests
       # collected) in that case, which is treated as success so this job is
-      # structural from day one rather than aspirational.
-      - run: |
+      # structural from day one rather than aspirational. `shell: bash` forces
+      # Git Bash on the Windows runner so this script is identical on all OSes.
+      - shell: bash
+        run: |
           set +e
           pytest -m integration --cov --cov-report=xml
           exit_code=$?
