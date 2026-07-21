@@ -5,6 +5,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- `Pump` gains a `power_relation` config option (`"constant_intensity"`, the default, or `"hydraulic"`): the hydraulic relation adds a `delta_pressure[t]` `Var` tied to the inlet/outlet pressure states by the `pressure_change` equality constraint (`delta_pressure[t] == outlet_state.pressure[t] - inlet_state.pressure[t]`), requiring a `property_package` built with `has_pressure=True`, and excludes `pressure` from the inherited inlet-to-outlet bypass (a pump raises pressure rather than passing it through); both `inlet_state.pressure`/`outlet_state.pressure` are registered as IO inputs (fixed boundary conditions, like dispatch flow). Adds a mutable `efficiency` Var (dimensionless, bounded `[0, 1]`, default 0.7, fixed at build), and builds `power_electrical[t] = delta_pressure[t] * inlet flow / efficiency` in place of the constant-energy-intensity law. Patch to M04's `Pump`, deferred at the time for simplicity.
+
 ### Changed
 
 - Install pipeline is now conda-only: `uv` is removed and `environment.yml` installs the editable package and its Python dependencies (including the pip-only `eeco`) through a `pip:` subsection, so `conda env create -f environment.yml` is the single install command. README, `PLAN.md`, and the M00 milestone spec updated accordingly.
