@@ -25,7 +25,7 @@ dependencies = [
 
 [project.optional-dependencies]
 parameterize = ["pandas>=2.0"]
-dev = ["pytest", "pytest-cov", "import-linter", "ruff", "black", "pre-commit", "diff-cover"]
+dev = ["pytest", "pytest-cov", "import-linter", "ruff", "black", "pre-commit", "diff-cover", "marimo", "matplotlib"]
 docs = ["sphinx", "myst-nb", "furo"]
 
 [tool.setuptools.packages.find]
@@ -45,6 +45,9 @@ markers = [
     "needs_scip: skip if the SCIP solver is unavailable",
 ]
 
+[tool.ruff]
+extend-exclude = ["examples"]
+
 [tool.ruff.lint]
 select = ["E", "F", "I", "B", "UP"]
 pydocstyle.convention = "google"
@@ -52,3 +55,4 @@ pydocstyle.convention = "google"
 [tool.black]
 line-length = 88
 target-version = ["py311"]
+extend-exclude = "examples/"
