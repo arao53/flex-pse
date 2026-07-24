@@ -140,3 +140,69 @@ user-facing cost.
    are rejected at the wrapper boundary with
    :class:`~flexcore.exceptions.FlexDataError`; strip the timezone
    (``index.tz_localize(None)``) before passing an index in.
+
+FlexCosting block
+-----------------
+
+.. currentmodule:: flexops.costing.flex_costing
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   FlexCosting
+   FlexCostingData
+   CostReport
+   OperatingCostBreakdown
+   CapitalCostBreakdown
+
+``FlexCosting`` subclasses IDAES ``FlowsheetCostingBlockData`` and **delegates
+all tariff operating cost to EECO** (decision R4), in two ways: it hands EECO the
+aggregate electrical power (kW) + tariff to build the convex-relaxed in-objective
+cost (:func:`~flexops.costing.add_electricity_cost`), and post-solve calls EECO's
+evaluator (:func:`~flexops.costing.evaluate_cost`) for the reported bill. Its own
+jobs are aggregation, the ``opex``/``capex`` block structure and naming, CapEx +
+modes, and ``report_cost``; it writes no tariff cost math.
+
+Every cost lives in one of two sub-blocks built by
+:meth:`~FlexCostingData.cost_process`:
+
+* **``opex``** holds all operating cost — ``electricity_cost`` and ``fuel_cost``
+  (both from EECO) plus ``fixed_operating_cost`` (a non-tariff facility cost:
+  maintenance/labor/chemicals, from ``CostingConfig.fixed_operating_cost``). Their
+  sum, ``total_operating_cost``, is re-exposed as ``aggregate_operating_cost`` —
+  the operations-mode objective. The fixed operating cost is **distinct** from the
+  tariff's own ``fixed_charge``, which EECO already folds into ``electricity_cost``.
+* **``capex``** is an **empty placeholder** in v0 (``total_capital_cost == 0``,
+  re-exposed as ``aggregate_capital_cost``); later milestones aggregate per-unit
+  capital costs into it.
+
+.. note:: **Capital cost enters the objective only in design mode.**
+
+   The operations-mode objective is ``aggregate_operating_cost`` alone; the
+   design-mode objective is ``total_cost`` (operating **+** capital).
+   :meth:`~FlexCostingData.set_operations_mode` fixes the registered sizing Vars
+   and deactivates their capex constraints;
+   :meth:`~FlexCostingData.set_design_mode` unfixes and activates them. Both are
+   idempotent single-model toggles; in v0 the sizing registry is empty so they are
+   no-ops (wiring for M08/M16). Merging representative months and linking sizing
+   Vars across them is the M16 design wrapper, not this mode.
+
+.. note:: **Reporting rule (R9, §6).**
+
+   :meth:`~FlexCostingData.report_cost` returns a categorized :class:`CostReport`
+   — capital vs. operating, each itemized — recomputed **post-solve**, never read
+   off the solver objective (a relaxed/scalarized proxy). Operating electricity
+   and fuel are EECO post-hoc evaluations on the realized dispatch; fixed is the
+   config constant. In v0 ``fuel``, ``dr_revenue``, and the whole ``capital``
+   breakdown are zero placeholders, so the structure is stable as those features
+   land.
+
+Construction-order invariant
+----------------------------
+
+``FlexCosting`` may be constructed **before any units exist** — the API-freeze
+script builds ``m.costing`` before ``m.svcw.tank`` — because all aggregation and
+the EECO call are deferred to ``cost_process()``, which pulls every unit's
+registered power from the model. Building costing first, last, or between units
+gives the identical result.

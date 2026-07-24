@@ -16,6 +16,12 @@ design and operations optimization.
 
 .. toctree::
    :maxdepth: 2
+   :caption: How-to
+
+   how_to/build_a_plant
+
+.. toctree::
+   :maxdepth: 2
    :caption: Reference
 
    reference/flexcore/index

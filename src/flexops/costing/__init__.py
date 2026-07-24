@@ -5,6 +5,12 @@ it (decision R4, ``plan/01_architecture.md`` §2.4/§3.6). All ``eeco`` calls ar
 collected in :mod:`flexops.costing.opex` (the sole import point, decision R12).
 """
 
+from flexops.costing.flex_costing import (
+    CapitalCostBreakdown,
+    CostReport,
+    FlexCosting,
+    OperatingCostBreakdown,
+)
 from flexops.costing.opex import (
     DRConfig,
     OperatingCostHandles,
@@ -37,4 +43,8 @@ __all__ = [
     "evaluate_cost",
     "evaluate_gas_cost",
     "DRConfig",
+    "FlexCosting",
+    "CostReport",
+    "OperatingCostBreakdown",
+    "CapitalCostBreakdown",
 ]

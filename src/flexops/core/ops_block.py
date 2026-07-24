@@ -101,6 +101,23 @@ def _external_dispatch_domain(value):
     )
 
 
+def _costing_package_domain(value):
+    """ConfigValue domain: accept ``None`` or a costing package (duck-typed).
+
+    A costing package is any object exposing ``register_unit_power`` (the
+    M07 ``FlexCosting`` block). Duck-typed rather than isinstance-checked so
+    ``flexops.core`` need not import ``flexops.costing`` (which imports core).
+    """
+    if value is None or hasattr(value, "register_unit_power"):
+        return value
+    raise FlexConfigError(
+        "costing_package must be a FlexCosting block (an object exposing "
+        f"register_unit_power) or None, not {type(value).__name__}.",
+        field="costing_package",
+        value=value,
+    )
+
+
 def _relaxation_domain(value):
     """ConfigValue domain: coerce to a :class:`RelaxationPolicy`."""
     try:
@@ -178,6 +195,16 @@ class OpsBlockData(UnitModelBlockData):
             "variables (M04). SISOBlock (and its subclasses Pump/StorageTank) "
             "override the base default to True so the flow-topology units are "
             "well-posed out of the box; the base OpsBlock default stays False.",
+        ),
+    )
+    CONFIG.declare(
+        "costing_package",
+        ConfigValue(
+            default=None,
+            domain=_costing_package_domain,
+            description="Optional FlexCosting block (M07) this unit associates "
+            "with: register_power forwards the unit's power draw to it. None for "
+            "standalone units (M04); the forwarding is strictly conditional.",
         ),
     )
 
@@ -308,6 +335,11 @@ class OpsBlockData(UnitModelBlockData):
         self._io_registry.power.append(
             PowerRecord(var=var, name=var.local_name, kind=kind)
         )
+        # Forward the association to a FlexCosting block when one was given
+        # (strictly conditional -- costing-less units, M04, are unaffected).
+        costing_package = self.config.costing_package
+        if costing_package is not None:
+            costing_package.register_unit_power(self, var, kind)
 
     def declare_power(self, kind: nm.PowerKind = nm.PowerKind.ELECTRICAL):
         """Create, register, and return this unit's power-draw Var (kW).
