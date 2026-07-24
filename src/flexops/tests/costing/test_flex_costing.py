@@ -209,6 +209,24 @@ def test_operating_cost_is_eeco_total():
 
 
 @pytest.mark.unit
+def test_operating_costs_carry_tariff_currency():
+    """base_currency and every cost expression carry the tariff's currency (USD)."""
+    m = _pump_tank_costing(fixed_operating_cost=100.0)
+    assert str(m.costing.base_currency) == "USD"  # from the tariff sheet's "$"
+    for cost in (
+        m.costing.opex.electricity_cost,
+        m.costing.opex.fuel_cost,
+        m.costing.opex.fixed_operating_cost,
+        m.costing.opex.total_operating_cost,
+        m.costing.aggregate_operating_cost,
+        m.costing.capex.total_capital_cost,
+        m.costing.aggregate_capital_cost,
+        m.costing.total_cost,
+    ):
+        assert str(pyunits.get_units(cost)) == "USD"
+
+
+@pytest.mark.unit
 def test_capex_block_empty():
     """The capex block is an empty placeholder: total_capital_cost == 0."""
     m = _pump_tank_costing()

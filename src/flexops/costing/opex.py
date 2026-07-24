@@ -88,6 +88,10 @@ _CHARGE_COLUMNS = (
 _ELECTRIC = _eeco_costs.ELECTRIC
 _GAS = _eeco_costs.GAS
 
+# Currency basis: map a tariff charge-``units`` symbol (the numerator before the
+# ``/``) to a Pyomo currency unit name. EECO tariffs are dollar-based.
+_CURRENCY_SYMBOLS = {"$": "USD"}
+
 # Standard block attribute names the combined :func:`add_operating_cost` reads
 # when a consumption series is not passed explicitly. Electric uses the canonical
 # nomenclature name (``power_electrical``); gas has no nomenclature entry in v0,
@@ -327,6 +331,69 @@ def tariff_csv_to_dict(
         Path(write_to).write_text(json.dumps(payload, indent=2) + "\n")
 
     return payload
+
+
+# --------------------------------------------------------------------------- #
+# Currency basis (from the tariff sheet)
+# --------------------------------------------------------------------------- #
+def _register_currency(unit_name: str):
+    """Return the Pyomo currency unit ``unit_name``, registering it on first use.
+
+    Args:
+        unit_name: The currency unit name (e.g. ``"USD"``).
+
+    Returns:
+        The Pyomo units object for ``unit_name``.
+    """
+    if not hasattr(pyo.units, unit_name):
+        # Defines the [currency] dimension on first use (IDAES' CE-indexed
+        # currency units are not registered unless a unit costing package asks;
+        # a plain, un-indexed currency is what flex-pse labels costs with).
+        pyo.units.load_definitions_from_strings([f"{unit_name} = [currency]"])
+    return getattr(pyo.units, unit_name)
+
+
+def tariff_currency_units(tariff: pd.DataFrame):
+    """Return the Pyomo currency unit for a tariff's currency basis.
+
+    Reads the tariff's charge ``units`` column (e.g. ``"$/kWh"``), takes the
+    currency symbol (the numerator before the ``/``), and returns the matching
+    Pyomo currency unit — registering it on first use. EECO tariffs are
+    dollar-based (``"$"`` → ``USD``). FlexCosting labels every operating-cost
+    expression with this unit, so the currency basis is data-driven from the
+    tariff sheet rather than hardcoded.
+
+    Args:
+        tariff: An EECO ``rate_data`` DataFrame (from :func:`load_tariff`).
+
+    Returns:
+        The Pyomo currency units object (e.g. ``USD``).
+
+    Raises:
+        FlexDataError: If the tariff has no ``units`` column, or its charges do
+            not share exactly one recognized currency symbol.
+    """
+    if "units" not in tariff.columns:
+        raise FlexDataError(
+            "Tariff has no 'units' column, so its currency basis cannot be "
+            "determined. Add a charge 'units' column (e.g. '$/kWh').",
+            field="units",
+        )
+    symbols = {str(u).split("/")[0].strip() for u in tariff["units"].dropna()}
+    if len(symbols) != 1:
+        raise FlexDataError(
+            "Tariff charges must share exactly one currency basis; found "
+            f"{sorted(symbols)} in the 'units' column.",
+            field="units",
+        )
+    symbol = symbols.pop()
+    if symbol not in _CURRENCY_SYMBOLS:
+        raise FlexDataError(
+            f"Unrecognized currency symbol {symbol!r} in the tariff 'units'; "
+            f"known symbols: {sorted(_CURRENCY_SYMBOLS)}.",
+            field="units",
+        )
+    return _register_currency(_CURRENCY_SYMBOLS[symbol])
 
 
 # --------------------------------------------------------------------------- #

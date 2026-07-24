@@ -30,6 +30,7 @@ Loaders and CSV conversion
    load_tariff
    load_dr_program
    tariff_csv_to_dict
+   tariff_currency_units
 
 A tariff may be authored as a JSON records structure or imported from an EECO
 ``rate_data`` CSV. The JSON form is a ``rate_data`` records list, e.g. (an
@@ -176,6 +177,16 @@ Every cost lives in one of two sub-blocks built by
 * **``capex``** is an **empty placeholder** in v0 (``total_capital_cost == 0``,
   re-exposed as ``aggregate_capital_cost``); later milestones aggregate per-unit
   capital costs into it.
+
+.. note:: **Currency basis.**
+
+   The costing block's ``base_currency`` — and the units on every operating- and
+   capital-cost expression it builds — is the tariff sheet's currency basis, read
+   from the charge ``units`` column by
+   :func:`~flexops.costing.tariff_currency_units` (EECO tariffs
+   are dollar-based: ``"$"`` → ``USD``). EECO's own cost expressions are
+   dimensionless dollars, so FlexCosting casts them to this currency; the
+   ``report_cost`` numbers are magnitudes in that currency.
 
 .. note:: **Capital cost enters the objective only in design mode.**
 

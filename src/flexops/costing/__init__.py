@@ -26,12 +26,14 @@ from flexops.costing.opex import (
     price_gradient,
     price_series,
     tariff_csv_to_dict,
+    tariff_currency_units,
 )
 
 __all__ = [
     "load_tariff",
     "load_dr_program",
     "tariff_csv_to_dict",
+    "tariff_currency_units",
     "price_series",
     "is_peak",
     "peak_windows",
