@@ -185,6 +185,7 @@ class FlexCostingData(FlowsheetCostingBlockData):
     # -- required FlowsheetCostingBlockData overloads ---------------------
 
     def build_global_params(self) -> None:
+<<<<<<< HEAD
         """Resolve the tariff and set the base currency from its currency basis.
 
         Called during :meth:`build`. The base currency is the tariff sheet's
@@ -220,6 +221,17 @@ class FlexCostingData(FlowsheetCostingBlockData):
             )
         return load_tariff(tariff_file if tariff_file is not None else tariff)
 
+=======
+        """Set the base currency/period (dollars are dimensionless, matching EECO).
+
+        EECO's cost expressions carry no Pyomo units (dimensionless dollars), so
+        the base currency is ``pyunits.dimensionless`` to stay consistent with
+        them; FlexCosting does not use the parent's unit-converting aggregation.
+        """
+        self.base_currency = pyunits.dimensionless
+        self.base_period = pyunits.year
+
+>>>>>>> a1cabbb (initial block implementation for costing)
     def build_process_costs(self) -> None:
         """No-op: flex-native process costs are built in :meth:`cost_process`."""
 
@@ -241,9 +253,13 @@ class FlexCostingData(FlowsheetCostingBlockData):
             FlexConfigError: If not exactly one of ``tariff_file``/``tariff`` is
                 given, or ``time_block`` is missing.
         """
+<<<<<<< HEAD
         # super().build() runs build_global_params, which resolves the tariff
         # (exclusivity check) and sets self._tariff, self._currency, base_currency.
         super().build()
+=======
+        super().build()  # runs build_global_params -> base_currency
+>>>>>>> a1cabbb (initial block implementation for costing)
 
         if self.config.time_block is None:
             raise FlexConfigError(
@@ -252,6 +268,21 @@ class FlexCostingData(FlowsheetCostingBlockData):
                 value=None,
             )
 
+<<<<<<< HEAD
+=======
+        tariff_file = self.config.tariff_file
+        tariff = self.config.tariff
+        if (tariff_file is None) == (tariff is None):
+            raise FlexConfigError(
+                "Provide exactly one of tariff_file (a path) or tariff (a loaded "
+                f"EECO tariff object); got tariff_file={tariff_file!r}, "
+                f"tariff={'set' if tariff is not None else None}.",
+                field="tariff_file",
+                value=tariff_file,
+            )
+        self._tariff = load_tariff(tariff_file if tariff_file is not None else tariff)
+
+>>>>>>> a1cabbb (initial block implementation for costing)
         self.dr = DRConfig(program=load_dr_program(self.config.dr_event_file))
 
         # _registered_power: units that opted into this costing package (the
@@ -340,9 +371,12 @@ class FlexCostingData(FlowsheetCostingBlockData):
 
         # 2. opex block: electricity + fuel + fixed, built via the M06 opex.py
         #    bridge (EECO owns the cost math; no tariff math is written here).
+<<<<<<< HEAD
         #    EECO's cost expressions are dimensionless dollars; every operating
         #    cost is cast to the tariff's currency basis (self._currency, e.g. USD).
         cur = self._currency
+=======
+>>>>>>> a1cabbb (initial block implementation for costing)
         self.opex = pyo.Block(doc="All operating cost: electricity + fuel + fixed.")
         dt_hours = pyo.value(pyunits.convert(tb.dt, pyunits.hr))
         elec = add_electricity_cost(
@@ -354,6 +388,7 @@ class FlexCostingData(FlowsheetCostingBlockData):
             dr_config=self.dr,
         )
         self.opex.electricity_cost = pyo.Expression(
+<<<<<<< HEAD
             expr=elec.total_operating_cost * cur, doc="EECO electricity cost."
         )
         # No gas-consuming unit in v0, so no gas leg is built and fuel is 0.
@@ -364,12 +399,27 @@ class FlexCostingData(FlowsheetCostingBlockData):
             mutable=True,
             units=cur,
             doc="Non-tariff fixed operating cost (over the horizon).",
+=======
+            expr=elec.total_operating_cost, doc="EECO electricity cost ($)."
+        )
+        # No gas-consuming unit in v0, so no gas leg is built and fuel is 0.
+        # (When a gas-usage series is registered, add_gas_cost fills this in.)
+        self.opex.fuel_cost = pyo.Expression(expr=0.0, doc="EECO fuel/gas cost ($).")
+        self.opex.fixed_operating_cost = pyo.Param(
+            initialize=self.config.fixed_operating_cost,
+            mutable=True,
+            doc="Non-tariff fixed operating cost ($ over the horizon).",
+>>>>>>> a1cabbb (initial block implementation for costing)
         )
         self.opex.total_operating_cost = pyo.Expression(
             expr=self.opex.electricity_cost
             + self.opex.fuel_cost
             + self.opex.fixed_operating_cost,
+<<<<<<< HEAD
             doc="electricity + fuel + fixed operating cost.",
+=======
+            doc="electricity + fuel + fixed operating cost ($).",
+>>>>>>> a1cabbb (initial block implementation for costing)
         )
         self._build_dr()  # no-op in v0
 
@@ -381,7 +431,11 @@ class FlexCostingData(FlowsheetCostingBlockData):
         # 3. capex block: empty placeholder in v0 (total_capital_cost == 0).
         self.capex = pyo.Block(doc="Capital cost (empty placeholder in v0).")
         self.capex.total_capital_cost = pyo.Expression(
+<<<<<<< HEAD
             expr=0.0 * cur,
+=======
+            expr=0.0,
+>>>>>>> a1cabbb (initial block implementation for costing)
             doc="Sum of registered units' capital cost; 0 in v0 (empty capex).",
         )
         self.aggregate_capital_cost = pyo.Expression(
