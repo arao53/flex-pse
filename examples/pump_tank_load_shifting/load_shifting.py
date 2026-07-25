@@ -33,9 +33,15 @@ def _(mo):
     `src/flexops/tests/costing/test_load_shifting_component.py`, stretched
     from one day to a full month, extended with a
     [`BatteryModel`](../../src/flexops/unit_models/battery.py) and the
-    [unit-commitment logic layer](../../src/flexops/logic/) (M08), and made
-    interactive: drag the sliders below, click **Solve**, and every plot
-    re-solves the model with HiGHS.
+    [unit-commitment logic layer](../../src/flexops/logic/) (M08).
+
+    **The model is built entirely from `config.json`.** Every slider below
+    only edits an in-memory [`ExampleConfig`](helpers/config.py); clicking
+    **Solve** writes it to `config.json` in this directory, then
+    [`helpers.build`](helpers/build.py) reads that file straight back off
+    disk and constructs the Pyomo model from it -- the sliders never reach
+    the model directly. Edit `config.json` by hand (or point another script
+    at it) and it builds and solves exactly the same way.
 
     Keep **tank initial volume ≤ tank max volume**, and give the pump enough
     headroom over the 100 m³/hr draw to make up for the zeroed peak hours —
@@ -65,45 +71,42 @@ def _(mo):
 def _():
     from pathlib import Path
 
-    import matplotlib.dates as mdates
-    import matplotlib.pyplot as plt
-    import numpy as np
-    import pyomo.environ as pyo
-    from pyomo.environ import units as pyunits
-    from pyomo.network import Arc
-    from pyomo.opt import assert_optimal_termination
+    from flexcore.config.schema import TimeConfig, UnitCommitmentConfig
+    from helpers.build import build_model, load_tariff_for_config, solve_model
+    from helpers.config import (
+        BatteryConfig,
+        ExampleConfig,
+        FacilityConfig,
+        PumpConfig,
+        TankConfig,
+        TariffConfig,
+        load_config,
+        save_config,
+    )
+    from helpers.plotting import plot_results
+    from helpers.results import extract_results
 
-    from flexcore.config.schema import UnitCommitmentConfig
-    from flexcore.solvers import get_solver
-    from flexops.core.time_block import TimeBlock
-    from flexops.costing import FlexCosting, is_peak, load_tariff, price_series
-    from flexops.logic import add_startup_shutdown, add_status, relax
-    from flexops.properties.simple_aqueous import SimpleAqueousFlow
-    from flexops.unit_models import BatteryModel, Pump, StorageTank
+    EXAMPLE_DIR = Path(__file__).parent
+    CONFIG_PATH = EXAMPLE_DIR / "config.json"
 
     return (
-        Arc,
-        BatteryModel,
-        FlexCosting,
-        Path,
-        Pump,
-        SimpleAqueousFlow,
-        StorageTank,
-        TimeBlock,
+        BatteryConfig,
+        CONFIG_PATH,
+        EXAMPLE_DIR,
+        ExampleConfig,
+        FacilityConfig,
+        PumpConfig,
+        TankConfig,
+        TariffConfig,
+        TimeConfig,
         UnitCommitmentConfig,
-        add_startup_shutdown,
-        add_status,
-        assert_optimal_termination,
-        get_solver,
-        is_peak,
-        load_tariff,
-        mdates,
-        np,
-        plt,
-        price_series,
-        pyo,
-        pyunits,
-        relax,
+        build_model,
+        extract_results,
+        load_config,
+        load_tariff_for_config,
+        plot_results,
+        save_config,
+        solve_model,
     )
 
 
@@ -196,10 +199,11 @@ def _(mo):
     mo.vstack(
         [
             mo.md(
-                "Adjust the sliders above, then click **Solve**. The battery "
-                "and relaxed pump unit commitment are fast LPs; the exact "
-                "(binary) pump unit commitment is a MILP and can take tens of "
-                "seconds over the full month."
+                "Adjust the sliders above, then click **Solve**. This writes "
+                "your choices to `config.json` and re-solves from that file. "
+                "The battery and relaxed pump unit commitment are fast LPs; "
+                "the exact (binary) pump unit commitment is a MILP and can "
+                "take tens of seconds over the full month."
             ),
             run_button,
         ]
@@ -208,351 +212,114 @@ def _(mo):
 
 
 @app.cell
-def _(Path, include_demand_charges, load_tariff):
-    _tariff_path = Path(__file__).parent / "tariff_tou_demo.json"
-    tariff = load_tariff(str(_tariff_path))
-    if not include_demand_charges.value:
-        tariff = tariff[tariff["type"] != "demand"].reset_index(drop=True)
-    return (tariff,)
-
-
-@app.cell
 def _(
-    Arc,
-    BatteryModel,
-    FlexCosting,
-    Pump,
-    SimpleAqueousFlow,
-    StorageTank,
-    TimeBlock,
+    BatteryConfig,
+    CONFIG_PATH,
+    EXAMPLE_DIR,
+    ExampleConfig,
+    FacilityConfig,
+    PumpConfig,
+    TankConfig,
+    TariffConfig,
+    TimeConfig,
     UnitCommitmentConfig,
-    add_startup_shutdown,
-    add_status,
-    assert_optimal_termination,
     battery_capacity,
     battery_charge_max,
     battery_discharge_max,
     battery_soc_max,
     battery_soc_min,
+    build_model,
+    extract_results,
     get_solved_once,
-    get_solver,
     include_battery,
-    is_peak,
+    include_demand_charges,
+    load_config,
+    load_tariff_for_config,
     mo,
-    np,
-    price_series,
     pump_max_flow,
     pump_min_downtime,
     pump_min_uptime,
     pump_uc_exact,
     pump_unit_commitment,
-    pyo,
-    pyunits,
-    relax,
     run_button,
+    save_config,
     set_solved_once,
+    solve_model,
     tank_initial_volume,
     tank_max_volume,
-    tariff,
 ):
     # Gate the (potentially expensive, MILP-capable) solve behind the Solve
     # button: this cell still reacts to every slider (it must, to read their
-    # current .value), but only *solves* on the very first pass (so `python
-    # load_shifting.py` and a fresh `marimo run` still show a solved result)
-    # or when the button was just clicked -- not on every slider drag.
+    # current .value), but only *writes+solves* on the very first pass (so
+    # `python load_shifting.py` and a fresh `marimo run` still show a solved
+    # result) or when the button was just clicked -- not on every slider drag.
     mo.stop(
         get_solved_once() and not run_button.value,
         mo.md("*Adjust sliders, then click **Solve** to re-run the optimization.*"),
     )
     set_solved_once(True)
 
-    def build_month(
-        *,
-        pump_max_flow,
-        tank_max_volume,
-        tank_initial_volume,
-        tariff,
-        include_battery,
-        battery_capacity,
-        battery_charge_max,
-        battery_discharge_max,
-        battery_soc_min,
-        battery_soc_max,
-        pump_unit_commitment,
-        pump_min_uptime,
-        pump_min_downtime,
-        pump_uc_exact,
-    ):
-        """Pump -> Arc -> StorageTank (+ optional battery) + FlexCosting, July 2025."""
-        m = pyo.ConcreteModel()
-        m.time_block = TimeBlock(
-            start_date="2025-07-01", end_date="2025-08-01", time_step=1 * pyunits.hr
-        )
-        m.properties = SimpleAqueousFlow(fixed_density=True)
-        m.costing = FlexCosting(time_block=m.time_block, tariff=tariff)
-
-        m.pump = Pump(
-            property_package=m.properties,
-            energy_intensity=0.5 * pyunits.kWh / pyunits.m**3,
-            costing_package=m.costing,
-        )
-        m.tank = StorageTank(
-            property_package=m.properties,
-            max_volume=tank_max_volume * pyunits.m**3,
-            initial_volume=tank_initial_volume * pyunits.m**3,
-        )
-        m.arc = Arc(source=m.pump.outlet, destination=m.tank.inlet)
-        pyo.TransformationFactory("network.expand_arcs").apply_to(m)
-
-        for t in m.time_block.time_index:
-            m.tank.outlet_state.flow_vol_phase[t, "Liq"].fix(100.0)
-            pump_flow = m.pump.inlet_state.flow_vol_phase[t, "Liq"]
-            pump_flow.setlb(0.0)
-            pump_flow.setub(pump_max_flow)
-
-        if include_battery:
-            # Behind-the-meter: no property_package/ports, energy-only unit.
-            # unit_commitment.status=False keeps it an LP -- round-trip
-            # efficiency < 1 already discourages simultaneous charge/discharge.
-            m.battery = BatteryModel(
-                capacity=battery_capacity * pyunits.kWh,
-                power_charge_max=battery_charge_max * pyunits.kW,
-                power_discharge_max=battery_discharge_max * pyunits.kW,
-                eta_charge=0.95,
-                eta_discharge=0.95,
-                soc_min=battery_soc_min,
-                soc_max=battery_soc_max,
-                initial_soc=(battery_soc_min + battery_soc_max) / 2,
-                costing_package=m.costing,
-                unit_commitment=UnitCommitmentConfig(status=False),
-            )
-
-        if pump_unit_commitment:
-            # Constant-intensity relation (power = energy_intensity * flow):
-            # a flow bound converts directly to a power bound. min_on_power
-            # covers the fixed 100 m^3/hr draw so "always on" stays feasible.
-            max_power = 0.5 * pump_max_flow
-            min_on_power = 0.5 * 100.0
-            status = add_status(
-                m.pump,
-                m.pump.power_electrical,
-                min_on_power * pyunits.kW,
-                max_power * pyunits.kW,
-            )
-            add_startup_shutdown(
-                m.pump,
-                status,
-                min_uptime=pump_min_uptime,
-                min_downtime=pump_min_downtime,
-            )
-            if not pump_uc_exact:
-                # First-class LP relaxation (M08): same UC structure, domain
-                # switched Binary -> UnitInterval, no rebuild.
-                relax(m.pump)
-
-        m.costing.cost_process()
-        m.objective = pyo.Objective(expr=m.costing.aggregate_operating_cost)
-
-        last = list(m.time_block.time_index)[-1]
-        m.terminal = pyo.Constraint(expr=m.tank.volume[last] >= tank_initial_volume)
-        if include_battery:
-            # Sustainable arbitrage: don't let the optimizer dump all stored
-            # energy for a one-time credit at the horizon end.
-            m.battery_terminal = pyo.Constraint(
-                expr=m.battery.charge[last] >= m.battery.charge_init
-            )
-        return m
-
-    model = build_month(
-        pump_max_flow=pump_max_flow.value,
-        tank_max_volume=tank_max_volume.value,
-        tank_initial_volume=tank_initial_volume.value,
-        tariff=tariff,
-        include_battery=include_battery.value,
-        battery_capacity=battery_capacity.value,
-        battery_charge_max=battery_charge_max.value,
-        battery_discharge_max=battery_discharge_max.value,
-        battery_soc_min=battery_soc_min.value / 100.0,
-        battery_soc_max=battery_soc_max.value / 100.0,
-        pump_unit_commitment=pump_unit_commitment.value,
-        pump_min_uptime=pump_min_uptime.value,
-        pump_min_downtime=pump_min_downtime.value,
-        pump_uc_exact=pump_uc_exact.value,
+    # 1. Every knob above -> one ExampleConfig -> config.json. The model is
+    #    never built from the sliders directly.
+    draft_config = ExampleConfig(
+        time=TimeConfig(
+            start_date="2025-07-01", end_date="2025-08-01", time_step="1 hr"
+        ),
+        tariff=TariffConfig(
+            path="tariff_tou_demo.json",
+            include_demand_charges=include_demand_charges.value,
+        ),
+        facility=FacilityConfig(draw="100 m**3/hr"),
+        pump=PumpConfig(
+            max_flow=f"{pump_max_flow.value} m**3/hr",
+            unit_commitment=UnitCommitmentConfig(
+                status=pump_unit_commitment.value,
+                startup_shutdown=pump_unit_commitment.value,
+                min_up=pump_min_uptime.value,
+                min_down=pump_min_downtime.value,
+            ),
+            relax=not pump_uc_exact.value,
+        ),
+        tank=TankConfig(
+            max_volume=f"{tank_max_volume.value} m**3",
+            initial_volume=f"{tank_initial_volume.value} m**3",
+        ),
+        battery=BatteryConfig(
+            enabled=include_battery.value,
+            capacity=f"{battery_capacity.value} kWh",
+            power_charge_max=f"{battery_charge_max.value} kW",
+            power_discharge_max=f"{battery_discharge_max.value} kW",
+            soc_min=battery_soc_min.value / 100.0,
+            soc_max=battery_soc_max.value / 100.0,
+        ),
     )
-    # A 1% MIP gap keeps the exact (binary) pump-UC solve interactive-scale;
-    # harmless (ignored) for the LP/relaxed cases.
-    results = get_solver(model=model, prefer="highs").solve(
-        model, options={"mip_rel_gap": 0.01}
-    )
-    assert_optimal_termination(results)
+    save_config(draft_config, CONFIG_PATH)
 
-    time_block = model.time_block
-    steps = list(time_block.time_index)
-    when = time_block.datetime_index
-
-    price = price_series(tariff, when)
-    peak_mask = is_peak(tariff, when).to_numpy()
-    pump_flow_series = np.array(
-        [pyo.value(model.pump.inlet_state.flow_vol_phase[t, "Liq"]) for t in steps]
-    )
-    tank_volume_series = np.array([pyo.value(model.tank.volume[t]) for t in steps])
-    net_load_series = np.array(
-        [pyo.value(model.costing.aggregate_electrical_power[t]) for t in steps]
-    )
-    if include_battery.value:
-        battery_soc_series = np.array([pyo.value(model.battery.soc[t]) for t in steps])
-        battery_power_series = np.array(
-            [
-                pyo.value(
-                    model.battery.power_charge[t] - model.battery.power_discharge[t]
-                )
-                for t in steps
-            ]
-        )
-    else:
-        battery_soc_series = None
-        battery_power_series = None
-
-    total_cost = pyo.value(model.objective)
-    peak_pumping = float(pump_flow_series[peak_mask].sum())
-    peak_net_energy = float(net_load_series[peak_mask].sum())
-    return (
-        battery_power_series,
-        battery_soc_series,
-        net_load_series,
-        peak_mask,
-        peak_net_energy,
-        peak_pumping,
-        price,
-        pump_flow_series,
-        tank_volume_series,
-        total_cost,
-        when,
-    )
+    # 2. Read config.json back -- everything below is built purely from the
+    #    on-disk artifact, not from `draft_config` above.
+    config = load_config(CONFIG_PATH)
+    tariff = load_tariff_for_config(config, EXAMPLE_DIR)
+    model = build_model(config, tariff)
+    solve_model(model)
+    results = extract_results(model, config, tariff)
+    return (results,)
 
 
 @app.cell(hide_code=True)
-def _(mo, peak_net_energy, peak_pumping, total_cost):
+def _(mo, results):
     mo.md(f"""
-    **Optimal operating cost:** ${total_cost:,.2f}
+    **Optimal operating cost:** ${results.total_cost:,.2f}
     &nbsp;&nbsp;|&nbsp;&nbsp;
-    **Volume pumped during peak windows:** {peak_pumping:,.3f} m³
+    **Volume pumped during peak windows:** {results.peak_pumping:,.3f} m³
     &nbsp;&nbsp;|&nbsp;&nbsp;
-    **Net facility load during peak windows:** {peak_net_energy:,.1f} kWh
+    **Net facility load during peak windows:** {results.peak_net_energy:,.1f} kWh
     """)
     return
 
 
 @app.cell(hide_code=True)
-def _(
-    battery_power_series,
-    battery_soc_series,
-    mdates,
-    net_load_series,
-    np,
-    peak_mask,
-    plt,
-    price,
-    pump_flow_series,
-    tank_volume_series,
-    when,
-):
-    plt.rcParams.update({"font.size": 10, "axes.grid": True})
-    has_battery = battery_soc_series is not None
-    n_panels = 6 if has_battery else 4
-    fig, axes = plt.subplots(
-        n_panels,
-        1,
-        figsize=(13, 2.05 * n_panels + 1.2),
-        sharex=True,
-        gridspec_kw={"hspace": 0.2},
-    )
-
-    # Categorical palette (fixed order; see dataviz skill references/palette.md).
-    blue, orange, aqua, green, violet = (
-        "#2a78d6",
-        "#eb6834",
-        "#1baf7a",
-        "#008300",
-        "#4a3aa7",
-    )
-    soc_ink, peak_band, grid_color = "#52514e", "#9a9a9a", "#e1e0d9"
-
-    def shade_peaks(ax):
-        edges = np.diff(peak_mask.astype(int))
-        starts = np.where(edges == 1)[0] + 1
-        stops = np.where(edges == -1)[0] + 1
-        if peak_mask[0]:
-            starts = np.r_[0, starts]
-        if peak_mask[-1]:
-            stops = np.r_[stops, len(peak_mask)]
-        for s, e in zip(starts, stops):
-            ax.axvspan(
-                when[s],
-                when[min(e, len(when) - 1)],
-                color=peak_band,
-                alpha=0.12,
-                lw=0,
-                zorder=0,
-            )
-
-    ax_price, ax_load, ax_pump, ax_tank = axes[:4]
-
-    ax_price.step(when, price.to_numpy(), where="post", color=blue, lw=1.6)
-    ax_price.set_ylabel("Energy price\n($/kWh)")
-    ax_price.set_ylim(0, float(price.max()) * 1.25)
-    ax_price.set_title(
-        "July 2025 pump + tank"
-        + (" + battery" if has_battery else "")
-        + " load shifting under the TOU demo tariff",
-        fontsize=12,
-        fontweight="bold",
-        loc="left",
-        pad=10,
-    )
-
-    ax_load.step(when, net_load_series, where="post", color=green, lw=1.6)
-    ax_load.axhline(0, color="#888888", lw=0.8, zorder=0)
-    ax_load.set_ylabel("Net facility load\n(kW)")
-
-    ax_pump.step(when, pump_flow_series, where="post", color=orange, lw=1.4)
-    ax_pump.set_ylabel("Pump flow\n(m³/hr)")
-    ax_pump.set_ylim(-10, max(310, float(pump_flow_series.max()) * 1.05))
-
-    ax_tank.plot(when, tank_volume_series, color=aqua, lw=1.6)
-    ax_tank.set_ylabel("Tank volume\n(m³)")
-    ax_tank.set_ylim(0, max(1050, float(tank_volume_series.max()) * 1.05))
-
-    if has_battery:
-        # Battery power and SOC are two single-axis panels, never a shared
-        # twin-axis (dataviz skill: never a dual-axis chart).
-        ax_batt_power, ax_batt_soc = axes[4], axes[5]
-        ax_batt_power.step(
-            when, battery_power_series, where="post", color=violet, lw=1.4
-        )
-        ax_batt_power.axhline(0, color="#888888", lw=0.8, zorder=0)
-        ax_batt_power.set_ylabel("Battery power\n(kW, +charge/−discharge)")
-
-        ax_batt_soc.plot(when, battery_soc_series * 100, color=soc_ink, lw=1.6)
-        ax_batt_soc.set_ylabel("Battery SOC\n(%)")
-        ax_batt_soc.set_ylim(0, 100)
-
-    axes[-1].set_xlabel("2025 (local wall-clock)")
-
-    for ax in axes:
-        shade_peaks(ax)
-        ax.grid(color=grid_color, lw=0.6)
-        for side in ("top", "right"):
-            ax.spines[side].set_visible(False)
-        ax.margins(x=0.005)
-
-    axes[-1].xaxis.set_major_locator(mdates.DayLocator(interval=2))
-    axes[-1].xaxis.set_major_formatter(mdates.DateFormatter("%b %d"))
-    fig.autofmt_xdate(rotation=0, ha="center")
-
-    ax_price.plot([], [], color=peak_band, alpha=0.35, lw=8, label="peak price window")
-    ax_price.legend(loc="upper right", frameon=False, fontsize=9)
-    fig
+def _(plot_results, results):
+    plot_results(results)
     return
 
 
