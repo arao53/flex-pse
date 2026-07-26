@@ -30,7 +30,7 @@ a breaking change.
 
 ## Read first
 - `PLAN.md` §2 — the API-freeze script (you will copy it verbatim; it uses
-  `PlantBlock`/`StorageTank`/`ConstantEnergyIntensityModel`/`BatteryModel` — all
+  `PlantBlock`/`Tank`/`ConstantEnergyIntensityModel`/`BatteryModel` — all
   valid, do NOT change it).
 - `plan/01_architecture.md` §3.3 (R7: `PlantBlock` composes units, `NetworkBlock`
   composes plants; both `dynamic=False`; explicit `time_block=`; recursive
@@ -248,7 +248,7 @@ explicitly. Explicit argument is the primary, tested-first path (architecture §
 ### API freeze
 - `examples/api_freeze.py`: the PLAN.md §2 script **verbatim** — every line,
   including the `Arc` — do not "improve" it. It uses
-  `PlantBlock`/`StorageTank`/`ConstantEnergyIntensityModel`/`BatteryModel` (all
+  `PlantBlock`/`Tank`/`ConstantEnergyIntensityModel`/`BatteryModel` (all
   still valid). If it cannot run verbatim, the library is wrong, not the script.
 - `examples/api_freeze_config.yaml`: the **config-driven twin** — a valid
   `ModelConfig` (YAML canonical, §2.3/R3) describing the same model as the

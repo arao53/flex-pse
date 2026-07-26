@@ -104,7 +104,7 @@ FlexCosting keeps its own registries, populated as units are constructed:
   `costing_package.register_unit_power(self, var, kind)`. Units built without
   `costing_package=` still work standalone (M04 tests must stay green — the
   forwarding is strictly conditional).
-- **Modify `StorageTank`**: when `costing_package=` is given, call
+- **Modify `Tank`**: when `costing_package=` is given, call
   `unit_costing.cost_storage_tank(...)` and register `capacity` as a sizing var.
 
 ### 4. `cost_process()` builds (in order)
@@ -156,7 +156,7 @@ FlexCosting keeps its own registries, populated as units are constructed:
   model; merging multiple representative months and equality-linking sizing vars
   across them is the **M16 design wrapper** (`flexops.design`, architecture §3.6),
   not this mode. Do not build multi-period merging in M07.
-- **Tank design mode is NLP, not LP (M04).** `StorageTank.capacity` is a sizing
+- **Tank design mode is NLP, not LP (M04).** `Tank.capacity` is a sizing
   Var, and `set_design_mode()` unfixes it; but the tank's `level_definition`
   constraint (`volume[t] == level[t] * capacity`) is then a Var×Var product —
   a deliberate M04 tradeoff. A model containing a tank in design mode therefore
@@ -206,7 +206,7 @@ objective (architecture §6 reporting rule; M13 surfaces it to callers):
 
 24 hourly steps covering 2025-07-08 (a summer Tuesday: peak 16:00–21:00 in the
 demo tariff). Pump (`energy_intensity=0.5` kWh/m³, inlet `flow_vol_phase[t, "Liq"]`
-bounded [0, 300] m³/hr) → Arc → StorageTank (`max_volume=1000`, `initial_volume=200`, outlet flow
+bounded [0, 300] m³/hr) → Arc → Tank (`max_volume=1000`, `initial_volume=200`, outlet flow
 fixed at 100 m³/hr), built with `costing_package=m.costing`;
 `m.costing.cost_process()`; objective =
 `pyo.Objective(expr=m.costing.aggregate_operating_cost)`; add a test-local
@@ -234,7 +234,7 @@ fixed), so the model classifies LP despite the tank's bilinear
    `cost_process`/aggregate machinery; if the parent call fights the flex names
    (`aggregate_*`), build flex-native components first and skip/override the
    conflicting parent step — record what you did under "Deviations from spec".
-5. **Breaking costing-less units.** M04 constructs Pump/StorageTank with no
+5. **Breaking costing-less units.** M04 constructs Pump/Tank with no
    `costing_package`; the `register_power` forwarding must be strictly
    conditional.
 6. **Objective referencing EECO internals.** The objective must use

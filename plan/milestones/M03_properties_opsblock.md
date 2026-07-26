@@ -185,7 +185,7 @@ CONFIG (extends `UnitModelBlockData.CONFIG`):
   all-defaults instance (status on, everything else off). **Config slot only in
   M03**: it is validated and stored, but no UC constraints are built here — the
   status/startup/shutdown/dwell/delays/conditional constraint logic is the M08
-  logic layer. `StorageTank` (M04) will set `status=False` (a tank has no on/off).
+  logic layer. `Tank` (M04) will set `status=False` (a tank has no on/off).
 - `external_dispatch` — optional `ExternalDispatchSpec`, default `None`; the
   declared source/variable that `set_external_dispatch` (below) consumes.
 - `relaxation` — the discrete-structure relaxation policy (default the exact/MIP
