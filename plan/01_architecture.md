@@ -129,18 +129,16 @@ live only in imperative code — if it can be configured, it is in the file.
 - `config/io.py`: `load_model_config(path) -> ModelConfig`,
   `dump_model_config(cfg, path)`; a `schema_version` migration hook table.
 - **R3 (decision):** the config is **pydantic v2 (schema authority) serialized
-  to YAML as the canonical on-disk format**, versioned by `schema_version`, with
+  to JSON as the canonical on-disk format**, versioned by `schema_version`, with
   JSON Schema exported into `config/schemas/` and checked in (schema drift shows
-  in diffs; docs render it; external writers validate against it). YAML is chosen
-  over JSON as canonical because these files are both human-tracked in VCS
-  (comments, readable diffs, anchors for repeated tariff/unit blocks) *and*
-  written programmatically; JSON is still accepted on load. Dodge the YAML
-  "Norway problem" with a strict, typed loader (pydantic coerces; ambiguous bare
-  scalars like `no`/`on` are quoted by the dumper). Pyomo `ConfigDict` remains
-  runtime-only and is never persisted. *(This reverses the earlier
-  JSON-canonical call in response to the config-driven-everything requirement;
-  the format is a recommendation — the schema-authority-in-pydantic decision is
-  the load-bearing part and is format-independent.)*
+  in diffs; docs render it; external writers validate against it). JSON is
+  chosen as canonical because these files are both human-tracked in VCS and
+  written programmatically, and JSON needs no extra parsing dependency and has
+  no ambiguous-scalar ("Norway problem") pitfalls the way YAML does. Pyomo
+  `ConfigDict` remains runtime-only and is never persisted. The
+  schema-authority-in-pydantic decision is the load-bearing part; JSON-only is
+  the format decision going forward — no other on-disk config format is
+  supported, in this milestone or any future one.
 
 ### 2.4 tariffs and costs — the external EECO package
 
@@ -436,7 +434,7 @@ Pipeline: **tabular data → tag aliasing → sufficiency validation → regress
 {apply to model | emit config}**.
 
 - `tags.py`: `TagMap` — historian/database tag ↔ `plant.unit.variable` alias
-  pairs (YAML/JSON loadable). Reports unmapped tags with fuzzy suggestions.
+  pairs (JSON loadable). Reports unmapped tags with fuzzy suggestions.
 - `validate.py`: given the `IORegistry` of a built (or config-declared) FlexOps
   model plus a DataFrame, produce a `SufficiencyReport`: does the data cover
   every required IO pair, enough non-null rows, aligned time index?
@@ -499,7 +497,7 @@ Pipeline: **tabular data → tag aliasing → sufficiency validation → regress
 |---|---|---|
 | R1 | OpsBlock inherits IDAES `UnitModelBlockData`, no ControlVolumes | config/ports/costing machinery for free; ControlVolumes are wrong for scheduling surrogates |
 | R2 | Discrete TimeBlock + `dynamic=False` flowsheets; hand-written difference equations | MIP logic needs integer index arithmetic; DAE fights binaries and rolling horizons |
-| R3 | Pydantic v2 is the schema authority; the whole model+run builds from one version-controlled config (canonical format YAML, JSON accepted); no essential config lives only in code | config-driven-everything requirement; files are both human-tracked and written programmatically by external modules |
+| R3 | Pydantic v2 is the schema authority; the whole model+run builds from one version-controlled config (canonical format JSON; no other on-disk format supported); no essential config lives only in code | config-driven-everything requirement; files are both human-tracked and written programmatically by external modules |
 | R4 | FlexCosting subclasses IDAES costing and delegates tariff cost to EECO — convex-relaxed cost in the objective + post-solve EECO evaluation for reporting; owns CapEx, modes, clear naming; DR is containers-only in v0 | reuse the lab's maintained cost engine; the objective is a relaxed proxy so the reported cost must be re-evaluated post-hoc |
 | R5 | Solver facade never transforms models silently | relaxed-MIP schedules sent to a real plant are a correctness hazard; explicit SolveSequence instead |
 | R6 | Unit models organized by IO topology (SISO/SIDO/DIDO bases) then specialized physically; `Electrolyzer`→`Separator` etc. | one place for ports/mass-balance per topology; physical zoo (RO skid, combustor, exchangers) reuses it; Tank = SISO with logic disabled |

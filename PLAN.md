@@ -211,7 +211,7 @@ so. They are recorded here so design choices keep the door open.
   Requires an ODE model library that does not exist yet.
 - **Repo split** — when a package reaches roughly 20 modules / 10k lines *and* has
   external users of its own, promote it to its own repository. `flexcore.config`'s
-  versioned schema (YAML canonical, pydantic authority, exported JSON Schema) is
+  versioned schema (JSON canonical, pydantic authority, exported JSON Schema) is
   the seam; the import-linter DAG guarantees the move is mechanical. Keep a
   single shared environment/dependency file across repos.
 

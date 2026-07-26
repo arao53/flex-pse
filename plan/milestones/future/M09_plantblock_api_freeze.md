@@ -24,7 +24,7 @@ freeze the public API. Deliver:
 
 Then freeze the public API: check in `examples/api_freeze.py` — the verbatim
 script from PLAN.md §2 — with a component test that runs and solves it, plus a
-parallel `examples/api_freeze_config.yaml` that `build_model` turns into an
+parallel `examples/api_freeze_config.json` that `build_model` turns into an
 equivalent, equally-solving model. From this milestone on, breaking that script is
 a breaking change.
 
@@ -42,7 +42,7 @@ a breaking change.
   flow↔energy relationship" paragraph; `Electrolyzer`→`Separator`)
 - `plan/01_architecture.md` §2.3 (R3: config-driven-everything;
   `ModelConfig`/`PlantConfig`/`NetworkConfig`/`UnitConfig`/`SurrogateSpec`/
-  `IOVariableSpec`, `load_model_config`, YAML canonical) and §3.2
+  `IOVariableSpec`, `load_model_config`, JSON canonical) and §3.2
   (`OpsBlock.build_from_config`, `flexops.build_model(model_config)`)
 - `plan/00_conventions.md` §1 (repo layout — `core/network_block.py`,
   `core/build.py`, `unit_models/base/{sido,dido}.py`, the physical-zoo modules),
@@ -67,7 +67,7 @@ a breaking change.
 - `src/flexops/core/ops_block.py` — implement `build_from_config` for real (stub since M03); optional TimeBlock auto-discovery.
 - `src/flexops/__init__.py` — export `PlantBlock`, `NetworkBlock`, `SIDOBlock`, `DIDOBlock`, `Separator`, `Exchanger`, the v0 derived units, `ConstantEnergyIntensityModel`, and `build_model` (the script and config path use `fo.<Name>` / `fo.build_model`).
 - `examples/api_freeze.py` — VERBATIM copy of the PLAN.md §2 script.
-- `examples/api_freeze_config.yaml` — the config-driven twin of the frozen script.
+- `examples/api_freeze_config.json` — the config-driven twin of the frozen script.
 - `examples/data/tariff.json`, `examples/data/dr_events.json` — small fixtures the script loads.
 - `src/flexops/tests/core/test_plant_block.py`, `src/flexops/tests/core/test_network_block.py`, `src/flexops/tests/core/test_build_from_config.py`, `src/flexops/tests/core/test_build_model.py`, `src/flexops/tests/unit_models/test_base_topology.py`, `src/flexops/tests/unit_models/test_separator.py`, `src/flexops/tests/unit_models/test_exchanger.py`, `src/flexops/tests/unit_models/test_constant_intensity.py`, `src/flexops/tests/test_api_freeze.py`.
 - Docs: `docs/how_to/build_a_plant.md`, `docs/explanation/time_and_dynamics.md`, reference pages.
@@ -250,11 +250,11 @@ explicitly. Explicit argument is the primary, tested-first path (architecture §
   including the `Arc` — do not "improve" it. It uses
   `PlantBlock`/`Tank`/`ConstantEnergyIntensityModel`/`BatteryModel` (all
   still valid). If it cannot run verbatim, the library is wrong, not the script.
-- `examples/api_freeze_config.yaml`: the **config-driven twin** — a valid
-  `ModelConfig` (YAML canonical, §2.3/R3) describing the same model as the
+- `examples/api_freeze_config.json`: the **config-driven twin** — a valid
+  `ModelConfig` (JSON canonical, §2.3/R3) describing the same model as the
   imperative script (one plant with the tank, the `ConstantEnergyIntensityModel`
   plant surrogate, the battery; the tank→plant arc; the tariff/DR/costing
-  settings). `build_model(load_model_config("api_freeze_config.yaml"))` must
+  settings). `build_model(load_model_config("api_freeze_config.json"))` must
   yield a model that solves to the **same objective** as the imperative path.
 - Fixtures under `examples/data/` (the imperative script uses bare filenames like
   `"tariff.json"`, so its test runs with cwd set to the fixture directory):
@@ -291,7 +291,7 @@ explicitly. Explicit argument is the primary, tested-first path (architecture §
    (R7). `PlantBlock` composes units only.
 9. **`Electrolyzer` name.** There is no `Electrolyzer` class — it is `Separator`
    (and `ElectrolysisSeparator` for the electrolysis specialization), per R6.
-10. **Config vs. imperative drift.** `api_freeze_config.yaml` must describe the
+10. **Config vs. imperative drift.** `api_freeze_config.json` must describe the
     *same* model; the equal-objective test is the contract. Keep the config
     minimal and hand-readable; validate it against the checked-in JSON Schema.
 
@@ -341,7 +341,7 @@ explicitly. Explicit argument is the primary, tested-first path (architecture §
   `str(exc)`.
 
 `src/flexops/tests/core/test_build_model.py`
-- `test_build_model_matches_hand_built` (`component`, `needs_highs`) — a YAML
+- `test_build_model_matches_hand_built` (`component`, `needs_highs`) — a JSON
   `ModelConfig` fixture describing a small plant (tank + `ConstantEnergyIntensityModel`
   + battery, one arc); `build_model` constructs it; a hand-built equivalent is
   constructed imperatively; assert both build, both solve optimal, and their
@@ -366,7 +366,7 @@ explicitly. Explicit argument is the primary, tested-first path (architecture §
   `aggregate_operating_cost` is finite. A top-of-file comment declares this the
   breaking-change tripwire.
 - `test_api_freeze_config_matches_imperative` (`component`, `needs_highs`) — load
-  `examples/api_freeze_config.yaml`, `build_model` it, apply arc expansion, solve;
+  `examples/api_freeze_config.json`, `build_model` it, apply arc expansion, solve;
   assert optimal and that its objective equals the imperative script's objective
   within tolerance (`pytest.approx`, rel=1e-6) — the config-driven path equals the
   imperative path.
@@ -392,7 +392,7 @@ explicitly. Explicit argument is the primary, tested-first path (architecture §
 ## Definition of Done
 - [ ] `examples/api_freeze.py` is byte-for-byte the PLAN.md §2 script and runs top-to-bottom.
 - [ ] `test_api_freeze_runs_and_solves` passes with HiGHS (`component`, `needs_highs`).
-- [ ] `examples/api_freeze_config.yaml` builds via `build_model` and solves to the same objective as the imperative script (config-driven == imperative).
+- [ ] `examples/api_freeze_config.json` builds via `build_model` and solves to the same objective as the imperative script (config-driven == imperative).
 - [ ] `PlantBlock` aggregates its units correctly (constraint-body test).
 - [ ] `NetworkBlock` composes plants with inter-plant arcs; network total == Σ plant totals == Σ unit works; no double-counting.
 - [ ] `SIDOBlock` and `DIDOBlock` topology bases build with correct ports and mass balances; harness-tested physical units on top.
@@ -404,7 +404,7 @@ explicitly. Explicit argument is the primary, tested-first path (architecture §
       documented discoverable name (the swap contract M10 relies on); no
       separate `LinearRegressionModel`/surrogate-regression unit class exists (R11).
 - [ ] Auto-discovery convenience works and errors actionably on 0/2+ TimeBlocks.
-- [ ] Fixtures in `examples/data/` and `api_freeze_config.yaml` are valid against the checked-in JSON Schemas.
+- [ ] Fixtures in `examples/data/` and `api_freeze_config.json` are valid against the checked-in JSON Schemas.
 - [ ] All new tests carry exactly one tier marker; docs build with `sphinx-build -W`.
 - [ ] Breaking-change tripwire comment present in both api_freeze files; CHANGELOG updated.
 - [ ] plus the generic DoD in CLAUDE.md

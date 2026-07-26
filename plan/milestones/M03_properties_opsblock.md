@@ -16,7 +16,7 @@ unit-commitment config slot, and the block-replacement hook), the minimal
 property package that carries flow between units, the registration record
 dataclasses that FlexParameterize and the docs generator consume, and the
 **full** versioned pydantic config schema (`flexcore.config` —
-`IOVariableSpec`…`ModelConfig`, YAML-canonical), which registration and
+`IOVariableSpec`…`ModelConfig`, JSON-canonical), which registration and
 config-driven construction need. After this milestone a dummy unit builds on a
 `ConcreteModel` + `TimeBlock`, registers its IO, exposes the dispatch/UC/replace
 hooks, and is discoverable model-wide.
@@ -27,7 +27,7 @@ hooks, and is discoverable model-wide.
   **no ControlVolumes**; the `external_dispatch` hook, the `unit_commitment`
   sub-config, `from_config`/`build_model`), §3.5 (the UC logic layer the config
   slot feeds — built in M08), §3.7 (SimpleAqueousFlow), §2.3 (the full config
-  schema — R3, YAML canonical), §5 (the two-way FlexParameterize coupling and the
+  schema — R3, JSON canonical), §5 (the two-way FlexParameterize coupling and the
   in-place parameter-update hook — R10), §7 (R1, R3, R8, R9, R10)
 - `plan/00_conventions.md` §2 (energy naming), §4 (two config layers, never mixed)
 - `plan/02_testing_and_ci.md` §1, §5
@@ -44,7 +44,7 @@ hooks, and is discoverable model-wide.
   `CostingConfig` (with a `dr` container slot + `external_dispatch`), and
   top-level `ModelConfig`
 - `src/flexcore/config/io.py` — `load_model_config`/`dump_model_config`
-  (YAML canonical + JSON accepted) + JSON Schema export + migration table
+  (JSON canonical) + JSON Schema export + migration table
 - `src/flexcore/config/schemas/` — exported JSON Schema, checked in
 - `src/flexops/core/registration.py` — record dataclasses, `IORegistry`, `iter_io_registry`
 - `src/flexops/core/ops_block.py` — `OpsBlock` / `OpsBlockData`
@@ -131,7 +131,7 @@ Also `CURRENT_SCHEMA_VERSION = 1` and `export_json_schemas(directory)` writing
 `indent=2, sort_keys=True` (stable diffs). Run once; commit the output to
 `src/flexcore/config/schemas/`.
 
-### flexcore/config/io.py (YAML canonical, JSON accepted — R3)
+### flexcore/config/io.py (JSON canonical — R3)
 
 `load_model_config(path) -> ModelConfig`; `dump_model_config(cfg, path) -> None`;
 `MIGRATIONS: dict[int, Callable[[dict], dict]] = {}` (version→one-step upgrade
@@ -332,9 +332,10 @@ WaterTAP `prop_ZO`; all IDAES bases imported directly from `idaes.core` (R12).
    schema diffs on every regeneration.
 8. **`define_metadata` omissions** cause obscure IDAES errors — set all five
    default units even though only volume/time matter here.
-9. **YAML "Norway problem".** Bare `no`/`on`/`yes` scalars parse as booleans.
-   Load with `yaml.safe_load` and let the dumper quote ambiguous scalars; never
-   `yaml.load` untrusted input. Pydantic coercion + a typed schema is the guard.
+9. **JSON is the only on-disk format.** `_read`/`dump_model_config` accept a
+   `.json` suffix only; any other suffix (`.yaml`, `.yml`, `.toml`) is a
+   `FlexConfigError`. Parse with `json.loads` and validate the top level is a
+   mapping. Pydantic coercion + a typed schema is the guard against bad values.
 10. **`ModelConfig` exactly-one-of `network`/`plant`.** A config with both, or
     neither, must fail validation with a clear field-path message — add the
     model-level validator; don't leave it to build time.
@@ -400,11 +401,12 @@ module: registers `flow_in[t]`/`flow_out[t]` (m³/hr; input/output), a mutable
 `SurrogateSpec`, one with an `external_dispatch` and a non-default
 `unit_commitment`):
 
-- `test_model_config_yaml_roundtrip` — full fixture →
-  `dump_model_config`(tmp_path, `.yaml`) → `load_model_config` → equal via
-  `model_dump()`. (YAML is the canonical format.)
-- `test_model_config_json_roundtrip` — same fixture through a `.json` target →
-  `load_model_config` → equal via `model_dump()`. (JSON is also accepted.)
+- `test_model_config_json_roundtrip` — full fixture →
+  `dump_model_config`(tmp_path, `.json`) → `load_model_config` → equal via
+  `model_dump()`. (JSON is the canonical format.)
+- `test_non_json_suffix_rejected` — a non-`.json` suffix (`.yaml`, `.yml`,
+  `.toml`) raises `FlexConfigError` on both `dump_model_config` and
+  `load_model_config`. (JSON is the only on-disk format.)
 - `test_invalid_role_names_field_path` — a `UnitConfig` IO spec with
   `role="both"` → error text contains the full field path (e.g.
   `plant.units.tank.io_variables.0.role`).
@@ -422,7 +424,7 @@ module: registers `flow_in[t]`/`flow_out[t]` (m³/hr; input/output), a mutable
 ## Documentation tasks
 
 - `docs/explanation/config_schema.md` — narrative of R3 (pydantic is the schema
-  authority; **YAML** canonical on disk, JSON accepted; versioned by
+  authority; **JSON** canonical on disk (the only supported format); versioned by
   `schema_version`; exported JSON Schema in `config/schemas/`; the whole
   model+run builds from one config via `flexops.build_model` in M09; the
   FlexParameterize↔FlexOps seam), covering the full model set
@@ -436,7 +438,7 @@ module: registers `flow_in[t]`/`flow_out[t]` (m³/hr; input/output), a mutable
   autosummary; `flexops-unit-tables` is for unit models, M04+).
 - Start `docs/explanation/energy_nomenclature.md` skeleton restating §4 rules.
 - CHANGELOG: OpsBlock base + registration API + external-dispatch/replace hooks +
-  unit-commitment config slot, SimpleAqueousFlow, full config schema v1 (YAML
+  unit-commitment config slot, SimpleAqueousFlow, full config schema v1 (JSON
   canonical).
 
 ## Definition of Done
@@ -453,7 +455,7 @@ module: registers `flow_in[t]`/`flow_out[t]` (m³/hr; input/output), a mutable
       carrying `unit_commitment` + `external_dispatch`, `CostingConfig` with a
       `dr` slot) implemented; `ModelConfig` is the top-level artifact with
       exactly-one-of `network`/`plant`
-- [ ] `ModelConfig` **YAML** round-trip *and* JSON round-trip green; invalid configs error with field path; `schema_version` missing/too-new errors
+- [ ] `ModelConfig` **JSON** round-trip green and non-`.json` suffixes rejected; invalid configs error with field path; `schema_version` missing/too-new errors
 - [ ] JSON Schema exported to `src/flexcore/config/schemas/`, checked in, up-to-date test green
 - [ ] `from_config(UnitConfig)` raises `NotImplementedError` referencing M09;
       whole-model `flexops.build_model` noted as M09
