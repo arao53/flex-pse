@@ -366,14 +366,17 @@ class FlexCostingData(FlowsheetCostingBlockData):
             dr_config=self.dr,
         )
         self.opex.electricity_cost = pyo.Expression(
-            expr=elec.total_operating_cost, doc="EECO electricity cost ($)."
+            expr=elec.total_operating_cost * cur, doc="EECO electricity cost ($)."
         )
         # No gas-consuming unit in v0, so no gas leg is built and fuel is 0.
         # (When a gas-usage series is registered, add_gas_cost fills this in.)
-        self.opex.fuel_cost = pyo.Expression(expr=0.0, doc="EECO fuel/gas cost ($).")
+        self.opex.fuel_cost = pyo.Expression(
+            expr=0.0 * cur, doc="EECO fuel/gas cost ($)."
+        )
         self.opex.fixed_operating_cost = pyo.Param(
             initialize=self.config.fixed_operating_cost,
             mutable=True,
+            units=cur,
             doc="Non-tariff fixed operating cost ($ over the horizon).",
         )
         self.opex.total_operating_cost = pyo.Expression(

@@ -17,7 +17,7 @@ from pyomo.opt import assert_optimal_termination
 from flexops.core.time_block import TimeBlock
 from flexops.costing import FlexCosting, evaluate_cost, load_tariff
 from flexops.properties.simple_aqueous import SimpleAqueousFlow
-from flexops.unit_models import Pump, StorageTank
+from flexops.unit_models import Pump, Tank
 
 _FIXTURES = Path(__file__).parent.parent / "fixtures"
 _TARIFF_JSON = _FIXTURES / "tariff_tou_demo.json"
@@ -32,7 +32,7 @@ _EXPECTED_OBJECTIVE = 1467.388888888889
 
 
 def _build_headline(tariff=None) -> pyo.ConcreteModel:
-    """Pump -> Arc -> StorageTank + FlexCosting; objective = operating cost.
+    """Pump -> Arc -> Tank + FlexCosting; objective = operating cost.
 
     Args:
         tariff: An EECO tariff object to pass as ``tariff=``; when ``None`` the
@@ -53,7 +53,7 @@ def _build_headline(tariff=None) -> pyo.ConcreteModel:
         energy_intensity=0.5 * pyunits.kWh / pyunits.m**3,
         costing_package=m.costing,
     )
-    m.tank = StorageTank(
+    m.tank = Tank(
         property_package=m.properties,
         max_volume=1000 * pyunits.m**3,
         initial_volume=200 * pyunits.m**3,

@@ -27,7 +27,7 @@ from flexops.costing import (
     load_tariff,
 )
 from flexops.properties.simple_aqueous import SimpleAqueousFlow
-from flexops.unit_models import Pump, StorageTank
+from flexops.unit_models import Pump, Tank
 
 _FIXTURES = Path(__file__).parent.parent / "fixtures"
 _TARIFF_JSON = _FIXTURES / "tariff_tou_demo.json"
@@ -52,7 +52,7 @@ def _pump_tank_costing(
     dr_event_file=None,
     run_cost_process: bool = True,
 ) -> pyo.ConcreteModel:
-    """Build a Pump -> Arc -> StorageTank system with a FlexCosting block.
+    """Build a Pump -> Arc -> Tank system with a FlexCosting block.
 
     ``costing_first`` / ``pump_first`` permute the component-creation order (the
     construction-order invariant). When costing is created after the units they
@@ -76,7 +76,7 @@ def _pump_tank_costing(
             energy_intensity=0.5 * pyunits.kWh / pyunits.m**3,
             costing_package=cp,
         )
-        tank = StorageTank(
+        tank = Tank(
             property_package=m.properties,
             max_volume=1000 * pyunits.m**3,
             initial_volume=200 * pyunits.m**3,
