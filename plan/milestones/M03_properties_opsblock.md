@@ -401,7 +401,7 @@ module: registers `flow_in[t]`/`flow_out[t]` (m³/hr; input/output), a mutable
 `SurrogateSpec`, one with an `external_dispatch` and a non-default
 `unit_commitment`):
 
-- `test_model_config_json_roundtrip` — full fixture →
+- `test_model_config_roundtrip` — full fixture →
   `dump_model_config`(tmp_path, `.json`) → `load_model_config` → equal via
   `model_dump()`. (JSON is the canonical format.)
 - `test_non_json_suffix_rejected` — a non-`.json` suffix (`.yaml`, `.yml`,
