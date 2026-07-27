@@ -18,7 +18,7 @@ flex-pse/
 │   │   ├── exceptions.py           # FlexError hierarchy (no compat layer — idaes/pyomo imported directly, R12)
 │   │   ├── solvers/                # classify.py, registry.py, facade.py
 │   │   ├── config/                 # schema.py (pydantic: Unit/Plant/Network/Time/Costing/ModelConfig),
-│   │   │                           # io.py (YAML canonical), schemas/ (exported JSON Schema)
+│   │   │                           # io.py (JSON canonical), schemas/ (exported JSON Schema)
 │   │   └── tests/                  # (no econ module — tariff/cost is the external eeco package)
 │   ├── flexops/
 │   │   ├── core/                   # time_block.py, ops_block.py, plant_block.py,

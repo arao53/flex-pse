@@ -8,8 +8,8 @@ Ship 0.1.0. Single-source the version, run the upstream canary and clear (or pin
 and file) anything red, finalize CHANGELOG and README, turn on gentle coverage
 floors, and prove the packaged artifact works: build → TestPyPI → fresh-venv
 install → both the imperative `examples/api_freeze.py` **and** the config-driven
-`examples/api_freeze_config.yaml` path run. That dual step is THE release gate
-(the config-driven path exercises the versioned schema — YAML canonical, pydantic
+`examples/api_freeze_config.json` path run. That dual step is THE release gate
+(the config-driven path exercises the versioned schema — JSON canonical, pydantic
 authority, exported JSON Schema — which is the config-driven-everything promise,
 architecture §2.3 / R3). Also audit repo-split readiness (import DAG + per-package
 test isolation) so the "splittable monorepo" promise is verified, not assumed.
@@ -17,7 +17,7 @@ test isolation) so the "splittable monorepo" promise is verified, not assumed.
 ## Read first
 
 - `PLAN.md` §2 (what we are building — README source material; the api_freeze script), §4 (post-v0 backlog — release notes link here)
-- `plan/01_architecture.md` §2.3 (R3: versioned schema — YAML canonical, pydantic authority, exported JSON Schema; config-driven `build_model` — the second release-gate path)
+- `plan/01_architecture.md` §2.3 (R3: versioned schema — JSON canonical, pydantic authority, exported JSON Schema; config-driven `build_model` — the second release-gate path)
 - `plan/01_architecture.md` §3.6 (M16 `flexops.design` — decide "what works" vs. "deferred" in the release notes based on whether M16 merged)
 - `plan/00_conventions.md` §1 (single distribution `flex-pse`; repo layout), §5 (CHANGELOG: Keep a Changelog, "Unreleased" on top), §6 (import discipline — the split-later insurance this milestone audits)
 - `plan/02_testing_and_ci.md` §3 (PR-CI per-subpackage coverage reporting; ci/nightly/docs workflows — there is no upstream-canary workflow, R12), §4 (coverage policy: "M15 turns on gentle floors")
@@ -25,8 +25,8 @@ test isolation) so the "splittable monorepo" promise is verified, not assumed.
 
 ## Files to create or modify
 
-- `pyproject.toml` — version `0.1.0`; verify `[solvers]` extra exists (add if missing: at minimum `highspy`); packaging metadata complete (classifiers, urls, license); ensure package-data ships `config/schemas/` JSON Schema exports and `examples/api_freeze_config.yaml`
-- `examples/api_freeze_config.yaml` — the versioned YAML config that `build_model` turns into the same model as `api_freeze.py` (add if not already present from M09); part of the release gate
+- `pyproject.toml` — version `0.1.0`; verify `[solvers]` extra exists (add if missing: at minimum `highspy`); packaging metadata complete (classifiers, urls, license); ensure package-data ships `config/schemas/` JSON Schema exports and `examples/api_freeze_config.json`
+- `examples/api_freeze_config.json` — the versioned JSON config that `build_model` turns into the same model as `api_freeze.py` (add if not already present from M09); part of the release gate
 - `src/flexcore/__init__.py`, `src/flexops/__init__.py`, `src/flexparameterize/__init__.py`, `src/flexschedule/__init__.py` — `__version__` from shared distribution metadata
 - `src/<pkg>/tests/test_version.py` × 4 — one per package (see Tests)
 - `CHANGELOG.md` — "Unreleased" → `0.1.0` with release date; fresh empty "Unreleased" section on top
@@ -133,28 +133,28 @@ pip install --index-url https://test.pypi.org/simple/ \
 python -c "import flexcore, flexops, flexparameterize, flexschedule as fs; \
            print(flexcore.__version__, flexops.__version__)"
 python examples/api_freeze.py                 # imperative path: run top-to-bottom and solve
-# config-driven path: build the SAME model from the versioned YAML config and solve
+# config-driven path: build the SAME model from the versioned JSON config and solve
 python -c "import flexops as fo; \
-           m = fo.build_model(fo.load_model_config('examples/api_freeze_config.yaml')); \
-           fo.solve_and_report(m)"   # (invocation is implementer's choice; it must build from YAML and solve)
+           m = fo.build_model(fo.load_model_config('examples/api_freeze_config.json')); \
+           fo.solve_and_report(m)"   # (invocation is implementer's choice; it must build from JSON and solve)
 deactivate
 ```
 
 Both `examples/api_freeze.py` (imperative) **and**
-`examples/api_freeze_config.yaml` (the config-driven `build_model` path) must run
+`examples/api_freeze_config.json` (the config-driven `build_model` path) must run
 from the freshly installed wheel — they build the same model two ways and are the
 readable illustration of the config-driven-everything promise (architecture
-§2.3 / R3). The YAML config validates against the exported JSON Schema in
+§2.3 / R3). The JSON config validates against the exported JSON Schema in
 `config/schemas/`, so this path also proves those schema files shipped in the
 wheel.
 
 If either path fails for a packaging reason (missing data files — tariff/DR JSON
-fixtures, `config/schemas/` JSON Schema exports, the `api_freeze_config.yaml`
+fixtures, `config/schemas/` JSON Schema exports, the `api_freeze_config.json`
 itself, `py.typed` markers), fix `pyproject.toml` package-data, rebuild, bump
 nothing (TestPyPI allows post suffixes like `0.1.0.post1` for retries —
 implementer's choice), and rerun the whole gate from step 1. The gate passes only
 when the freshly installed artifact executes **both** `api_freeze.py` and the
-`api_freeze_config.yaml` path unmodified.
+`api_freeze_config.json` path unmodified.
 
 ### 7. Tag + GitHub release checklist
 
@@ -191,7 +191,7 @@ fix it now; it is exactly the debt the audit exists to catch.
    exist to catch this.
 2. **Missing package data in the wheel.** JSON Schema exports
    (`flexcore/config/schemas/`), example tariff files and the
-   `examples/api_freeze_config.yaml` the notebooks/examples need — sdist-only
+   `examples/api_freeze_config.json` the notebooks/examples need — sdist-only
    inclusion (MANIFEST) is not enough; the wheel is what pip installs. The
    fresh-venv gate (both paths) catches it; don't skip either path.
 3. **Running the gate from the repo checkout directory.** `python` resolves
@@ -248,7 +248,7 @@ above is the checklist; paste it, with outputs, into the PR description).
 - [ ] CHANGELOG converted to 0.1.0 with date, honest release notes linking PLAN.md §4; fresh "Unreleased" section on top
 - [ ] PR-CI per-subpackage coverage floors on (actuals − 2 %), values recorded in the PR
 - [ ] `python -m build` + `twine check` pass; artifact uploaded to TestPyPI
-- [ ] THE GATE: fresh venv, `pip install` from TestPyPI with `[solvers]`, and **both** `examples/api_freeze.py` (imperative) **and** the config-driven `examples/api_freeze_config.yaml` `build_model` path run top-to-bottom and solve
+- [ ] THE GATE: fresh venv, `pip install` from TestPyPI with `[solvers]`, and **both** `examples/api_freeze.py` (imperative) **and** the config-driven `examples/api_freeze_config.json` `build_model` path run top-to-bottom and solve
 - [ ] README.md filled from PLAN.md §2 (what/install/10-line example/docs link/license)
 - [ ] `git tag v0.1.0` pushed; GitHub release created with notes + artifacts
 - [ ] Repo-split audit: `lint-imports` clean and each package's test suite passes in isolation; all five results recorded in the PR

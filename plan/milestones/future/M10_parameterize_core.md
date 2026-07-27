@@ -61,7 +61,7 @@ produce the same behavior.
 class TagMap:
     def __init__(self, mapping: dict[str, str]): ...          # tag -> "plant.unit.variable" alias
     @classmethod
-    def from_file(cls, path) -> "TagMap": ...                 # JSON always; YAML if pyyaml importable
+    def from_file(cls, path) -> "TagMap": ...                 # JSON only (matches config format, R3)
     def apply(self, df: pd.DataFrame) -> pd.DataFrame: ...    # returns a RENAMED COPY
     def report_unmapped(self, df: pd.DataFrame) -> "TagReport": ...
 ```
@@ -74,9 +74,8 @@ class TagMap:
   `suggestions: dict[str, list[str]]`) where suggestions come from
   `difflib.get_close_matches(column, known_tags, n=3)` — stdlib only, **no new
   dependencies**. Give it a readable `__str__` for log/error output.
-- `from_file`: JSON via stdlib; for `.yaml`/`.yml` try `import yaml` and raise
-  `FlexConfigError` with install instructions if absent (implementer's choice —
-  pyyaml must not become a hard dependency). Validate the loaded object is a flat
+- `from_file`: JSON via stdlib only (matching the config format, R3); a
+  non-`.json` suffix → `FlexConfigError`. Validate the loaded object is a flat
   `dict[str, str]`; anything else → `FlexConfigError` naming the bad key.
 - Duplicate targets (two tags → one alias) → `FlexConfigError` at construction.
 
