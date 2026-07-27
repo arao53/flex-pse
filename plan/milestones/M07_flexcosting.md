@@ -64,7 +64,7 @@ remains the **single-model** CapEx-active mode (one TimeBlock, capex constraints
 active, sizing vars unfixed) — do not build any multi-period merging here.
 
 **Not here: per-unit capex correlations.** The `costing/unit_models/unit_costing.py`
-correlations, the StorageTank capital-cost/sizing-var registration, and the
+correlations, the Tank capital-cost/sizing-var registration, and the
 cross-unit capex aggregation are **deferred** — the `capex` block is an empty
 placeholder in M07 (see the Capex-scope decision in the PR). The first unit to
 populate it is M08's battery.
@@ -154,7 +154,7 @@ FlexCosting keeps its own registries, populated as units are constructed:
   `costing_package.register_unit_power(self, var, kind)`. Units built without
   `costing_package=` still work standalone (M04 tests must stay green — the
   forwarding is strictly conditional).
-- **StorageTank is not modified in M07.** Registering `capacity` as a sizing var
+- **Tank is not modified in M07.** Registering `capacity` as a sizing var
   with a capex correlation is deferred with the capex block (see "Not here" above).
 
 ### 4. `cost_process()` builds (in order)
@@ -364,7 +364,7 @@ stable, so fuel/DR/capital light up additively as those features land.
 
 24 hourly steps covering 2025-07-08 (a summer Tuesday: peak 16:00–21:00 in the
 demo tariff). Pump (`energy_intensity=0.5` kWh/m³, inlet `flow_vol_phase[t, "Liq"]`
-bounded [0, 300] m³/hr) → Arc → StorageTank (`max_volume=1000`, `initial_volume=200`, outlet flow
+bounded [0, 300] m³/hr) → Arc → Tank (`max_volume=1000`, `initial_volume=200`, outlet flow
 fixed at 100 m³/hr). The **pump** is built with `costing_package=m.costing` (so it
 registers `power_electrical`); the tank has no costing package (its capex is
 deferred). `m.costing.cost_process()`; objective =
@@ -397,7 +397,7 @@ empty, the model classifies **LP** in both modes.
    (`aggregate_*`, the `opex`/`capex` sub-blocks), build flex-native components
    first and skip/override the conflicting parent step — record what you did under
    "Deviations from spec".
-5. **Breaking costing-less units.** M04 constructs Pump/StorageTank with no
+5. **Breaking costing-less units.** M04 constructs Pump/Tank with no
    `costing_package`; the `register_power` forwarding must be strictly
    conditional.
 6. **Objective referencing EECO internals.** The operations objective must use

@@ -1,7 +1,7 @@
 """UC status base: ``add_status`` + ``relax``/``unrelax`` (M08, architecture §3.5).
 
 ``add_status`` is the base unit-commitment piece, present on **every unit that
-can be shut off** (a ``StorageTank`` disables it). It attaches a Binary
+can be shut off** (a ``Tank`` disables it). It attaches a Binary
 ``status[t]`` and the two semicontinuous links tying an output variable to that
 binary. ``relax``/``unrelax`` toggle the **domain** of every logic-attached
 Binary in place -- a first-class domain switch on the live model, never a

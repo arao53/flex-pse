@@ -40,7 +40,7 @@ description for the full rationale):
   the spec's separate ``t=1..N-1`` difference equation plus an unrelated
   ``charge[0] == charge_init``/``soc[0] == soc_init`` initial condition.
   Leaving ``t=0`` governed only by a hard pin on ``charge[0]`` -- as
-  ``StorageTank.initial_volume_eq`` does -- would leave
+  ``Tank.initial_volume_eq`` does -- would leave
   ``power_charge[0]``/``power_discharge[0]`` completely free of any
   energy-conservation tie: the MIP arbitrage test caught this directly, with
   the solver "discharging" a free 50 kW at ``t=0`` for a cost rebate with no

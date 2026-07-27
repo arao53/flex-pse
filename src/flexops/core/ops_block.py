@@ -9,7 +9,7 @@ registration API that FlexParameterize and the docs generator consume
 :meth:`~OpsBlockData.register_power`), the base power Vars
 (:meth:`~OpsBlockData.declare_power`), the external-dispatch hook
 (:meth:`~OpsBlockData.set_external_dispatch`), and the config slots
-(``unit_commitment``, ``relaxation``, ``allow_bypass``, ``external_dispatch``)
+(``unit_commitment``, ``relaxation``, ``allow_pass_through``, ``external_dispatch``)
 that the M08 logic layer will consume.
 
 flex-pse **never deletes** model components (blocks, Vars, Params,
@@ -186,12 +186,12 @@ class OpsBlockData(UnitModelBlockData):
         ),
     )
     CONFIG.declare(
-        "allow_bypass",
+        "allow_pass_through",
         ConfigValue(
             default=False,
             domain=bool,
-            description="Whether add_bypass_constraints() builds inlet-to-outlet "
-            "pass-through equalities for this unit's non-excluded state "
+            description="Whether add_pass_through_constraints() builds inlet-to-"
+            "outlet pass-through equalities for this unit's non-excluded state "
             "variables (M04). SISOBlock (and its subclasses Pump/Tank) "
             "override the base default to True so the flow-topology units are "
             "well-posed out of the box; the base OpsBlock default stays False.",
@@ -437,7 +437,7 @@ class OpsBlockData(UnitModelBlockData):
         else:
             self.add_outlet_port(name=port_name, block=state, doc=f"{port_name} stream")
 
-    def add_bypass_constraints(
+    def add_pass_through_constraints(
         self,
         inlet: Port,
         outlet: Port,
@@ -453,11 +453,13 @@ class OpsBlockData(UnitModelBlockData):
         ``fixed_density=True``), in which case building a redundant constraint
         is skipped. This is the generic "everything not otherwise governed
         flows straight through" wiring: ``SISOBlock`` calls it with no
-        exclusions (the flow pass-through is itself a bypass equality);
+        exclusions (the flow pass-through is itself a pass-through equality);
         ``Tank`` excludes the flow-basis variable because its holdup
-        equation governs flow instead.
+        equation governs flow instead. Note this is intra-unit property
+        copying, distinct from a physical bypass *stream* that diverts flow
+        around a unit (see ``flexops.logic.bypass.add_bypass``).
 
-        Gated by ``self.config.allow_bypass``: when it is ``False`` this
+        Gated by ``self.config.allow_pass_through``: when it is ``False`` this
         method builds **no** constraints (a developer wires the missing
         relationship by hand, and the model's degrees of freedom reflect the
         unlinked state variables); when ``True`` it builds them.
@@ -487,7 +489,7 @@ class OpsBlockData(UnitModelBlockData):
             ``inlet_var.index_set()`` (e.g. ``(t, phase)``), with no leaked
             reference dimension.
         """
-        if not self.config.allow_bypass:
+        if not self.config.allow_pass_through:
             return
         inlet_state = inlet.parent_block().find_component(f"{inlet.local_name}_state")
         outlet_state = outlet.parent_block().find_component(
@@ -495,7 +497,7 @@ class OpsBlockData(UnitModelBlockData):
         )
         if inlet_state is None or outlet_state is None:
             raise FlexConfigError(
-                "add_bypass_constraints requires ports built by "
+                "add_pass_through_constraints requires ports built by "
                 "add_stream_ports (each needs a sibling "
                 f"'{{port_name}}_state' block); got inlet={inlet.local_name!r}, "
                 f"outlet={outlet.local_name!r}.",
@@ -509,7 +511,7 @@ class OpsBlockData(UnitModelBlockData):
         unknown = set(exclude_vars) - known
         if unknown:
             raise FlexConfigError(
-                f"add_bypass_constraints: exclude_vars {sorted(unknown)} are "
+                f"add_pass_through_constraints: exclude_vars {sorted(unknown)} are "
                 f"not state variables on this port; known: {sorted(known)}.",
                 field="exclude_vars",
                 value=sorted(unknown),
@@ -521,16 +523,16 @@ class OpsBlockData(UnitModelBlockData):
                 continue
             outlet_var = outlet_vars[name]
 
-            def _bypass_rule(_b, *idx_parts, _in=inlet_var, _out=outlet_var):
+            def _pass_through_rule(_b, *idx_parts, _in=inlet_var, _out=outlet_var):
                 idx = idx_parts[0] if len(idx_parts) == 1 else idx_parts
                 return _out[idx] == _in[idx]
 
             self.add_component(
-                f"bypass_{name}_eq",
+                f"pass_through_{name}_eq",
                 pyo.Constraint(
                     inlet_var.index_set(),
-                    rule=_bypass_rule,
-                    doc=f"Bypass pass-through: outlet {name} equals inlet {name}.",
+                    rule=_pass_through_rule,
+                    doc=f"Pass-through: outlet {name} equals inlet {name}.",
                 ),
             )
 

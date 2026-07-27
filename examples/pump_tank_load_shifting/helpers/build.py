@@ -21,7 +21,7 @@ from flexops.core.time_block import TimeBlock
 from flexops.costing import FlexCosting, load_tariff
 from flexops.logic import add_startup_shutdown, add_status, relax
 from flexops.properties.simple_aqueous import SimpleAqueousFlow
-from flexops.unit_models import BatteryModel, Pump, StorageTank
+from flexops.unit_models import BatteryModel, Pump, Tank
 
 from .config import ExampleConfig
 from .units import parse_quantity
@@ -73,7 +73,7 @@ def build_model(config: ExampleConfig, tariff: pd.DataFrame) -> pyo.ConcreteMode
         energy_intensity=parse_quantity(config.pump.energy_intensity),
         costing_package=m.costing,
     )
-    m.tank = StorageTank(
+    m.tank = Tank(
         property_package=m.properties,
         max_volume=parse_quantity(config.tank.max_volume),
         initial_volume=parse_quantity(config.tank.initial_volume),

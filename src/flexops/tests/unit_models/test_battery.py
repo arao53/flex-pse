@@ -160,7 +160,7 @@ def test_capacity_fix_unfix():
 
 @pytest.mark.unit
 def test_battery_forces_nothing_and_status_defaults_true():
-    """Unlike StorageTank, a battery does not force unit_commitment.status off."""
+    """Unlike Tank, a battery does not force unit_commitment.status off."""
     _, unit = _battery(
         4,
         unit_commitment=UnitCommitmentConfig(),

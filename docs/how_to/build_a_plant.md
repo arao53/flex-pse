@@ -16,7 +16,7 @@ import pyomo.environ as pyo
 from pyomo.environ import units as pyunits
 from pyomo.network import Arc
 import flexops as fo
-from flexops.unit_models import Pump, StorageTank
+from flexops.unit_models import Pump, Tank
 
 m = pyo.ConcreteModel()
 m.time_block = fo.TimeBlock(
@@ -33,7 +33,7 @@ m.pump = Pump(
     energy_intensity=0.5 * pyunits.kWh / pyunits.m**3,
     costing_package=m.costing,
 )
-m.tank = StorageTank(
+m.tank = Tank(
     property_package=m.properties,
     max_volume=1000 * pyunits.m**3,
     initial_volume=200 * pyunits.m**3,

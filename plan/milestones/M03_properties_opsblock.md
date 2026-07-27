@@ -189,13 +189,15 @@ CONFIG (extends `UnitModelBlockData.CONFIG`):
 - `external_dispatch` — optional `ExternalDispatchSpec`, default `None`; the
   declared source/variable that `set_external_dispatch` (below) consumes.
 - `relaxation` — the discrete-structure relaxation policy (default the exact/MIP
-  policy), and `allow_bypass` (bool, default `False`). **Config slots only in
-  M03**, same as `unit_commitment`: validated and stored, but the relaxation
-  switching and bypass *constraints* are built in the M08 logic layer.
+  policy), and `allow_pass_through` (bool, default `False`). **Config slots only in
+  M03**, same as `unit_commitment`: validated and stored. The relaxation
+  switching *constraints* are built in the M08 logic layer; `allow_pass_through`'s
+  intra-unit pass-through *constraints* are built by `add_pass_through_constraints`
+  in M04 (not to be confused with the M08 physical bypass *stream*).
 
 Set inherited `dynamic`/`has_holdup` defaults explicitly to `False` (R2). No
 logic-layer *constraints* are built in M03 — the config slots above
-(`unit_commitment`, `relaxation`, `allow_bypass`, `external_dispatch` wiring) are
+(`unit_commitment`, `relaxation`, `allow_pass_through`, `external_dispatch` wiring) are
 declared so the schema is stable from M03; M08 builds the constraints that
 consume them. (There is no `include_onoff` flag — on/off is the `status` piece of
 `unit_commitment`, §3.5.)

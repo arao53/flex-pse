@@ -28,9 +28,9 @@ models exists.
 
 - `src/flexops/testing/__init__.py` — exports `UnitModelTestHarness`, `dummy_time_block`
 - `src/flexops/testing/harness.py` — the public, shipped harness
-- `src/flexops/core/ops_block.py` — **modify**: add `add_bypass_constraints(inlet,
+- `src/flexops/core/ops_block.py` — **modify**: add `add_pass_through_constraints(inlet,
   outlet, *, exclude_vars=())`, the generic inlet-to-outlet state-variable
-  pass-through gated by `allow_bypass` (§3.2's slot, wired for real here)
+  pass-through gated by `allow_pass_through` (§3.2's slot, wired for real here)
 - `src/flexops/properties/simple_aqueous.py`, `simple_gas.py` — **modify**: add
   `get_flow_basis_var_name() -> str` (returns `"flow_vol_phase"`) so callers can
   exclude "the flow" from a generic pass-through without hardcoding a name that
@@ -41,8 +41,8 @@ models exists.
 - `src/flexops/unit_models/pump.py` — `Pump(SISOBlock)` unit model
 - `src/flexops/unit_models/storage_tank.py` — `Tank(SISOBlock)` unit model
 - `src/flexops/tests/testing/test_harness.py` — harness self-checks
-- `src/flexops/tests/unit_models/base/test_siso.py` — SISO base port + bypass unit
-  tests (including with pressure/temperature enabled, and `allow_bypass=False`)
+- `src/flexops/tests/unit_models/base/test_siso.py` — SISO base port + pass-through
+  unit tests (including with pressure/temperature enabled, and `allow_pass_through=False`)
 - `src/flexops/tests/unit_models/test_pump.py` — `TestPump` harness subclass
 - `src/flexops/tests/unit_models/test_storage_tank.py` — `TestStorageTank` + hand
   mass-balance test + capacity/level-bounds tests + logic-disabled test
@@ -109,11 +109,11 @@ not re-declare it):
 
 - Config (Pyomo ConfigDict, `description=` on each): `property_package` (IDAES
   standard), plus the base OpsBlock config flags from M03 (`unit_commitment`,
-  `relaxation`, `allow_bypass`, `external_dispatch`, `costing_package`).
-  **`SISOBlock` overrides the inherited `allow_bypass` default to `True`**
-  (`CONFIG.get("allow_bypass").set_default_value(True)`) so the SISO topology
+  `relaxation`, `allow_pass_through`, `external_dispatch`, `costing_package`).
+  **`SISOBlock` overrides the inherited `allow_pass_through` default to `True`**
+  (`CONFIG.get("allow_pass_through").set_default_value(True)`) so the SISO topology
   (and `Pump`/`Tank` on top of it) is well-posed (DoF == 0) out of the
-  box; pass `allow_bypass=False` to leave state variables unlinked and wire a
+  box; pass `allow_pass_through=False` to leave state variables unlinked and wire a
   custom relationship instead. The base `OpsBlock` default stays `False`.
 - One **`inlet`** `Port` and one **`outlet`** `Port`, built via the inherited
   `add_stream_ports()` helper (M03, `flexops/core/ops_block.py`) from the
@@ -122,27 +122,27 @@ not re-declare it):
   by `time_block.time_index`, builds the two ports, and registers each state's
   `flow_vol_phase` as a process IO variable (inlet → `role="input"`, outlet →
   `role="output"`).
-- **Per-stream mass balance via the generic bypass helper.** `OpsBlockData`
-  gains `add_bypass_constraints(inlet, outlet, *, exclude_vars=())` (§3.2): for
+- **Per-stream mass balance via the generic pass-through helper.** `OpsBlockData`
+  gains `add_pass_through_constraints(inlet, outlet, *, exclude_vars=())` (§3.2): for
   every state variable the inlet exposes and not named in `exclude_vars`, add
   an equality `outlet_var[idx] == inlet_var[idx]` over its full index set —
   unless the variable is already fully `fixed` (e.g. `dens_mass` under
   `fixed_density=True`), in which case no redundant constraint is built. Gated
-  by `self.config.allow_bypass`: `False` builds nothing (a developer wires the
+  by `self.config.allow_pass_through`: `False` builds nothing (a developer wires the
   relationship by hand); `True` builds it. `SISOBlock._build_mass_balance()`
-  calls `self.add_bypass_constraints(self.inlet, self.outlet, exclude_vars=())`
-  — flow's pass-through *is* a bypass equality here, named
-  `bypass_flow_vol_phase_eq` (a `doc=` string on it). `SimpleAqueousFlow`
+  calls `self.add_pass_through_constraints(self.inlet, self.outlet, exclude_vars=())`
+  — flow's pass-through *is* a pass-through equality here, named
+  `pass_through_flow_vol_phase_eq` (a `doc=` string on it). `SimpleAqueousFlow`
   carries the single `"Liq"` phase, so the constraint is indexed by `(t,
   "Liq")`. Subclasses that need a different balance (e.g. the tank's holdup)
-  override `_build_mass_balance` and call `add_bypass_constraints` with the
+  override `_build_mass_balance` and call `add_pass_through_constraints` with the
   flow variable excluded instead — document when they do.
 
   **Implementation note (Port References vs. state blocks):** ports built via
   `add_inlet_port`/`add_outlet_port` expose their members as auto-generated
   `Reference` objects (`port.vars[name]`), which carry an extra leading
   `UnindexedComponent_set` dimension and are awkward to index directly.
-  `add_bypass_constraints` instead resolves each port's sibling
+  `add_pass_through_constraints` instead resolves each port's sibling
   `"{port_name}_state"` block (the convention `add_stream_ports` establishes)
   and builds constraints directly against its state variables, so indices stay
   exactly `inlet_var.index_set()` (e.g. `(t, phase)`) with no leaked reference
@@ -254,7 +254,7 @@ and in the class docstring):**
 - **Bypass for every state variable other than flow.** A tank governs flow
   itself (via holdup), but any other state variable a richer property package
   exposes (pressure, temperature, …) should still pass straight through. Call
-  `self.add_bypass_constraints(self.inlet, self.outlet, exclude_vars=[pkg.
+  `self.add_pass_through_constraints(self.inlet, self.outlet, exclude_vars=[pkg.
   get_flow_basis_var_name()])` in `_build_mass_balance()`, where `pkg =
   self.config.property_package` — this excludes exactly the flow-basis
   variable (`"flow_vol_phase"` for both shipped packages, via
@@ -305,12 +305,12 @@ and in the class docstring):**
    caller passes a `unit_commitment` config, `Tank` must still build **no**
    `status[t]`/UC constraints. Test it (`test_tank_logic_disabled`) — a tank with
    an on/off binary is a modeling bug, not just clutter (R6).
-10. **Port `Reference`s vs. state blocks in `add_bypass_constraints`.**
+10. **Port `Reference`s vs. state blocks in `add_pass_through_constraints`.**
     `port.vars[name]` is an auto-generated `Reference` carrying an extra leading
     `UnindexedComponent_set` dimension (its index looks like `(None, t, phase)`,
     not `(t, phase)`) — building constraints directly against it leaks that
     dimension into every constraint name a caller might try to access naturally
-    (e.g. `unit.bypass_flow_vol_phase_eq[t, "Liq"]` would `KeyError`). Resolve
+    (e.g. `unit.pass_through_flow_vol_phase_eq[t, "Liq"]` would `KeyError`). Resolve
     the port's sibling `"{port_name}_state"` block instead and use its
     `define_state_vars()` — the real state variables, cleanly indexed.
 11. **`capacity` with no bounds.** Giving `capacity` no `bounds=` lets a
@@ -329,11 +329,11 @@ and in the class docstring):**
   - `test_base_class_not_collected` — no items collected from the bare harness (use `pytest.main` on a tiny in-line module or inspect collection; implementer's choice).
   - `test_dummy_time_block_shape` — `dummy_time_block(3)` has 3 time points, a `SimpleAqueousFlow`, 15-min `dt`.
 - `src/flexops/tests/unit_models/base/test_siso.py` (all `@pytest.mark.unit`):
-  - `test_siso_ports_and_mass_balance` — build a bare `SISOBlock` on `dummy_time_block(3)`: assert an `inlet` and an `outlet` `Port` exist and expose `flow_vol_phase`, and that the flow bypass constraint `bypass_flow_vol_phase_eq` exists indexed by `(t, phase)` (count == N). Fix `inlet_state.flow_vol_phase[t, "Liq"]` to a known profile and assert the bypass constraint **body** evaluates to 0 at each `t` when `outlet_state.flow_vol_phase[t, "Liq"]` is set equal (constraint-body check, no solver — testing doc §5).
+  - `test_siso_ports_and_mass_balance` — build a bare `SISOBlock` on `dummy_time_block(3)`: assert an `inlet` and an `outlet` `Port` exist and expose `flow_vol_phase`, and that the flow pass-through constraint `pass_through_flow_vol_phase_eq` exists indexed by `(t, phase)` (count == N). Fix `inlet_state.flow_vol_phase[t, "Liq"]` to a known profile and assert the pass-through constraint **body** evaluates to 0 at each `t` when `outlet_state.flow_vol_phase[t, "Liq"]` is set equal (constraint-body check, no solver — testing doc §5).
   - `test_siso_registers_no_energy` — a bare `SISOBlock` has no `power_electrical`/`power_thermal` (power draw is a subclass concern), matching the base contract.
-  - `test_siso_bypasses_all_state_vars` — build with `SimpleAqueousFlow(has_pressure=True, has_temperature=True)` (the default `allow_bypass=True`); assert bypass equalities exist for `flow_vol_phase`, `pressure`, `temperature`, but **not** `dens_mass` (fixed under `fixed_density`, so no redundant constraint). Verify each non-flow bypass body evaluates to 0 when inlet==outlet (no solver).
+  - `test_siso_passes_through_all_state_vars` — build with `SimpleAqueousFlow(has_pressure=True, has_temperature=True)` (the default `allow_pass_through=True`); assert pass-through equalities exist for `flow_vol_phase`, `pressure`, `temperature`, but **not** `dens_mass` (fixed under `fixed_density`, so no redundant constraint). Verify each non-flow pass-through body evaluates to 0 when inlet==outlet (no solver).
   - `test_siso_units_consistent_with_options` — the pressure/temperature-enabled build stays `assert_units_consistent`.
-  - `test_siso_allow_bypass_false_leaves_dof` — `allow_bypass=False` on the pressure/temperature-enabled build → no bypass constraints exist; after fixing only the inlet states, the outlet states remain unfixed/free (a developer must wire the relationship by hand). `degrees_of_freedom` counts only vars in active constraints, so with none built it is trivially 0 — assert that, and separately assert the outlet vars' `.fixed is False`.
+  - `test_siso_allow_pass_through_false_leaves_dof` — `allow_pass_through=False` on the pressure/temperature-enabled build → no pass-through constraints exist; after fixing only the inlet states, the outlet states remain unfixed/free (a developer must wire the relationship by hand). `degrees_of_freedom` counts only vars in active constraints, so with none built it is trivially 0 — assert that, and separately assert the outlet vars' `.fixed is False`.
 - `src/flexops/tests/unit_models/test_pump.py` — `class TestPump(UnitModelTestHarness)` (~30 lines): `configure()` builds `dummy_time_block(3)` + one `Pump`, fixes nothing; `expected_dof = 0`; `expected_solution` = hand-computed `power_electrical` for a fixed inlet `flow_vol_phase` (e.g. 100 m³/hr × 0.5 kWh/m³ → `{"power_electrical[0]": 50.0, ...}`).
 - `src/flexops/tests/unit_models/test_storage_tank.py`:
   - `class TestStorageTank(UnitModelTestHarness)` — `configure()` on a 4-point `dummy_time_block(4)`, `max_volume=1000`, `initial_volume=200`; `expected_dof = 0` with flows fixed.
@@ -365,13 +365,13 @@ and in the class docstring):**
 
 - [ ] `UnitModelTestHarness` API matches `plan/02_testing_and_ci.md` §2 verbatim (attribute names, stage names, tier markers).
 - [ ] `dummy_time_block(n=3)` exported from `flexops.testing`.
-- [ ] `SISOBlock` exists in `flexops/unit_models/base/siso.py`: inlet/outlet ports on `SimpleAqueousFlow` (via `add_stream_ports`), pass-through built via the generic `add_bypass_constraints` (no exclusions), power-registration wiring; registers no power itself; `allow_bypass` defaults `True` for the topology.
-- [ ] `OpsBlockData.add_bypass_constraints(inlet, outlet, *, exclude_vars=())` exists: bypasses every non-excluded, non-fixed state variable; gated by `self.config.allow_bypass`; resolves each port's sibling state block rather than the port's leaky `Reference` vars.
+- [ ] `SISOBlock` exists in `flexops/unit_models/base/siso.py`: inlet/outlet ports on `SimpleAqueousFlow` (via `add_stream_ports`), pass-through built via the generic `add_pass_through_constraints` (no exclusions), power-registration wiring; registers no power itself; `allow_pass_through` defaults `True` for the topology.
+- [ ] `OpsBlockData.add_pass_through_constraints(inlet, outlet, *, exclude_vars=())` exists: passes through every non-excluded, non-fixed state variable; gated by `self.config.allow_pass_through`; resolves each port's sibling state block rather than the port's leaky `Reference` vars.
 - [ ] `SimpleAqueousFlow`/`SimpleGasFlow` expose `get_flow_basis_var_name() -> "flow_vol_phase"`.
-- [ ] `Pump(SISOBlock)` and `Tank(SISOBlock)` importable from `flexops.unit_models`; both inherit SISO ports/bypass; all IO/parameter/energy registrations present. `Pump` carries a `.. todo::` note for a future detailed power law (not implemented).
+- [ ] `Pump(SISOBlock)` and `Tank(SISOBlock)` importable from `flexops.unit_models`; both inherit SISO ports/pass-through; all IO/parameter/energy registrations present. `Pump` carries a `.. todo::` note for a future detailed power law (not implemented).
 - [ ] `Tank` uses `volume`/`level` (not the terse `V`); `capacity` is bounded `(min_volume, max_volume)`; `level[t] = volume[t]/capacity` is bounded `(level_min, level_max)` via `level_definition`; the holdup equation converts the whole flow-difference expression, not just `dt`.
 - [ ] `Tank` disables logic/unit-commitment (no `status` var / no UC constraints) even when a `unit_commitment` config is passed (R6); `test_tank_logic_disabled` passes.
-- [ ] SISO base bypass unit tests pass, including with pressure/temperature enabled and with `allow_bypass=False`.
+- [ ] SISO base pass-through unit tests pass, including with pressure/temperature enabled and with `allow_pass_through=False`.
 - [ ] `pytest -m unit` passes with no solver installed; `pytest -m component` passes with HiGHS (and skips cleanly when M05 is absent).
 - [ ] Hand mass-balance test evaluates constraint bodies (no solve).
 - [ ] `NB_EXECUTION_MODE=off sphinx-build -W` passes with the three new/updated docs pages.

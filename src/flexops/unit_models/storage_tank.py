@@ -221,7 +221,7 @@ class StorageTankData(SISOBlockData):
             return b.volume[t] == b.volume[t - 1] + delta_volume
 
         # A tank governs flow itself (via the holdup equation above), so
-        # bypass every OTHER state variable straight through inlet->outlet
+        # pass every OTHER state variable straight through inlet->outlet
         # (e.g. pressure/temperature, when a richer property package enables
         # them); flow is excluded here and re-registered as a dispatch input
         # below (in build()).
@@ -231,6 +231,6 @@ class StorageTankData(SISOBlockData):
         # composition mixing at the tank is not modeled -- either assume TDS
         # is constant or add real mixing constraints then. Detect that case
         # by checking for flow_mass_phase_comp on the port.
-        self.add_bypass_constraints(
+        self.add_pass_through_constraints(
             self.inlet, self.outlet, exclude_vars=[pkg.get_flow_basis_var_name()]
         )

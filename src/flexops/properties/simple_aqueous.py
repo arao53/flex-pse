@@ -95,7 +95,7 @@ class SimpleAqueousFlowData(PhysicalParameterBlock):
     def get_flow_basis_var_name(self) -> str:
         """Return the name of this package's extensive flow state variable.
 
-        Lets callers (e.g. ``Tank``'s bypass wiring) exclude "the
+        Lets callers (e.g. ``Tank``'s pass-through wiring) exclude "the
         flow" from a generic pass-through without hardcoding a variable name
         that varies by property package (a future mass/TDS package would
         return ``"flow_mass_phase_comp"`` instead).
