@@ -61,7 +61,7 @@ def _model_config() -> ModelConfig:
 
 
 @pytest.mark.unit
-def test_model_config_json_roundtrip(tmp_path):
+def test_model_config_roundtrip(tmp_path):
     """A full config round-trips through the canonical JSON format."""
     cfg = _model_config()
     path = tmp_path / "model.json"

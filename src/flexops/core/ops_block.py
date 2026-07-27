@@ -175,7 +175,7 @@ class OpsBlockData(UnitModelBlockData):
             domain=bool,
             description="Whether add_bypass_constraints() builds inlet-to-outlet "
             "pass-through equalities for this unit's non-excluded state "
-            "variables (M04). SISOBlock (and its subclasses Pump/StorageTank) "
+            "variables (M04). SISOBlock (and its subclasses Pump/Tank) "
             "override the base default to True so the flow-topology units are "
             "well-posed out of the box; the base OpsBlock default stays False.",
         ),
@@ -422,7 +422,7 @@ class OpsBlockData(UnitModelBlockData):
         is skipped. This is the generic "everything not otherwise governed
         flows straight through" wiring: ``SISOBlock`` calls it with no
         exclusions (the flow pass-through is itself a bypass equality);
-        ``StorageTank`` excludes the flow-basis variable because its holdup
+        ``Tank`` excludes the flow-basis variable because its holdup
         equation governs flow instead.
 
         Gated by ``self.config.allow_bypass``: when it is ``False`` this

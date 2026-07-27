@@ -1,4 +1,4 @@
-"""Harness-driven and hand tests for StorageTank(SISOBlock) (M04, R6)."""
+"""Harness-driven and hand tests for Tank(SISOBlock) (M04, R6)."""
 
 import pyomo.environ as pyo
 import pytest
@@ -6,7 +6,7 @@ from pyomo.environ import units as pyunits
 
 from flexcore.config.schema import UnitCommitmentConfig
 from flexops.testing import UnitModelTestHarness, dummy_time_block
-from flexops.unit_models import Pump, StorageTank
+from flexops.unit_models import Pump, Tank
 
 
 class TestStorageTank(UnitModelTestHarness):
@@ -16,7 +16,7 @@ class TestStorageTank(UnitModelTestHarness):
 
     def configure(self):
         m = dummy_time_block(4)
-        m.unit = StorageTank(
+        m.unit = Tank(
             property_package=m.properties,
             max_volume=1000 * pyunits.m**3,
             initial_volume=200 * pyunits.m**3,
@@ -25,9 +25,9 @@ class TestStorageTank(UnitModelTestHarness):
 
 
 def _tank(n: int = 4, **kwargs):
-    """Build a fresh StorageTank on an ``n``-point dummy_time_block."""
+    """Build a fresh Tank on an ``n``-point dummy_time_block."""
     m = dummy_time_block(n)
-    m.unit = StorageTank(
+    m.unit = Tank(
         property_package=m.properties,
         max_volume=1000 * pyunits.m**3,
         initial_volume=200 * pyunits.m**3,

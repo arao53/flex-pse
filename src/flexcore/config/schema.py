@@ -5,7 +5,7 @@ config artifact (``flexops.build_model(config)``, M09): the TimeBlock,
 properties, costing, and the network/plant/unit tree all come from one
 :class:`ModelConfig`. These pydantic models are the **authority** for that
 config (``plan/01_architecture.md`` §2.3, decision R3); JSON is the canonical
-on-disk format and YAML is also accepted (see :mod:`flexcore.config.io`).
+and only on-disk format (see :mod:`flexcore.config.io`).
 
 Every field carries a ``description`` (it renders into the docs) and every model
 forbids unknown keys (``plan/00_conventions.md`` §4: an undocumented key does

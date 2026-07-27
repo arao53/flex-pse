@@ -19,7 +19,7 @@ Deliverable: a 7-day tank+battery+TOU problem solved as 24 h windows lands withi
 - `plan/01_architecture.md` §7 (decision **R9**)
 - `plan/01_architecture.md` §2.2 (solver facade, `get_solver`, **decision R5**: classify loudly, never transform silently)
 - `plan/01_architecture.md` §3.1 (TimeBlock: `register_initial_state`, `window(start, length)`, `dt`, `time_index`)
-- `plan/01_architecture.md` §3.4 (StorageTank initial level and BatteryModel SOC are the carried states)
+- `plan/01_architecture.md` §3.4 (Tank initial level and BatteryModel SOC are the carried states)
 - `plan/02_testing_and_ci.md` §1 (tier markers, solver-availability markers) and §5 (test-writing guidance)
 - `plan/00_conventions.md` §2 (keyword-only constructors), §3 (exceptions), §6 (flexschedule imports flexops/flexcore only, never flexparameterize)
 
@@ -288,7 +288,7 @@ All in `src/flexschedule/tests/`. Exactly one tier marker each.
 - `test_canonical_sequence_shape` — `SolveSequence.canonical()` has the five documented steps in order.
 
 `test_driver.py`:
-- `test_two_window_smoke` — `@pytest.mark.component` + `@pytest.mark.needs_highs`: 2 windows × 12 steps (overlap 0 or 2), StorageTank + Pump + TOU FlexCosting; end-to-end `solve_rolling_horizon`; asserts 24 committed rows, tank level continuous across the window boundary (`pytest.approx(rel=1e-6)`), all `SequenceResult.success`.
+- `test_two_window_smoke` — `@pytest.mark.component` + `@pytest.mark.needs_highs`: 2 windows × 12 steps (overlap 0 or 2), Tank + Pump + TOU FlexCosting; end-to-end `solve_rolling_horizon`; asserts 24 committed rows, tank level continuous across the window boundary (`pytest.approx(rel=1e-6)`), all `SequenceResult.success`.
 - `test_seven_day_vs_monolithic` — `@pytest.mark.integration` + `@pytest.mark.needs_highs` (runs in the PR CI `integration` job and in the local pre-push suite): 7-day, 15-min tank+battery+TOU problem; rolling solve with 24 h windows / 4 h overlap vs. one monolithic 7-day solve, both via HiGHS; the comparison uses the **EECO post-hoc cost** (R9): `result.reported_cost == pytest.approx(monolithic_report_cost, rel=0.02)`, where `monolithic_report_cost` is the monolithic model's own `FlexCosting.report_cost(model)` — not either solve's objective value.
 - `test_schedule_result_reports_eeco_cost_not_objective` — `@pytest.mark.component` + `@pytest.mark.needs_highs`: run `solve_rolling_horizon` with defaults on the two-window tank+pump+TOU case and assert (a) `ScheduleResult.reported_cost` is populated and equals the summed committed `FlexCosting.report_cost` (rel=1e-6), and (b) the objective value is **not** surfaced by default (no `objective_committed`, or it is `None`); only when the explicit debug flag is set does the objective field appear. This pins the reporting rule (arch §6, R9).
 

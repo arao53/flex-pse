@@ -1,4 +1,4 @@
-"""StorageTank(SISOBlock): holdup dynamics with logic disabled (architecture §3.4, R6).
+"""Tank(SISOBlock): holdup dynamics with logic disabled (architecture §3.4, R6).
 
 A tank has no on/off status, so it forces ``unit_commitment.status`` to
 ``False`` regardless of what a caller passes -- the canonical example of a
@@ -13,7 +13,7 @@ from pyomo.environ import units as pyunits
 from flexops.unit_models.base.siso import SISOBlockData
 
 
-@declare_process_block_class("StorageTank")
+@declare_process_block_class("Tank")
 class StorageTankData(SISOBlockData):
     r"""A storage tank: holdup difference equation, no on/off status (R6).
 
@@ -62,10 +62,10 @@ class StorageTankData(SISOBlockData):
 
     Example:
         >>> from flexops.testing import dummy_time_block
-        >>> from flexops.unit_models import StorageTank
+        >>> from flexops.unit_models import Tank
         >>> from pyomo.environ import units as pyunits
         >>> m = dummy_time_block(4)
-        >>> m.tank = StorageTank(  # doctest: +SKIP
+        >>> m.tank = Tank(  # doctest: +SKIP
         ...     property_package=m.properties,
         ...     max_volume=1000 * pyunits.m**3,
         ...     initial_volume=200 * pyunits.m**3,
