@@ -69,7 +69,7 @@ identical parallel trains — no solver required for the logic proofs.
 ### BatteryModel (`src/flexops/unit_models/battery.py`)
 An OpsBlock subclass declared with `declare_process_block_class` (imported
 directly from `idaes.core` — R12, no compat layer), exactly like
-`Pump`/`StorageTank` from M04. Constructor
+`Pump`/`Tank` from M04. Constructor
 is keyword-only; the API-freeze call it must support is
 `fo.BatteryModel(capacity=1 * pyunits.kWh, costing_package=m.costing)`.
 
@@ -150,7 +150,7 @@ def unrelax(unit) -> None
   plus the semicontinuous links `min_output * status[t] <= output_var[t]` and
   `output_var[t] <= max_output * status[t]` (two Constraint objects, `doc=` set).
   This is the base UC piece: present on **every unit that can be shut off**; a
-  `StorageTank` disables it (a tank has no on/off status — §3.4).
+  `Tank` disables it (a tank has no on/off status — §3.4).
 - Track every Binary the logic layer attaches to a unit in a list on the unit,
   e.g. `unit._flexops_logic_binaries` (implementer's choice of attribute name; keep
   it private and documented in the module docstring). All optional pieces below

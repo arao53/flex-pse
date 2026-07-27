@@ -13,15 +13,15 @@ and the finalized `docs.yml` workflow. This milestone also lands
 M08/M09/M16** — `NetworkBlock`, the SISO/SIDO/DIDO topology bases, the full
 physical unit zoo, the customizable unit-commitment logic modules,
 `flexops.design` (M16), the EECO post-hoc `evaluate_cost`/`report_cost`, and the
-config-driven `build_model` with its YAML config schema. Exit state:
+config-driven `build_model` with its JSON config schema. Exit state:
 `sphinx-build -W` is clean in both execution modes and every public unit model
 page renders generated tables.
 
 ## Read first
 
 - `plan/03_documentation.md` — ALL of it; this milestone implements §1–§6 to completion
-- `plan/01_architecture.md` §3.2 (IORegistry / registration API — flexdoc's data source), §3.4 (the unit-model table: **every** class needs a reference page — SISO/SIDO/DIDO bases and the physical zoo: Pump, StorageTank, Separator, Exchanger, ElectrolysisSeparator, ElectrolysisExchanger, ReverseOsmosisSkid, Combustor, BatteryModel, ConstantEnergyIntensityModel)
-- `plan/01_architecture.md` §3.3 (`NetworkBlock`/`PlantBlock` composition — reference pages), §3.5 (the customizable unit-commitment logic modules), §3.6 (`report_cost`/post-hoc EECO evaluation; the reported cost is never the objective — R9), §2.3 (config-driven `build_model` + the YAML config schema)
+- `plan/01_architecture.md` §3.2 (IORegistry / registration API — flexdoc's data source), §3.4 (the unit-model table: **every** class needs a reference page — SISO/SIDO/DIDO bases and the physical zoo: Pump, Tank, Separator, Exchanger, ElectrolysisSeparator, ElectrolysisExchanger, ReverseOsmosisSkid, Combustor, BatteryModel, ConstantEnergyIntensityModel)
+- `plan/01_architecture.md` §3.3 (`NetworkBlock`/`PlantBlock` composition — reference pages), §3.5 (the customizable unit-commitment logic modules), §3.6 (`report_cost`/post-hoc EECO evaluation; the reported cost is never the objective — R9), §2.3 (config-driven `build_model` + the JSON config schema)
 - `plan/01_architecture.md` §3.6 (`flexops.design` — the multi-period design wrapper documented in M16)
 - `plan/02_testing_and_ci.md` §3 (docs.yml and nightly.yml specs), §1 (tier markers for the flexdoc unit test)
 - `PLAN.md` §2 (the api_freeze script — notebook 01's source material)
@@ -34,7 +34,7 @@ page renders generated tables.
 - `docs/_templates/autosummary/unit_model.rst` — per 03 §3
 - `docs/reference/**` — sweep every existing reference page onto the directives; remove TODO markers left by M02–M13; add pages for the SISO/SIDO/DIDO bases, the full physical zoo, `NetworkBlock`, the logic modules, `flexops.design` (§4a), and `FlexCosting.evaluate_cost`/`report_cost`
 - `docs/reference/flexops/design.rst` — new page for `flexops.design` (`DesignModel`, `merge_for_design`), added to the flexops reference index
-- `docs/explanation/config_schema.md` — render pydantic models via `flexops-config-table`; document the YAML config schema driving `build_model`
+- `docs/explanation/config_schema.md` — render pydantic models via `flexops-config-table`; document the JSON config schema driving `build_model`
 - `docs/explanation/reported_cost.md` (or a section in `energy_nomenclature.md`) — the reported cost is EECO post-hoc, never the objective (§4b, R9)
 - `examples/01_build_a_plant.ipynb`, `examples/02_parameterize_from_data.ipynb`, `examples/03_rolling_horizon.ipynb`
 - `.github/workflows/docs.yml` — finalize PR + deploy jobs
@@ -121,13 +121,13 @@ model**, not just the original six:
 - **Topology bases** (`flexops/unit_models/base/`): `SISOBlock`, `SIDOBlock`,
   `DIDOBlock` — one reference page each, documenting the ports / per-stream mass
   balance / energy-registration wiring they own.
-- **Physical zoo**: `Pump`, `StorageTank`, `Separator`, `Exchanger`,
+- **Physical zoo**: `Pump`, `Tank`, `Separator`, `Exchanger`,
   `ElectrolysisSeparator`, `ElectrolysisExchanger`, `ReverseOsmosisSkid`,
   `Combustor`, `BatteryModel`, `ConstantEnergyIntensityModel`.
 
 (The old `Electrolyzer` name is gone — R6 renamed it to `Separator`; the
 electrolysis units are `ElectrolysisSeparator`/`ElectrolysisExchanger`. Do not
-reference `Electrolyzer` anywhere in the docs.) `StorageTank`'s page notes that
+reference `Electrolyzer` anywhere in the docs.) `Tank`'s page notes that
 its unit-commitment logic is disabled (a tank has no on/off status, §3.4).
 
 ### 4. Reference-page sweep
@@ -163,7 +163,7 @@ generated directives where a directive fits) for:
   document `FlexCosting.evaluate_cost`/`report_cost` — the post-solve EECO
   evaluation on the realized aggregate-power numpy array (architecture §3.6).
 - **Config-driven `build_model`** (architecture §2.3): document
-  `flexops.build_model(config)` and render the **YAML config schema** — the
+  `flexops.build_model(config)` and render the **JSON config schema** — the
   `ModelConfig` tree (`TimeConfig`, `CostingConfig`, `NetworkConfig`/`PlantConfig`,
   `UnitConfig`, `IOVariableSpec`, `SurrogateSpec`) via the
   `.. flexops-config-table::` directive on `docs/explanation/config_schema.md`
@@ -193,7 +193,7 @@ network access; **every notebook ends with an assert cell** on a numeric result
   (api_freeze.py itself uses 30 — say so in a note). Tariff/DR/surrogate JSON
   inputs are small files written inline by the notebook or shipped in
   `examples/` (implementer's choice), never fetched. The notebook **may** show
-  the config-driven path (`fo.build_model(load_model_config("plant.yaml"))`,
+  the config-driven path (`fo.build_model(load_model_config("plant.json"))`,
   architecture §2.3) alongside or instead of the imperative build, to illustrate
   that the whole model builds from one config file.
 - `02_parameterize_from_data.ipynb` — the M10 constant-EI round-trip as a
@@ -292,7 +292,7 @@ This whole milestone is documentation; specifically also:
   `schedule_rolling_horizon.md` — each becomes a thin wrapper pointing at its
   executed notebook (03 §1).
 - `docs/explanation/config_schema.md` — rendered via `flexops-config-table`
-  for the whole YAML config tree that drives `build_model` (§2.3): `ModelConfig`,
+  for the whole JSON config tree that drives `build_model` (§2.3): `ModelConfig`,
   `TimeConfig`, `CostingConfig`, `NetworkConfig`/`PlantConfig`, `UnitConfig`,
   `IOVariableSpec`, `SurrogateSpec`.
 - `docs/explanation/reported_cost.md` (or the `energy_nomenclature.md` section):
@@ -303,9 +303,9 @@ This whole milestone is documentation; specifically also:
 
 - [ ] `docs/conf.py` final: napoleon, autosummary generate, myst_nb, intersphinx (pyomo/idaes/pandas/pydantic), furo, nitpicky + curated ignore list, `NB_EXECUTION_MODE` switch
 - [ ] `flexdoc.py` provides `flexops-unit-tables` and `flexops-config-table`; failures are loud, never empty tables
-- [ ] `_templates/autosummary/unit_model.rst` in place; **every** public unit model renders generated Variables/Constraints/DoF tables — the SISO/SIDO/DIDO bases and the full physical zoo (Pump, StorageTank, Separator, Exchanger, ElectrolysisSeparator, ElectrolysisExchanger, ReverseOsmosisSkid, Combustor, BatteryModel, ConstantEnergyIntensityModel); no `Electrolyzer` reference anywhere
+- [ ] `_templates/autosummary/unit_model.rst` in place; **every** public unit model renders generated Variables/Constraints/DoF tables — the SISO/SIDO/DIDO bases and the full physical zoo (Pump, Tank, Separator, Exchanger, ElectrolysisSeparator, ElectrolysisExchanger, ReverseOsmosisSkid, Combustor, BatteryModel, ConstantEnergyIntensityModel); no `Electrolyzer` reference anywhere
 - [ ] Reference pages exist for `NetworkBlock` (§3.3), the unit-commitment logic modules (§3.5), `flexops.design` (M16), and `FlexCosting.evaluate_cost`/`report_cost` (§3.6)
-- [ ] `build_model` documented and the YAML config schema (`ModelConfig` tree) rendered via `flexops-config-table` (§2.3)
+- [ ] `build_model` documented and the JSON config schema (`ModelConfig` tree) rendered via `flexops-config-table` (§2.3)
 - [ ] Explanation note: reported cost is EECO post-hoc, never the objective (R9), linkable and cross-referenced from M12/M13 surfaces
 - [ ] Reference sweep complete: no hand-written variable tables, `grep -rn TODO docs/` is empty
 - [ ] Three notebooks committed, each ≤ 2-day horizon, fixed seeds, no network, ending in an assert cell; all execute clean

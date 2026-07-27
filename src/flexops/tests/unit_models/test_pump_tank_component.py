@@ -1,4 +1,4 @@
-"""Component-tier integration test: Pump -> Arc -> StorageTank LP system (M04)."""
+"""Component-tier integration test: Pump -> Arc -> Tank LP system (M04)."""
 
 import pyomo.environ as pyo
 import pytest
@@ -8,7 +8,7 @@ from pyomo.opt import assert_optimal_termination
 
 from flexops.core.time_block import TimeBlock
 from flexops.properties.simple_aqueous import SimpleAqueousFlow
-from flexops.unit_models import Pump, StorageTank
+from flexops.unit_models import Pump, Tank
 
 
 @pytest.mark.component
@@ -29,7 +29,7 @@ def test_pump_fills_tank_lp():
     )
     m.properties = SimpleAqueousFlow(fixed_density=True)
     m.pump = Pump(property_package=m.properties)
-    m.tank = StorageTank(
+    m.tank = Tank(
         property_package=m.properties,
         max_volume=1000 * pyunits.m**3,
         initial_volume=200 * pyunits.m**3,

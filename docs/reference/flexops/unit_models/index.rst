@@ -2,9 +2,9 @@ flexops.unit_models
 ====================
 
 Unit models are organized by inlet/outlet topology first (the ``base``
-sub-package), then specialized physically. ``Pump`` and ``StorageTank`` both
+sub-package), then specialized physically. ``Pump`` and ``Tank`` both
 subclass the single-inlet/single-outlet ``SISOBlock`` topology base
-(architecture §3.4); a ``StorageTank`` additionally disables the on/off logic
+(architecture §3.4); a ``Tank`` additionally disables the on/off logic
 layer, since a tank has no unit-commitment status (R6).
 
 .. currentmodule:: flexops.unit_models.base.siso
@@ -32,4 +32,4 @@ layer, since a tank has no unit-commitment status (R6).
    :template: unit_model.rst
    :nosignatures:
 
-   StorageTank
+   Tank

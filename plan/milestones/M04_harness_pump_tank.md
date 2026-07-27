@@ -1,4 +1,4 @@
-# M04 — Test harness + SISO base + Pump + StorageTank
+# M04 — Test harness + SISO base + Pump + Tank
 
 **Effort:** 2–3 days · **Depends on:** M03 · **Parallelizable:** with M05, M06
 
@@ -9,7 +9,7 @@ Ship the public `UnitModelTestHarness` that every subsequent unit-model mileston
 IO-topology base class `SISOBlock` (single-inlet/single-outlet ports on
 `SimpleAqueousFlow`, per-stream mass balance, energy-registration wiring —
 architecture §3.4/R6), and then the first two real unit models on top of it:
-`Pump(SISOBlock)` (constant energy intensity, LP) and `StorageTank(SISOBlock)`
+`Pump(SISOBlock)` (constant energy intensity, LP) and `Tank(SISOBlock)`
 (holdup difference equation, LP). The tank **inherits SISO but disables its
 logic/unit-commitment constraints** — a tank has no on/off status; this is the
 canonical "physical subclass turns off a base capability" example (architecture
@@ -20,7 +20,7 @@ models exists.
 ## Read first
 
 - `plan/02_testing_and_ci.md` §1 (tiers), §2 (the harness — copy the class skeleton exactly), §5 (constraint-body point checks)
-- `plan/01_architecture.md` §3.4 (IO-topology base classes — the `SISOBlock` row and the "physical subclass turns off a base capability" pattern; the Pump and StorageTank rows), §3.2 (OpsBlock registration API), §3.5 (logic/UC layer — `status` is the base capability a tank disables), §3.1 (TimeBlock: `time_points`, `dt`, `register_initial_state`), §4 (energy nomenclature), §3.7 (SimpleAqueousFlow), and R6 in the §7 decision log
+- `plan/01_architecture.md` §3.4 (IO-topology base classes — the `SISOBlock` row and the "physical subclass turns off a base capability" pattern; the Pump and Tank rows), §3.2 (OpsBlock registration API), §3.5 (logic/UC layer — `status` is the base capability a tank disables), §3.1 (TimeBlock: `time_points`, `dt`, `register_initial_state`), §4 (energy nomenclature), §3.7 (SimpleAqueousFlow), and R6 in the §7 decision log
 - `plan/03_documentation.md` §2 (flexdoc — lands in M14, but it consumes `doc=` strings and the `flexops.testing` dummy helper you build now), §3 (unit-model autosummary template)
 - `plan/00_conventions.md` §2 (naming), §7 (testing summary)
 
@@ -37,9 +37,9 @@ models exists.
   varies by property package
 - `src/flexops/unit_models/base/__init__.py` — exports `SISOBlock`
 - `src/flexops/unit_models/base/siso.py` — the `SISOBlock` IO-topology base
-- `src/flexops/unit_models/__init__.py` — exports `Pump`, `StorageTank`
+- `src/flexops/unit_models/__init__.py` — exports `Pump`, `Tank`
 - `src/flexops/unit_models/pump.py` — `Pump(SISOBlock)` unit model
-- `src/flexops/unit_models/storage_tank.py` — `StorageTank(SISOBlock)` unit model
+- `src/flexops/unit_models/storage_tank.py` — `Tank(SISOBlock)` unit model
 - `src/flexops/tests/testing/test_harness.py` — harness self-checks
 - `src/flexops/tests/unit_models/base/test_siso.py` — SISO base port + bypass unit
   tests (including with pressure/temperature enabled, and `allow_bypass=False`)
@@ -99,7 +99,7 @@ return shape are implementer's choice, but keep the signature
 
 The first of the IO-topology base classes (architecture §3.4/R6). It owns port
 construction, per-stream mass balance, and the energy-registration wiring so the
-physical subclasses (`Pump`, `StorageTank`) only add the flow↔energy relationship
+physical subclasses (`Pump`, `Tank`) only add the flow↔energy relationship
 and any bounds. Subclass the OpsBlock base from M03 via the
 `declare_process_block_class` pattern established in `flexops/core/ops_block.py`
 (class name **`SISOBlock`**, data class `SISOBlockData(OpsBlockData)`).
@@ -112,7 +112,7 @@ not re-declare it):
   `relaxation`, `allow_bypass`, `external_dispatch`, `costing_package`).
   **`SISOBlock` overrides the inherited `allow_bypass` default to `True`**
   (`CONFIG.get("allow_bypass").set_default_value(True)`) so the SISO topology
-  (and `Pump`/`StorageTank` on top of it) is well-posed (DoF == 0) out of the
+  (and `Pump`/`Tank` on top of it) is well-posed (DoF == 0) out of the
   box; pass `allow_bypass=False` to leave state variables unlinked and wire a
   custom relationship instead. The base `OpsBlock` default stays `False`.
 - One **`inlet`** `Port` and one **`outlet`** `Port`, built via the inherited
@@ -152,7 +152,7 @@ not re-declare it):
   draw); subclasses call `declare_power` as needed.
 - Logic/unit-commitment is available (the base `status` capability, §3.5) but
   **not built by `SISOBlock`** — it is opt-in via the `unit_commitment` config,
-  and a subclass may disable it entirely (see `StorageTank`, §5).
+  and a subclass may disable it entirely (see `Tank`, §5).
 
 ### 4. `unit_models/pump.py` — `Pump(SISOBlock)`
 
@@ -188,9 +188,9 @@ from the SISO base, and adds only the electrical-work relationship. Behavior
   module docstring; the constant-intensity model is the only relationship this
   milestone builds.
 
-### 5. `unit_models/storage_tank.py` — `StorageTank(SISOBlock)`
+### 5. `unit_models/storage_tank.py` — `Tank(SISOBlock)`
 
-Subclass **`SISOBlock`** (class name **`StorageTank`**, data class
+Subclass **`SISOBlock`** (class name **`Tank`**, data class
 `StorageTankData(SISOBlockData)`). It inherits the inlet/outlet ports (and their
 `flow_vol_phase` state variables) from the SISO base; the tank's dynamics **replace** the SISO
 pass-through mass balance with a holdup difference equation (inlet and outlet
@@ -296,13 +296,13 @@ and in the class docstring):**
 7. **Forgetting tier markers on harness stages.** The root conftest (M00) fails
    collection on unmarked tests; mark the methods on the harness itself so
    subclasses inherit them.
-8. **Re-declaring ports/mass balance in subclasses.** `Pump` and `StorageTank`
+8. **Re-declaring ports/mass balance in subclasses.** `Pump` and `Tank`
    inherit inlet/outlet ports and their `flow_vol_phase` state variables from `SISOBlock`;
    redeclaring them duplicates components. Add only the flow↔energy relationship
    (Pump) or the holdup dynamics (Tank). The tank *replaces* the pass-through
    balance rather than adding a second one.
 9. **Tank silently keeping a `status` var.** The disable must be real: if a
-   caller passes a `unit_commitment` config, `StorageTank` must still build **no**
+   caller passes a `unit_commitment` config, `Tank` must still build **no**
    `status[t]`/UC constraints. Test it (`test_tank_logic_disabled`) — a tank with
    an on/off binary is a modeling bug, not just clutter (R6).
 10. **Port `Reference`s vs. state blocks in `add_bypass_constraints`.**
@@ -340,9 +340,9 @@ and in the class docstring):**
   - `test_mass_balance_by_hand` — `@pytest.mark.unit`. Build a 4-step tank, fix `flow_in = [100, 100, 0, 0]`, `flow_out = [50, 50, 50, 50]` m³/hr, set `volume` values to the hand-computed trajectory from `volume[0]=200` with `dt=0.25 h` (200, 212.5, 225, 212.5), and assert each holdup-constraint **body** evaluates to 0 within `pytest.approx(abs=1e-9)` — no solver (testing doc §5). Also assert exactly 3 holdup constraints exist.
   - `test_capacity_bounded_by_max_volume` — `@pytest.mark.unit`. `capacity.lb == min_volume`, `capacity.ub == max_volume`, fixed at `max_volume` by default.
   - `test_level_bounds` — `@pytest.mark.unit`. Build with `level_min=0.1, level_max=0.9`; assert every `level[t]`'s bounds; with `capacity` at its default fixed value, set `volume`/`level` to a matching pair (e.g. 500/0.5 at capacity=1000) and assert `level_definition[t].body` evaluates to 0 (no solver).
-  - `test_tank_logic_disabled` — `@pytest.mark.unit`. The canonical R6 check: build a `StorageTank` (once with no `unit_commitment` config, once **explicitly passing one on**) and assert it has **no** `status` Var and no unit-commitment/semicontinuous logic constraints in either case — a tank has no on/off status (architecture §3.4/§3.5, R6). Contrast with the `Pump`, which does not disable logic.
+  - `test_tank_logic_disabled` — `@pytest.mark.unit`. The canonical R6 check: build a `Tank` (once with no `unit_commitment` config, once **explicitly passing one on**) and assert it has **no** `status` Var and no unit-commitment/semicontinuous logic constraints in either case — a tank has no on/off status (architecture §3.4/§3.5, R6). Contrast with the `Pump`, which does not disable logic.
 - `src/flexops/tests/unit_models/test_pump_tank_component.py`:
-  - `test_pump_fills_tank_lp` — `@pytest.mark.component` + `@pytest.mark.needs_highs`. 24-point hourly TimeBlock; Pump → Arc → StorageTank; tank `flow_out` fixed to 50 m³/hr; objective: minimize total `power_electrical`; solve via `get_solver` (same skip guard). Assert optimal, and total pumped volume equals total demand ± initial/final holdup by mass balance, `pytest.approx(rel=1e-6)`. Operations mode (capacity fixed) keeps this model LP.
+  - `test_pump_fills_tank_lp` — `@pytest.mark.component` + `@pytest.mark.needs_highs`. 24-point hourly TimeBlock; Pump → Arc → Tank; tank `flow_out` fixed to 50 m³/hr; objective: minimize total `power_electrical`; solve via `get_solver` (same skip guard). Assert optimal, and total pumped volume equals total demand ± initial/final holdup by mass balance, `pytest.approx(rel=1e-6)`. Operations mode (capacity fixed) keeps this model LP.
 - `src/flexops/tests/properties/test_simple_aqueous.py`, `test_simple_gas.py`:
   - `test_get_flow_basis_var_name` — `@pytest.mark.unit`. `props.get_flow_basis_var_name() == "flow_vol_phase"` on each package.
 
@@ -352,12 +352,12 @@ and in the class docstring):**
   **without** the `.. flexops-unit-tables::` directive (it does not exist until
   M14); leave a reST comment `.. TODO(M14): insert flexops-unit-tables here`.
 - `docs/reference/flexops/unit_models/index.rst` — autosummary listing the
-  `SISOBlock` base plus `Pump` and `StorageTank` with `:template:
+  `SISOBlock` base plus `Pump` and `Tank` with `:template:
   unit_model.rst`; a one-line note that Pump/Tank subclass the SISO topology base.
 - `docs/reference/flexops/testing.rst` — autodoc `UnitModelTestHarness` and
   `dummy_time_block`, plus a ~15-line "testing your own unit model" snippet
   showing a `configure()` subclass.
-- Class docstrings on `Pump`/`StorageTank` per conventions §3: description,
+- Class docstrings on `Pump`/`Tank` per conventions §3: description,
   governing equations in `.. math::`, usage snippet, config cross-references —
   the Pump docstring must state the kWh/m³ × m³/hr = kW algebra.
 
@@ -368,9 +368,9 @@ and in the class docstring):**
 - [ ] `SISOBlock` exists in `flexops/unit_models/base/siso.py`: inlet/outlet ports on `SimpleAqueousFlow` (via `add_stream_ports`), pass-through built via the generic `add_bypass_constraints` (no exclusions), power-registration wiring; registers no power itself; `allow_bypass` defaults `True` for the topology.
 - [ ] `OpsBlockData.add_bypass_constraints(inlet, outlet, *, exclude_vars=())` exists: bypasses every non-excluded, non-fixed state variable; gated by `self.config.allow_bypass`; resolves each port's sibling state block rather than the port's leaky `Reference` vars.
 - [ ] `SimpleAqueousFlow`/`SimpleGasFlow` expose `get_flow_basis_var_name() -> "flow_vol_phase"`.
-- [ ] `Pump(SISOBlock)` and `StorageTank(SISOBlock)` importable from `flexops.unit_models`; both inherit SISO ports/bypass; all IO/parameter/energy registrations present. `Pump` carries a `.. todo::` note for a future detailed power law (not implemented).
-- [ ] `StorageTank` uses `volume`/`level` (not the terse `V`); `capacity` is bounded `(min_volume, max_volume)`; `level[t] = volume[t]/capacity` is bounded `(level_min, level_max)` via `level_definition`; the holdup equation converts the whole flow-difference expression, not just `dt`.
-- [ ] `StorageTank` disables logic/unit-commitment (no `status` var / no UC constraints) even when a `unit_commitment` config is passed (R6); `test_tank_logic_disabled` passes.
+- [ ] `Pump(SISOBlock)` and `Tank(SISOBlock)` importable from `flexops.unit_models`; both inherit SISO ports/bypass; all IO/parameter/energy registrations present. `Pump` carries a `.. todo::` note for a future detailed power law (not implemented).
+- [ ] `Tank` uses `volume`/`level` (not the terse `V`); `capacity` is bounded `(min_volume, max_volume)`; `level[t] = volume[t]/capacity` is bounded `(level_min, level_max)` via `level_definition`; the holdup equation converts the whole flow-difference expression, not just `dt`.
+- [ ] `Tank` disables logic/unit-commitment (no `status` var / no UC constraints) even when a `unit_commitment` config is passed (R6); `test_tank_logic_disabled` passes.
 - [ ] SISO base bypass unit tests pass, including with pressure/temperature enabled and with `allow_bypass=False`.
 - [ ] `pytest -m unit` passes with no solver installed; `pytest -m component` passes with HiGHS (and skips cleanly when M05 is absent).
 - [ ] Hand mass-balance test evaluates constraint bodies (no solve).
