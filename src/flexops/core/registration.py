@@ -59,11 +59,17 @@ class PowerRecord:
         var: The live Pyomo ``Var`` (kW).
         name: The nomenclature constant value (e.g. ``"power_electrical"``).
         kind: The :class:`~flexcore.nomenclature.PowerKind` of the draw.
+        fuel_name: The fuel's name (e.g. ``"natural_gas"``); set only when
+            ``kind is PowerKind.FUEL``, else ``None``.
+        temperature: The heat duty's temperature (a unit-carrying value); set
+            only when ``kind is PowerKind.THERMAL``, else ``None``.
     """
 
     var: Any
     name: str
     kind: PowerKind
+    fuel_name: str | None = None
+    temperature: Any | None = None
 
 
 @dataclass

@@ -233,6 +233,16 @@ class CostingConfig(_StrictModel):
         "costs such as maintenance, labor, and chemicals. Distinct from the "
         "tariff's own fixed charge (which EECO includes in the electricity cost).",
     )
+    lifetime_years: float = Field(
+        default=20.0,
+        description="Plant lifetime in years (> 0), used with discount_rate to "
+        "form the capital recovery factor that annualizes capital cost.",
+    )
+    discount_rate: float = Field(
+        default=0.08,
+        description="Annual discount rate (fraction, e.g. 0.08 = 8%) for the "
+        "capital recovery factor. 0 falls back to straight-line 1/lifetime.",
+    )
     objective: Literal["cost"] = Field(
         default="cost",
         description="Objective to minimize (only tariff cost in v0).",

@@ -88,6 +88,15 @@ _CHARGE_COLUMNS = (
 _ELECTRIC = _eeco_costs.ELECTRIC
 _GAS = _eeco_costs.GAS
 
+# The units EECO expects across the cost boundary. EECO exposes no unit
+# attributes of its own (its numbers are plain magnitudes); these are the
+# flex-pse conventions its electric and gas legs assume — electrical power in kW,
+# gas/fuel usage as a volumetric rate in m^3/hr. FlexCosting normalizes every
+# aggregate to these units (via an explicit Var + constraint) before handing it
+# to add_electricity_cost / add_gas_cost.
+EECO_POWER_UNITS = pyo.units.kW
+EECO_GAS_USAGE_UNITS = pyo.units.m**3 / pyo.units.hr
+
 # Currency basis: map a tariff charge-``units`` symbol (the numerator before the
 # ``/``) to a Pyomo currency unit name. EECO tariffs are dollar-based.
 _CURRENCY_SYMBOLS = {"$": "USD"}

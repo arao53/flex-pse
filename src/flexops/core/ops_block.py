@@ -321,19 +321,90 @@ class OpsBlockData(UnitModelBlockData):
                 value=kind,
             )
 
-    def register_power(self, var, kind: nm.PowerKind = nm.PowerKind.ELECTRICAL) -> None:
+    @staticmethod
+    def _check_power_metadata(kind, fuel_name, temperature) -> None:
+        """Validate ``fuel_name``/``temperature`` against ``kind``.
+
+        A fuel draw must name its fuel and carry no temperature; a thermal draw
+        must carry a temperature and no fuel name; an electrical draw carries
+        neither.
+
+        Args:
+            kind: The :class:`~flexcore.nomenclature.PowerKind` of the draw.
+            fuel_name: The fuel name, or ``None``.
+            temperature: The heat-duty temperature (unit-carrying), or ``None``.
+
+        Raises:
+            FlexConfigError: If the metadata does not match ``kind``.
+        """
+        if kind is nm.PowerKind.FUEL:
+            if not fuel_name:
+                raise FlexConfigError(
+                    "A PowerKind.FUEL draw requires a fuel_name (e.g. "
+                    "'natural_gas').",
+                    field="fuel_name",
+                    value=fuel_name,
+                )
+            if temperature is not None:
+                raise FlexConfigError(
+                    "A PowerKind.FUEL draw must not carry a temperature.",
+                    field="temperature",
+                    value=temperature,
+                )
+        elif kind is nm.PowerKind.THERMAL:
+            if temperature is None:
+                raise FlexConfigError(
+                    "A PowerKind.THERMAL draw requires a temperature (a "
+                    "unit-carrying value, e.g. 350 * pyunits.K).",
+                    field="temperature",
+                    value=temperature,
+                )
+            if fuel_name is not None:
+                raise FlexConfigError(
+                    "A PowerKind.THERMAL draw must not carry a fuel_name.",
+                    field="fuel_name",
+                    value=fuel_name,
+                )
+        else:  # ELECTRICAL
+            if fuel_name is not None or temperature is not None:
+                raise FlexConfigError(
+                    f"A PowerKind.{kind.name} draw takes neither fuel_name nor "
+                    "temperature.",
+                    field="kind",
+                    value=kind,
+                )
+
+    def register_power(
+        self,
+        var,
+        kind: nm.PowerKind = nm.PowerKind.ELECTRICAL,
+        *,
+        fuel_name: str | None = None,
+        temperature=None,
+    ) -> None:
         """Register a power-draw variable for plant/costing aggregation.
 
         Args:
             var: The Pyomo ``Var`` (kW) to register.
             kind: The :class:`~flexcore.nomenclature.PowerKind` of the draw.
+            fuel_name: The fuel's name (required only for ``PowerKind.FUEL``).
+            temperature: The heat-duty temperature, a unit-carrying value
+                (required only for ``PowerKind.THERMAL``).
 
         Raises:
-            FlexConfigError: If ``kind`` is not a ``PowerKind`` member.
+            FlexConfigError: If ``kind`` is not a ``PowerKind`` member, or the
+                ``fuel_name``/``temperature`` metadata does not match ``kind``.
         """
         self._check_power_kind(kind)
+        self._check_power_metadata(kind, fuel_name, temperature)
         self._io_registry.power.append(
-            PowerRecord(var=var, name=var.local_name, kind=kind)
+            PowerRecord(
+                var=var,
+                name=var.local_name,
+                kind=kind,
+                fuel_name=fuel_name,
+                temperature=temperature,
+            )
         )
         # Forward the association to a FlexCosting block when one was given
         # (strictly conditional -- costing-less units, M04, are unaffected).
@@ -341,31 +412,50 @@ class OpsBlockData(UnitModelBlockData):
         if costing_package is not None:
             costing_package.register_unit_power(self, var, kind)
 
-    def declare_power(self, kind: nm.PowerKind = nm.PowerKind.ELECTRICAL):
+    def declare_power(
+        self,
+        kind: nm.PowerKind = nm.PowerKind.ELECTRICAL,
+        *,
+        fuel_name: str | None = None,
+        temperature=None,
+    ):
         """Create, register, and return this unit's power-draw Var (kW).
 
-        Creates ``power_electrical[t]`` (resp. ``power_thermal[t]``) indexed over
-        the time set, attaches it under the nomenclature constant name, registers
-        it, and returns it.
+        Creates ``power_electrical[t]`` (resp. ``power_thermal[t]``, or
+        ``power_fuel_<fuel_name>[t]``) indexed over the time set, attaches it
+        under its nomenclature name, registers it (with its fuel/temperature
+        metadata), and returns it.
 
         Args:
             kind: The :class:`~flexcore.nomenclature.PowerKind` of the draw.
+            fuel_name: The fuel's name (required only for ``PowerKind.FUEL``);
+                the created Var is named ``power_fuel_<fuel_name>``.
+            temperature: The heat-duty temperature, a unit-carrying value
+                (required only for ``PowerKind.THERMAL``).
 
         Returns:
             The created, time-indexed ``Var`` in kW.
 
         Raises:
-            FlexConfigError: If ``kind`` is not a ``PowerKind`` member.
+            FlexConfigError: If ``kind`` is not a ``PowerKind`` member, or the
+                ``fuel_name``/``temperature`` metadata does not match ``kind``.
         """
         self._check_power_kind(kind)
-        name, doc = _POWER_VARS[kind]
+        self._check_power_metadata(kind, fuel_name, temperature)
+        if kind is nm.PowerKind.FUEL:
+            name = f"{nm.POWER_FUEL}_{fuel_name}"
+            doc = f"Fuel draw of the unit ({fuel_name})"
+        else:
+            name, doc = _POWER_VARS[kind]
         tb = self._find_time_block()
         self.add_component(
             name,
             pyo.Var(tb.time_index, initialize=0.0, units=pyunits.kW, doc=doc),
         )
         var = self.find_component(name)
-        self.register_power(var, kind=kind)
+        self.register_power(
+            var, kind=kind, fuel_name=fuel_name, temperature=temperature
+        )
         return var
 
     # -- stream state blocks + ports (property package, §3.7) --------------

@@ -156,27 +156,76 @@ FlexCosting block
    CostReport
    OperatingCostBreakdown
    CapitalCostBreakdown
+   FuelSpec
+   ScalarCostSpec
 
 ``FlexCosting`` subclasses IDAES ``FlowsheetCostingBlockData`` and **delegates
-all tariff operating cost to EECO** (decision R4), in two ways: it hands EECO the
-aggregate electrical power (kW) + tariff to build the convex-relaxed in-objective
-cost (:func:`~flexops.costing.add_electricity_cost`), and post-solve calls EECO's
-evaluator (:func:`~flexops.costing.evaluate_cost`) for the reported bill. Its own
-jobs are aggregation, the ``opex``/``capex`` block structure and naming, CapEx +
-modes, and ``report_cost``; it writes no tariff cost math.
+all tariff/energy operating cost to EECO** (decision R4), in two ways: it hands
+EECO the aggregate electrical power (kW) + tariff to build the convex-relaxed
+in-objective cost (:func:`~flexops.costing.add_electricity_cost`), and post-solve
+calls EECO's evaluator (:func:`~flexops.costing.evaluate_cost`) for the reported
+bill. Its own jobs are aggregation, the ``opex``/``capex`` block structure and
+naming, CapEx + modes, and ``report_cost``; it writes no tariff cost math.
+
+Every quantity FlexCosting exposes is a **decision-visible** ``Var`` defined by an
+``eq_<name>`` equality ``Constraint`` — aggregate power, each cost line item, the
+annualized cost, and the totals are first-class model variables (not bare
+Expressions).
 
 Every cost lives in one of two sub-blocks built by
 :meth:`~FlexCostingData.cost_process`:
 
 * **``opex``** holds all operating cost — ``electricity_cost`` and ``fuel_cost``
-  (both from EECO) plus ``fixed_operating_cost`` (a non-tariff facility cost:
-  maintenance/labor/chemicals, from ``CostingConfig.fixed_operating_cost``). Their
-  sum, ``total_operating_cost``, is re-exposed as ``aggregate_operating_cost`` —
-  the operations-mode objective. The fixed operating cost is **distinct** from the
+  (both from EECO), ``fixed_operating_cost`` (a non-tariff facility cost:
+  maintenance/labor/chemicals, from ``CostingConfig.fixed_operating_cost``), and
+  ``scalar_cost`` (non-energy flows/supplies/products, below). Their sum,
+  ``total_operating_cost``, is re-exposed as ``aggregate_operating_cost`` — the
+  operations-mode objective. The fixed operating cost is **distinct** from the
   tariff's own ``fixed_charge``, which EECO already folds into ``electricity_cost``.
 * **``capex``** is an **empty placeholder** in v0 (``total_capital_cost == 0``,
   re-exposed as ``aggregate_capital_cost``); later milestones aggregate per-unit
   capital costs into it.
+
+.. note:: **Indexed per-carrier power aggregation.**
+
+   :meth:`~FlexCostingData.cost_process` pulls every registered power draw from
+   the model and defines ``aggregate_power[t, carrier]`` in kW, where ``carrier``
+   is ``"electrical"``, a registered **fuel** name, or a per-temperature thermal
+   label ``"thermal@<T>K"``. Every draw is normalized to kW with
+   ``pyunits.convert`` at aggregation, so a non-power (or non-kW-convertible) draw
+   fails **loudly**. Thermal duties at **different temperatures are never summed**
+   together — each temperature is its own carrier; ``aggregate_thermal_power`` is a
+   temperature-blind total kept for backward compatibility.
+
+.. note:: **Fuels — all billed via EECO's gas leg.**
+
+   :meth:`~FlexCostingData.register_fuel` registers a named fuel (natural gas,
+   hydrogen, biogas, …) with a ``heating_value`` and a ``fuel_units`` basis —
+   volumetric (``m**3``, the default) or energy (``therm``). Its kW draws
+   aggregate under the fuel's carrier and are billed through the existing
+   :func:`~flexops.costing.add_gas_cost` against the **same tariff** loaded at
+   construction, normalized to the fuel's usage rate (``fuel_units/hr``) via the
+   heating value. flex-pse synthesizes **no** tariff content and does **no**
+   fuel-type recognition; a fuel priced in the tariff sheet's ``gas``-utility rows
+   just works, and a tariff missing those rows surfaces EECO's own validation
+   error.
+
+.. note:: **Non-energy scalar costs — native, never via EECO.**
+
+   :meth:`~FlexCostingData.register_scalar_cost` costs an arbitrary time-indexed
+   rate (a flow/supply/product) as ``price × Σ_t quantity[t] × dt`` — e.g. water
+   withdrawal ($/m³), chemical dosing ($/kg), or a product-revenue credit (a
+   negative ``price``). Built entirely in flex-pse; EECO is not involved. A
+   ``quantity`` that does not convert to the declared ``quantity_units`` raises,
+   forcing unit consistency.
+
+.. note:: **Annualization.**
+
+   ``cost_process`` builds a ``capital_recovery_factor`` (from
+   ``CostingConfig.lifetime_years`` and ``discount_rate``) and an
+   ``annualized_cost`` Var ($/year): operating cost scaled from the horizon to a
+   year plus capital cost times the CRF. With the empty v0 capex block, the
+   annualized cost is just the operating cost on an annual basis.
 
 .. note:: **Currency basis.**
 

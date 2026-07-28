@@ -9,7 +9,9 @@ from flexops.costing.flex_costing import (
     CapitalCostBreakdown,
     CostReport,
     FlexCosting,
+    FuelSpec,
     OperatingCostBreakdown,
+    ScalarCostSpec,
 )
 from flexops.costing.opex import (
     DRConfig,
@@ -49,4 +51,6 @@ __all__ = [
     "CostReport",
     "OperatingCostBreakdown",
     "CapitalCostBreakdown",
+    "FuelSpec",
+    "ScalarCostSpec",
 ]

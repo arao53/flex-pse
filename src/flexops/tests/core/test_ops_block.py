@@ -284,11 +284,29 @@ def test_register_power_rejects_string(dummy_model):
 
 @pytest.mark.unit
 def test_declare_power_thermal(dummy_model):
-    """declare_power(PowerKind.THERMAL) builds and registers power_thermal in kW."""
-    var = dummy_model.unit.declare_power(nm.PowerKind.THERMAL)
+    """declare_power(PowerKind.THERMAL, temperature=...) builds power_thermal in kW."""
+    var = dummy_model.unit.declare_power(
+        nm.PowerKind.THERMAL, temperature=350 * pyunits.K
+    )
     assert var is getattr(dummy_model.unit, nm.POWER_THERMAL)
     assert pyunits.get_units(var[0]) == pyunits.kW
-    assert dummy_model.unit._io_registry.power[-1].kind == "thermal"
+    record = dummy_model.unit._io_registry.power[-1]
+    assert record.kind == "thermal"
+    assert pyunits.get_units(record.temperature) == pyunits.K
+
+
+@pytest.mark.unit
+def test_declare_power_thermal_requires_temperature(dummy_model):
+    """A thermal draw without a temperature is a config error."""
+    with pytest.raises(FlexConfigError, match="temperature"):
+        dummy_model.unit.declare_power(nm.PowerKind.THERMAL)
+
+
+@pytest.mark.unit
+def test_declare_power_fuel_requires_name(dummy_model):
+    """A fuel draw without a fuel_name is a config error."""
+    with pytest.raises(FlexConfigError, match="fuel_name"):
+        dummy_model.unit.declare_power(nm.PowerKind.FUEL)
 
 
 @pytest.mark.unit

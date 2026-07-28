@@ -26,6 +26,12 @@
       "additionalProperties": false,
       "description": "Tariff, demand-response, and solve/objective options for a run.",
       "properties": {
+        "discount_rate": {
+          "default": 0.08,
+          "description": "Annual discount rate (fraction, e.g. 0.08 = 8%) for the capital recovery factor. 0 falls back to straight-line 1/lifetime.",
+          "title": "Discount Rate",
+          "type": "number"
+        },
         "dr": {
           "anyOf": [
             {
@@ -42,6 +48,12 @@
           "default": 0.0,
           "description": "Fixed operating cost in dollars over the horizon: non-tariff costs such as maintenance, labor, and chemicals. Distinct from the tariff's own fixed charge (which EECO includes in the electricity cost).",
           "title": "Fixed Operating Cost",
+          "type": "number"
+        },
+        "lifetime_years": {
+          "default": 20.0,
+          "description": "Plant lifetime in years (> 0), used with discount_rate to form the capital recovery factor that annualizes capital cost.",
+          "title": "Lifetime Years",
           "type": "number"
         },
         "objective": {
