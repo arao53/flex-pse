@@ -23,7 +23,7 @@ from flexops.costing import (
     add_electricity_cost,
     add_operating_cost,
     evaluate_cost,
-    evaluate_gas_cost,
+    evaluate_fuel_cost,
     load_dr_program,
     load_tariff,
     opex,
@@ -242,14 +242,14 @@ def _flat_two_utility_tariff():
 
 
 def _two_utility_model(elec_kw: np.ndarray, gas_flow: np.ndarray) -> pyo.ConcreteModel:
-    """A toy block carrying the standard `power_electrical`/`gas_usage` Vars (fixed)."""
+    """A toy block carrying the standard `power_electrical`/`fuel_usage` Vars, fixed."""
     m = pyo.ConcreteModel()
     m.t = pyo.RangeSet(0, _N24 - 1)
     m.power_electrical = pyo.Var(m.t, bounds=(0, None))
-    m.gas_usage = pyo.Var(m.t, bounds=(0, None))
+    m.fuel_usage = pyo.Var(m.t, bounds=(0, None))
     for i in m.t:
         m.power_electrical[i].fix(float(elec_kw[i]))
-        m.gas_usage[i].fix(float(gas_flow[i]))
+        m.fuel_usage[i].fix(float(gas_flow[i]))
     return m
 
 
@@ -284,7 +284,7 @@ def test_add_operating_cost_combines_electric_and_gas():
     handles = add_operating_cost(
         block=m,
         electrical_power=m.power_electrical,
-        gas_power=m.gas_usage,
+        fuel_power=m.fuel_usage,
         time_index=index,
         dt_hours=1.0,
         tariff=tariff,
@@ -295,7 +295,7 @@ def test_add_operating_cost_combines_electric_and_gas():
     combined = pyo.value(handles.total_operating_cost)
     expected = evaluate_cost(
         elec, tariff, dt_hours=1.0, time_index=index
-    ) + evaluate_gas_cost(gas, tariff, dt_hours=1.0, time_index=index)
+    ) + evaluate_fuel_cost(gas, tariff, dt_hours=1.0, time_index=index)
     assert set(handles.eeco_block) == {"electric", "gas"}
     assert combined == pytest.approx(expected, abs=1e-3)
 
@@ -303,7 +303,7 @@ def test_add_operating_cost_combines_electric_and_gas():
 @pytest.mark.component
 @pytest.mark.needs_highs
 def test_add_operating_cost_reads_block_defaults():
-    """With no power args, reads block.power_electrical / block.gas_usage."""
+    """With no power args, reads block.power_electrical / block.fuel_usage."""
     from flexcore.solvers import get_solver
 
     tariff = _flat_two_utility_tariff()
@@ -319,7 +319,7 @@ def test_add_operating_cost_reads_block_defaults():
     combined = pyo.value(handles.total_operating_cost)
     expected = evaluate_cost(
         elec, tariff, dt_hours=1.0, time_index=index
-    ) + evaluate_gas_cost(gas, tariff, dt_hours=1.0, time_index=index)
+    ) + evaluate_fuel_cost(gas, tariff, dt_hours=1.0, time_index=index)
     assert set(handles.eeco_block) == {"electric", "gas"}
     assert combined == pytest.approx(expected, abs=1e-3)
 

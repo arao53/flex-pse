@@ -431,7 +431,7 @@ def test_register_fuel():
         assert pyo.value(m.costing.aggregate_power[t, "natural_gas"]) == pytest.approx(
             pyo.value(fuel[t])
         )
-    # The gas leg wired through add_gas_cost: normalized usage var + EECO gas_* comps.
+    # The fuel leg wired through add_fuel_cost: normalized usage var + EECO gas_* comps.
     assert m.costing.opex.find_component("eeco_gas_usage_natural_gas") is not None
     assert m.costing.opex.find_component("fuel_cost_natural_gas") is not None
     assert any(

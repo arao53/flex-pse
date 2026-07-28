@@ -33,11 +33,11 @@ Loaders and CSV conversion
    tariff_currency_units
 
 A tariff may be authored as a JSON records structure or imported from an EECO
-``rate_data`` CSV. The JSON form is a ``rate_data`` records list, e.g. (an
+``rate_data`` CSV. The JSON form is a ``tariff_data`` records list, e.g. (an
 excerpt of the demo ``flexdemo-b20`` time-of-use tariff)::
 
     {
-      "rate_data": [
+      "tariff_data": [
         {"utility": "electric", "type": "energy", "name": "peak",
          "month_start": 6, "month_end": 9, "weekday_start": 0, "weekday_end": 4,
          "hour_start": 16, "hour_end": 21, "basic_charge_limit (metric)": 0,
@@ -51,6 +51,14 @@ excerpt of the demo ``flexdemo-b20`` time-of-use tariff)::
 
 Charge windows are half-open on the hour: ``hour_start=16, hour_end=21`` bills
 hours 16:00–20:59 inclusive (21:00 is off-peak).
+
+An optional ``assessed`` column controls the billing period of a ``demand``
+charge row: EECO defaults to ``"monthly"`` when the column is absent or the
+row omits it, applying one demand-charge epigraph over the whole
+``month_start``–``month_end`` window. Set ``"assessed": "daily"`` on a demand
+row to instead apply a separate epigraph per calendar day within that
+window — the pattern behind daily demand charges on tariffs such as those
+increasingly common in California.
 
 Tariff signal helpers
 ----------------------
@@ -77,18 +85,20 @@ In-objective cost bridge
 
    add_operating_cost
    add_electricity_cost
-   add_gas_cost
+   add_fuel_cost
    OperatingCostHandles
 
 :func:`add_operating_cost` is the facility-level umbrella: it builds **both**
-the electricity and gas costs onto one opex block (EECO namespaces its Pyomo
+the electricity and fuel costs onto one opex block (EECO namespaces its Pyomo
 components by utility, so ``electric_*`` and ``gas_*`` never collide) and returns
 a single :class:`OperatingCostHandles` whose ``total_operating_cost`` is the sum
 across utilities. The facility consumption defaults to the standard series on the
-block — ``block.power_electrical`` and ``block.gas_usage`` — so a caller need not
-re-declare them each use; pass ``electrical_power``/``gas_power`` to override. The
-single-utility builders :func:`add_electricity_cost` and :func:`add_gas_cost`
-remain available for building one leg alone.
+block — ``block.power_electrical`` and ``block.fuel_usage`` — so a caller need not
+re-declare them each use; pass ``electrical_power``/``fuel_power`` to override. The
+single-utility builders :func:`add_electricity_cost` and :func:`add_fuel_cost`
+remain available for building one leg alone. :func:`add_fuel_cost` takes a
+``fuel_type`` (default ``"gas"``, the only value EECO 0.2.1 supports); a
+hydrogen utility is expected upstream and will add a second value.
 
 Post-optimization evaluators
 ----------------------------
@@ -98,7 +108,7 @@ Post-optimization evaluators
    :nosignatures:
 
    evaluate_cost
-   evaluate_gas_cost
+   evaluate_fuel_cost
 
 Demand response (containers-only in v0)
 ---------------------------------------
@@ -203,7 +213,7 @@ Every cost lives in one of two sub-blocks built by
    hydrogen, biogas, …) with a ``heating_value`` and a ``fuel_units`` basis —
    volumetric (``m**3``, the default) or energy (``therm``). Its kW draws
    aggregate under the fuel's carrier and are billed through the existing
-   :func:`~flexops.costing.add_gas_cost` against the **same tariff** loaded at
+   :func:`~flexops.costing.add_fuel_cost` against the **same tariff** loaded at
    construction, normalized to the fuel's usage rate (``fuel_units/hr``) via the
    heating value. flex-pse synthesizes **no** tariff content and does **no**
    fuel-type recognition; a fuel priced in the tariff sheet's ``gas``-utility rows

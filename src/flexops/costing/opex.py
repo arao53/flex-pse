@@ -18,10 +18,10 @@ exception hierarchy.
 **Two ways EECO is used** (architecture §2.4):
 
 1. *In-objective* — :func:`add_operating_cost` (the facility umbrella over the
-   single-utility :func:`add_electricity_cost` / :func:`add_gas_cost`) asks EECO
+   single-utility :func:`add_electricity_cost` / :func:`add_fuel_cost`) asks EECO
    to build the **convex-relaxed** operating-cost ``Expression`` on a Pyomo block.
    This is the tractable proxy the scheduler minimizes, not the reported bill.
-2. *Post-optimization* — :func:`evaluate_cost` / :func:`evaluate_gas_cost`
+2. *Post-optimization* — :func:`evaluate_cost` / :func:`evaluate_fuel_cost`
    evaluate EECO on a **fixed, realized** aggregate-power numpy array to compute
    the TRUE (de-relaxed) cost — the user-facing number (§6 reporting rule).
 
@@ -88,12 +88,17 @@ _CHARGE_COLUMNS = (
 _ELECTRIC = _eeco_costs.ELECTRIC
 _GAS = _eeco_costs.GAS
 
+# Fuel type -> underlying EECO utility. "gas" is the only fuel utility EECO
+# 0.2.1 exposes; every registered fuel (natural gas, biogas, ...) bills through
+# it today. Add an entry here once EECO exposes a hydrogen utility.
+_FUEL_UTILITY = {"gas": _GAS}
+
 # The units EECO expects across the cost boundary. EECO exposes no unit
 # attributes of its own (its numbers are plain magnitudes); these are the
 # flex-pse conventions its electric and gas legs assume — electrical power in kW,
 # gas/fuel usage as a volumetric rate in m^3/hr. FlexCosting normalizes every
 # aggregate to these units (via an explicit Var + constraint) before handing it
-# to add_electricity_cost / add_gas_cost.
+# to add_electricity_cost / add_fuel_cost.
 EECO_POWER_UNITS = pyo.units.kW
 EECO_GAS_USAGE_UNITS = pyo.units.m**3 / pyo.units.hr
 
@@ -103,10 +108,10 @@ _CURRENCY_SYMBOLS = {"$": "USD"}
 
 # Standard block attribute names the combined :func:`add_operating_cost` reads
 # when a consumption series is not passed explicitly. Electric uses the canonical
-# nomenclature name (``power_electrical``); gas has no nomenclature entry in v0,
-# so its name is a documented local convention — a gas-usage series in EECO's gas
-# units (m³/hr by default), not a kW ``power_thermal`` duty.
-_GAS_USAGE_ATTR = "gas_usage"
+# nomenclature name (``power_electrical``); fuel has no nomenclature entry in v0,
+# so its name is a documented local convention — a fuel-usage series in EECO's
+# gas units (m³/hr by default), not a kW ``power_thermal`` duty.
+_FUEL_USAGE_ATTR = "fuel_usage"
 
 
 # --------------------------------------------------------------------------- #
@@ -185,30 +190,31 @@ def _validate_rate_data(frame: pd.DataFrame, *, source: str) -> pd.DataFrame:
     return frame
 
 
-def _rate_data_from_dict(payload: Any, *, source: str) -> pd.DataFrame:
+def _tariff_data_from_dict(payload: Any, *, source: str) -> pd.DataFrame:
     """Build a rate_data DataFrame from a dict/list records structure.
 
     Args:
-        payload: Either a mapping with a ``"rate_data"`` records list, or a bare
-            list of row records.
+        payload: Either a mapping with a ``"tariff_data"`` records list, or a
+            bare list of row records.
         source: Origin label for error messages.
 
     Returns:
         The validated rate_data DataFrame.
 
     Raises:
-        FlexDataError: If the structure is not a records list / rate_data mapping.
+        FlexDataError: If the structure is not a records list / tariff_data
+            mapping.
     """
-    if isinstance(payload, dict) and "rate_data" in payload:
-        records = payload["rate_data"]
+    if isinstance(payload, dict) and "tariff_data" in payload:
+        records = payload["tariff_data"]
     elif isinstance(payload, list):
         records = payload
     else:
         raise FlexDataError(
             f"Tariff {source} must be a list of row records or a mapping with a "
-            "'rate_data' key; got "
+            "'tariff_data' key; got "
             f"{type(payload).__name__}.",
-            field="rate_data",
+            field="tariff_data",
         )
     return _validate_rate_data(pd.DataFrame.from_records(records), source=source)
 
@@ -240,7 +246,7 @@ def load_tariff(source: str | Path | dict | list | pd.DataFrame) -> pd.DataFrame
     if isinstance(source, pd.DataFrame):
         return _validate_rate_data(source.copy(), source="<DataFrame>")
     if isinstance(source, (dict, list)):
-        return _rate_data_from_dict(source, source="<dict>")
+        return _tariff_data_from_dict(source, source="<dict>")
 
     path = Path(source)
     if path.suffix.lower() == ".csv":
@@ -250,10 +256,10 @@ def load_tariff(source: str | Path | dict | list | pd.DataFrame) -> pd.DataFrame
     except (OSError, ValueError, json.JSONDecodeError) as exc:
         raise FlexDataError(
             f"Could not load tariff file {path}: {exc}. Provide a valid EECO "
-            "tariff JSON (a 'rate_data' records list) or a rate_data CSV.",
+            "tariff JSON (a 'tariff_data' records list) or a rate_data CSV.",
             field="tariff_source",
         ) from exc
-    return _rate_data_from_dict(payload, source=str(path))
+    return _tariff_data_from_dict(payload, source=str(path))
 
 
 def load_dr_program(source: str | Path | dict | None) -> dict | None:
@@ -298,7 +304,7 @@ def tariff_csv_to_dict(
     Reads a tariff CSV in EECO's ``rate_data`` column schema (``utility``,
     ``type``, ``name``, ``month_start``/``end``, ``weekday_start``/``end``,
     ``hour_start``/``end``, a charge column, ``basic_charge_limit``…) and returns
-    the equivalent ``{"rate_data": [records]}`` structure that :func:`load_tariff`
+    the equivalent ``{"tariff_data": [records]}`` structure that :func:`load_tariff`
     accepts. Does **no** charge math — a pure schema conversion, for authoring or
     importing tariffs in the common CSV exchange format instead of hand-typed
     JSON.
@@ -312,7 +318,7 @@ def tariff_csv_to_dict(
             dict is returned either way.
 
     Returns:
-        A ``{"rate_data": [records]}`` dict equivalent to the CSV.
+        A ``{"tariff_data": [records]}`` dict equivalent to the CSV.
 
     Raises:
         FlexDataError: If the CSV cannot be read or is missing required columns;
@@ -334,7 +340,7 @@ def tariff_csv_to_dict(
             ) from exc
 
     _validate_rate_data(frame, source=label)
-    payload = {"rate_data": frame.to_dict(orient="records")}
+    payload = {"tariff_data": frame.to_dict(orient="records")}
 
     if write_to is not None:
         Path(write_to).write_text(json.dumps(payload, indent=2) + "\n")
@@ -355,9 +361,6 @@ def _register_currency(unit_name: str):
         The Pyomo units object for ``unit_name``.
     """
     if not hasattr(pyo.units, unit_name):
-        # Defines the [currency] dimension on first use (IDAES' CE-indexed
-        # currency units are not registered unless a unit costing package asks;
-        # a plain, un-indexed currency is what flex-pse labels costs with).
         pyo.units.load_definitions_from_strings([f"{unit_name} = [currency]"])
     return getattr(pyo.units, unit_name)
 
@@ -630,7 +633,7 @@ def _add_utility_cost(
     """Ask EECO to build the convex-relaxed in-objective cost for one utility.
 
     Shared implementation of :func:`add_operating_cost` (electric) and
-    :func:`add_gas_cost` (gas). EECO owns all cost math; this only ensures the
+    :func:`add_fuel_cost` (fuel). EECO owns all cost math; this only ensures the
     ``block.t`` index set EECO's Pyomo helpers require, calls
     ``eeco.costs.calculate_itemized_cost`` on ``block``, and renames the outputs.
 
@@ -717,7 +720,7 @@ def add_electricity_cost(
     """Build EECO's convex-relaxed in-objective **electricity** cost on ``block``.
 
     The single-utility electric builder. :func:`add_operating_cost` is the
-    facility-level umbrella that wraps this and :func:`add_gas_cost` onto one
+    facility-level umbrella that wraps this and :func:`add_fuel_cost` onto one
     opex block; call this directly only when you want the electric leg alone.
 
     Hands EECO the kW series, tariff, and timestep; EECO owns the math (energy
@@ -754,45 +757,57 @@ def add_electricity_cost(
     )
 
 
-def add_gas_cost(
+def add_fuel_cost(
     *,
     block: pyo.Block,
-    gas_power,
+    fuel_power,
     time_index: pd.DatetimeIndex,
     dt_hours: float,
     tariff: pd.DataFrame,
+    fuel_type: str = "gas",
     dr_config: "DRConfig | None" = None,
 ) -> OperatingCostHandles:
-    """Build EECO's convex-relaxed in-objective gas cost on ``block``.
+    """Build EECO's convex-relaxed in-objective fuel cost on ``block``.
 
-    Mirrors :func:`add_electricity_cost` for the gas utility: same rules (EECO
+    Mirrors :func:`add_electricity_cost` for a fuel utility: same rules (EECO
     owns the math, no cost math here, DR is a no-op container in v0), same
-    :class:`OperatingCostHandles` shape (gas-flavored). ``tariff`` is the same
-    rate_data object; EECO selects the ``"gas"`` utility rows.
+    :class:`OperatingCostHandles` shape (fuel-flavored). ``tariff`` is the same
+    rate_data object; EECO selects the underlying utility's rows.
 
     Args:
         block: The Pyomo block to build cost expressions on.
-        gas_power: Time-indexed gas-usage Var/Expression in EECO's gas units
-            (m³/hr by default), indexed ``0..N-1``.
-        time_index: Naive ``pd.DatetimeIndex`` aligning to ``gas_power``.
+        fuel_power: Time-indexed fuel-usage Var/Expression in EECO's usage units
+            for ``fuel_type`` (m³/hr by default for ``"gas"``), indexed ``0..N-1``.
+        time_index: Naive ``pd.DatetimeIndex`` aligning to ``fuel_power``.
         dt_hours: Timestep length in hours; passed to EECO once.
-        tariff: An EECO rate_data DataFrame (must carry gas-utility rows).
+        tariff: An EECO rate_data DataFrame (must carry the utility's rows).
+        fuel_type: The fuel's EECO utility. ``"gas"`` (the default) is the only
+            value EECO 0.2.1 supports; every registered fuel (natural gas,
+            biogas, ...) bills through it today.
         dr_config: Optional DR container (v0: no constraints built).
 
     Returns:
-        The :class:`OperatingCostHandles` for the gas utility.
+        The :class:`OperatingCostHandles` for the fuel utility.
 
     Raises:
-        FlexConfigError: If EECO produced a nonlinear demand term.
+        FlexConfigError: If ``fuel_type`` is not a supported EECO utility, or
+            EECO produced a nonlinear demand term.
         FlexDataError: If ``time_index`` is timezone-aware.
     """
+    if fuel_type not in _FUEL_UTILITY:
+        raise FlexConfigError(
+            f"Unsupported fuel_type={fuel_type!r}; EECO 0.2.1 supports "
+            f"{sorted(_FUEL_UTILITY)}.",
+            field="fuel_type",
+            value=fuel_type,
+        )
     return _add_utility_cost(
         block=block,
-        power=gas_power,
+        power=fuel_power,
         time_index=time_index,
         dt_hours=dt_hours,
         tariff=tariff,
-        utility=_GAS,
+        utility=_FUEL_UTILITY[fuel_type],
         dr_config=dr_config,
     )
 
@@ -804,26 +819,28 @@ def add_operating_cost(
     dt_hours: float,
     tariff: pd.DataFrame,
     electrical_power=None,
-    gas_power=None,
+    fuel_power=None,
     dr_config: "DRConfig | None" = None,
 ) -> OperatingCostHandles:
-    """Build the facility's whole in-objective operating cost — electric **and** gas.
+    """Build the facility's whole in-objective operating cost — electric **and** fuel.
 
-    The umbrella over :func:`add_electricity_cost` and :func:`add_gas_cost`: it
+    The umbrella over :func:`add_electricity_cost` and :func:`add_fuel_cost`: it
     builds each present utility's convex-relaxed cost on the **same** opex
     ``block`` (EECO namespaces its components by utility, so the two never
     collide) and returns one :class:`OperatingCostHandles` whose fields are the
     per-utility sums — the single ``total_operating_cost`` the scheduler
     minimizes. Still a RELAXED proxy, not the reported bill (use
-    :func:`evaluate_cost`/:func:`evaluate_gas_cost` post-solve).
+    :func:`evaluate_cost`/:func:`evaluate_fuel_cost` post-solve).
 
     The facility-level consumption defaults to the standard series registered on
     ``block`` — ``block.power_electrical`` (the canonical
-    :data:`~flexcore.nomenclature.POWER_ELECTRICAL` name) and ``block.gas_usage``
+    :data:`~flexcore.nomenclature.POWER_ELECTRICAL` name) and ``block.fuel_usage``
     — so a caller need not re-declare them each use; pass
-    ``electrical_power``/``gas_power`` to override (e.g. a toy model or a
+    ``electrical_power``/``fuel_power`` to override (e.g. a toy model or a
     pre-aggregated series). A utility whose series is neither passed nor present
-    on the block is simply omitted; at least one must resolve.
+    on the block is simply omitted; at least one must resolve. The fuel leg
+    bills through EECO's ``"gas"`` utility (:func:`add_fuel_cost`'s only
+    supported ``fuel_type`` today).
 
     Args:
         block: The Pyomo opex block to build both utilities' cost on.
@@ -833,8 +850,8 @@ def add_operating_cost(
         electrical_power: Time-indexed kW series; defaults to
             ``block.power_electrical`` if present, or whatever pyo object is provided,
             else the electric leg is skipped.
-        gas_power: Time-indexed gas-usage series in EECO's gas units; defaults to
-            ``block.gas_usage`` if present, else the gas leg is skipped.
+        fuel_power: Time-indexed fuel-usage series in EECO's gas units; defaults
+            to ``block.fuel_usage`` if present, else the fuel leg is skipped.
         dr_config: Optional DR container (v0: no constraints built).
 
     Returns:
@@ -844,19 +861,19 @@ def add_operating_cost(
         (``"electric"``/``"gas"``) to its raw EECO itemized structure.
 
     Raises:
-        FlexConfigError: If neither an electric nor a gas consumption series is
+        FlexConfigError: If neither an electric nor a fuel consumption series is
             passed or found on ``block``.
         FlexDataError: If ``time_index`` is timezone-aware.
     """
     if electrical_power is None:
         electrical_power = getattr(block, nm.POWER_ELECTRICAL, None)
-    if gas_power is None:
-        gas_power = getattr(block, _GAS_USAGE_ATTR, None)
-    if electrical_power is None and gas_power is None:
+    if fuel_power is None:
+        fuel_power = getattr(block, _FUEL_USAGE_ATTR, None)
+    if electrical_power is None and fuel_power is None:
         raise FlexConfigError(
             "add_operating_cost found no utility consumption to cost: pass "
-            "electrical_power and/or gas_power, or register them on the block as "
-            f"'{nm.POWER_ELECTRICAL}' / '{_GAS_USAGE_ATTR}'.",
+            "electrical_power and/or fuel_power, or register them on the block "
+            f"as '{nm.POWER_ELECTRICAL}' / '{_FUEL_USAGE_ATTR}'.",
             field="electrical_power",
         )
 
@@ -870,10 +887,10 @@ def add_operating_cost(
             tariff=tariff,
             dr_config=dr_config,
         )
-    if gas_power is not None:
-        per_utility[_GAS] = add_gas_cost(
+    if fuel_power is not None:
+        per_utility[_GAS] = add_fuel_cost(
             block=block,
-            gas_power=gas_power,
+            fuel_power=fuel_power,
             time_index=time_index,
             dt_hours=dt_hours,
             tariff=tariff,
@@ -1026,35 +1043,48 @@ def evaluate_cost(
     )
 
 
-def evaluate_gas_cost(
-    aggregate_gas_usage: np.ndarray,
+def evaluate_fuel_cost(
+    aggregate_fuel_usage: np.ndarray,
     tariff: pd.DataFrame,
     dt_hours: float,
     *,
+    fuel_type: str = "gas",
     dr_config: "DRConfig | None" = None,
     time_index: "pd.DatetimeIndex | None" = None,
 ) -> float:
-    """Compute the TRUE (de-relaxed) gas cost on a fixed realized usage array.
+    """Compute the TRUE (de-relaxed) fuel cost on a fixed realized usage array.
 
-    Mirrors :func:`evaluate_cost` for the gas utility.
+    Mirrors :func:`evaluate_cost` for a fuel utility.
 
     Args:
-        aggregate_gas_usage: Realized gas usage per timestep (EECO gas units).
-        tariff: An EECO rate_data DataFrame (gas-utility rows).
+        aggregate_fuel_usage: Realized fuel usage per timestep (EECO usage
+            units for ``fuel_type``).
+        tariff: An EECO rate_data DataFrame (the utility's rows).
         dt_hours: Timestep length in hours; passed to EECO once.
+        fuel_type: The fuel's EECO utility; see :func:`add_fuel_cost`.
         dr_config: Ignored in v0 (DR is containers-only).
         time_index: The usage array's naive datetime index (see
             :func:`evaluate_cost`); omit only for a flat tariff.
 
     Returns:
-        The horizon-total gas cost in dollars.
+        The horizon-total fuel cost in dollars.
+
+    Raises:
+        FlexConfigError: If ``fuel_type`` is not a supported EECO utility.
     """
+    if fuel_type not in _FUEL_UTILITY:
+        raise FlexConfigError(
+            f"Unsupported fuel_type={fuel_type!r}; EECO 0.2.1 supports "
+            f"{sorted(_FUEL_UTILITY)}.",
+            field="fuel_type",
+            value=fuel_type,
+        )
     return float(
         _itemized_cost(
-            aggregate_gas_usage,
+            aggregate_fuel_usage,
             tariff,
             dt_hours,
-            utility=_GAS,
+            utility=_FUEL_UTILITY[fuel_type],
             time_index=time_index,
         )["total"]
     )

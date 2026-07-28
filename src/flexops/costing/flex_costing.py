@@ -27,7 +27,7 @@ carrier per registered **fuel** name (natural gas, hydrogen, biogas, …), and o
 per distinct **thermal** temperature (``"thermal@<T>K"`` — heat duties at
 different temperatures are never summed together). Electrical and fuel carriers
 are billed through EECO (electricity via ``add_electricity_cost``; each fuel via
-``add_gas_cost`` against the same tariff, normalized to EECO's gas-usage units
+``add_fuel_cost`` against the same tariff, normalized to EECO's gas-usage units
 with the fuel's heating value). FlexCosting writes **no** tariff cost math of its
 own (that is EECO's).
 
@@ -56,9 +56,9 @@ from flexops.costing.opex import (
     EECO_POWER_UNITS,
     DRConfig,
     add_electricity_cost,
-    add_gas_cost,
+    add_fuel_cost,
     evaluate_cost,
-    evaluate_gas_cost,
+    evaluate_fuel_cost,
     load_dr_program,
     load_tariff,
     tariff_currency_units,
@@ -373,7 +373,7 @@ class FlexCostingData(FlowsheetCostingBlockData):
 
         The fuel's kW draws (declared with ``PowerKind.FUEL`` and this ``name``)
         aggregate under carrier ``name`` and are billed via
-        :func:`~flexops.costing.add_gas_cost` against the same tariff loaded
+        :func:`~flexops.costing.add_fuel_cost` against the same tariff loaded
         at construction, normalized to the fuel's usage rate (``fuel_units/hr``)
         with ``heating_value``. flex-pse synthesizes no tariff content; if the
         tariff lacks the ``gas``-utility rows the fuel needs, EECO's own
@@ -692,9 +692,9 @@ class FlexCostingData(FlowsheetCostingBlockData):
         # fuel its own sub-block so multiple fuels never collide.
         leg = pyo.Block()
         opex.add_component(f"fuel_{name}", leg)
-        gas = add_gas_cost(
+        fuel = add_fuel_cost(
             block=leg,
-            gas_power=usage,
+            fuel_power=usage,
             time_index=tb.datetime_index,
             dt_hours=dt_hours,
             tariff=self._tariff,
@@ -704,7 +704,7 @@ class FlexCostingData(FlowsheetCostingBlockData):
         opex.add_component(f"fuel_cost_{name}", cost)
         opex.add_component(
             f"eq_fuel_cost_{name}",
-            pyo.Constraint(expr=cost == gas.total_operating_cost * cur),
+            pyo.Constraint(expr=cost == fuel.total_operating_cost * cur),
         )
 
     def _build_scalar_leg(self, tb, cur, dt_hours, name: str) -> None:
@@ -888,7 +888,7 @@ class FlexCostingData(FlowsheetCostingBlockData):
         for name in self._registered_fuels:
             usage = getattr(self.opex, f"eeco_gas_usage_{name}")
             realized_usage = np.array([pyo.value(usage[t]) for t in tb.time_index])
-            fuel += evaluate_gas_cost(
+            fuel += evaluate_fuel_cost(
                 realized_usage,
                 self._tariff,
                 dt_hours,
