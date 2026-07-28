@@ -1,4 +1,4 @@
-"""Component-tier end-to-end test: pump+tank LP shifts load off-peak (M07).
+"""Component-tier end-to-end test: pump+tank LP shifts load off-peak.
 
 The headline economic result. A pump feeds a storage tank against the demo
 tariff; minimizing the FlexCosting operating cost pushes all pumping out of the
@@ -122,9 +122,9 @@ def test_report_cost_post_hoc():
     assert report.operating.total == pytest.approx(report.operating.electricity)
     assert report.total == pytest.approx(report.operating.total)
     # On this short horizon the convex relaxation is tight, so the reported bill
-    # coincides with the relaxed objective; the reporting rule (R9) is encoded by
+    # coincides with the relaxed objective; the reporting rule is encoded by
     # the independent recomputation above, not by trusting the objective. The two
-    # diverge once the tiered surcharge is reached (M06 relaxed<=true test).
+    # diverge once the tiered surcharge is reached.
     assert report.operating.total == pytest.approx(pyo.value(m.objective), rel=1e-6)
 
 

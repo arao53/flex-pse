@@ -337,7 +337,7 @@
     },
     "UnitCommitmentConfig": {
       "additionalProperties": false,
-      "description": "Per-unit unit-commitment configuration, a validated container only in M03; the constraint-building logic layer that consumes it is built in M08. Every piece is optional except status.",
+      "description": "Per-unit unit-commitment configuration, a validated container. Every piece is optional except status.",
       "properties": {
         "conditional": {
           "anyOf": [
@@ -350,7 +350,7 @@
             }
           ],
           "default": null,
-          "description": "Conditional status implications between units (M08).",
+          "description": "Conditional status implications between units.",
           "title": "Conditional"
         },
         "delays": {
@@ -364,7 +364,7 @@
             }
           ],
           "default": null,
-          "description": "Upstream-linked startup-delay specification (M08).",
+          "description": "Upstream-linked startup-delay specification.",
           "title": "Delays"
         },
         "dwell": {

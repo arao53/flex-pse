@@ -1,4 +1,4 @@
-"""Unit-tier tests for FlexCosting: opex/capex structure, fuels, scalar costs (M07+).
+"""Unit-tier tests for FlexCosting: opex/capex structure, fuels, scalar costs.
 
 These tests exercise the wrapper — indexed per-carrier power aggregation, the
 ``opex`` block (electricity + fuel + fixed + scalar operating cost), the empty
@@ -7,7 +7,7 @@ rule, ``report_cost``'s categorized breakdown, the DR container no-op, modes, an
 the construction-order invariant. None of them invoke a solver (that is
 ``test_load_shifting_component.py``); derived Vars are propagated through their
 defining equality constraints via :func:`_propagate`. The tariff *math* itself is
-EECO's and is tested in M06.
+EECO.
 """
 
 from pathlib import Path
@@ -547,7 +547,7 @@ def test_register_scalar_cost():
 
 @pytest.mark.unit
 def test_scalar_cost_not_via_eeco():
-    """Scalar costs never build EECO components (the R12 boundary)."""
+    """Scalar costs never build EECO components."""
     m = _pump_tank_costing(run_cost_process=False)
     m.chem = pyo.Var(m.time_block.time_index, units=pyunits.kg / pyunits.hr)
     for t in m.time_block.time_index:

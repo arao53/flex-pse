@@ -1,7 +1,7 @@
-"""OpsBlock: the base class of every flex-pse unit model (§3.2, decision R1).
+"""OpsBlock: the base class of every flex-pse unit model (§3.2).
 
 ``OpsBlockData`` inherits IDAES ``UnitModelBlockData`` for its ConfigBlock, Port,
-and costing-registration machinery, but uses **no ControlVolumes** (R1):
+and costing-registration machinery, but uses **no ControlVolumes**:
 subclasses hand-write their 1-3 balance constraints. It provides the
 registration API that FlexParameterize and the docs generator consume
 (:meth:`OpsBlockData.register_io_variable`,
@@ -10,14 +10,14 @@ registration API that FlexParameterize and the docs generator consume
 (:meth:`~OpsBlockData.declare_power`), the external-dispatch hook
 (:meth:`~OpsBlockData.set_external_dispatch`), and the config slots
 (``unit_commitment``, ``relaxation``, ``allow_bypass``, ``external_dispatch``)
-that the M08 logic layer will consume.
+that the logic layer will consume.
 
 flex-pse **never deletes** model components (blocks, Vars, Params,
 constraints): anything else on the model that referenced a deleted component —
 an aggregated power constraint, an expanded arc — would silently keep the stale
 reference. A built model is updated only by mutating parameter values in place
 (:meth:`~OpsBlockData.update_parameters`) or by adding/deactivating
-constraints; FlexParameterize drives this in M10.
+constraints; FlexParameterize drives this.
 """
 
 import enum
@@ -52,11 +52,7 @@ _POWER_VARS = {
 
 
 class RelaxationPolicy(enum.StrEnum):
-    """How a unit's discrete structure is relaxed (config slot only in M03).
-
-    The switching logic that consumes this is the M08 logic layer; M03 only
-    validates and stores the choice.
-    """
+    """How a unit's discrete structure is relaxed."""
 
     EXACT = "exact"
     RELAXED = "relaxed"
@@ -104,8 +100,8 @@ def _external_dispatch_domain(value):
 def _costing_package_domain(value):
     """ConfigValue domain: accept ``None`` or a costing package (duck-typed).
 
-    A costing package is any object exposing ``register_unit_power`` (the
-    M07 ``FlexCosting`` block). Duck-typed rather than isinstance-checked so
+    A costing package is any object exposing ``register_unit_power``
+    (``FlexCosting`` block). Duck-typed rather than isinstance-checked so
     ``flexops.core`` need not import ``flexops.costing`` (which imports core).
     """
     if value is None or hasattr(value, "register_unit_power"):
@@ -137,7 +133,7 @@ class OpsBlockData(UnitModelBlockData):
 
     CONFIG = UnitModelBlockData.CONFIG()
     # A unit lives on a bare ConcreteModel or a dynamic=False flowsheet, never a
-    # DAE flowsheet (R2). Fix the inherited defaults to False so build() does not
+    # DAE flowsheet. Fix the inherited defaults to False so build() does not
     # try to resolve them from a parent flowsheet (pitfall 1).
     CONFIG.get("dynamic").set_default_value(False)
     CONFIG.get("has_holdup").set_default_value(False)
@@ -163,8 +159,7 @@ class OpsBlockData(UnitModelBlockData):
         ConfigValue(
             default=UnitCommitmentConfig(),
             domain=_unit_commitment_domain,
-            description="Per-unit unit-commitment sub-config (§3.5). Validated "
-            "and stored in M03; its constraints are built in M08.",
+            description="Per-unit unit-commitment sub-config.",
         ),
     )
     CONFIG.declare(
@@ -181,8 +176,7 @@ class OpsBlockData(UnitModelBlockData):
         ConfigValue(
             default=RelaxationPolicy.EXACT,
             domain=_relaxation_domain,
-            description="Discrete-structure relaxation policy (config slot only "
-            "in M03; the switching logic is built in M08).",
+            description="Discrete-structure relaxation policy.",
         ),
     )
     CONFIG.declare(
@@ -192,7 +186,7 @@ class OpsBlockData(UnitModelBlockData):
             domain=bool,
             description="Whether add_bypass_constraints() builds inlet-to-outlet "
             "pass-through equalities for this unit's non-excluded state "
-            "variables (M04). SISOBlock (and its subclasses Pump/Tank) "
+            "variables. SISOBlock (and its subclasses Pump/Tank) "
             "override the base default to True so the flow-topology units are "
             "well-posed out of the box; the base OpsBlock default stays False.",
         ),
@@ -202,9 +196,9 @@ class OpsBlockData(UnitModelBlockData):
         ConfigValue(
             default=None,
             domain=_costing_package_domain,
-            description="Optional FlexCosting block (M07) this unit associates "
+            description="Optional FlexCosting block this unit associates "
             "with: register_power forwards the unit's power draw to it. None for "
-            "standalone units (M04); the forwarding is strictly conditional.",
+            "standalone units; the forwarding is strictly conditional.",
         ),
     )
 
@@ -222,10 +216,10 @@ class OpsBlockData(UnitModelBlockData):
     def _find_time_block(self) -> TimeBlockData:
         """Return the unique TimeBlock on this unit's model.
 
-        Interim time access until the ``flowsheet()`` chain arrives with
-        PlantBlock in M09: search the model for exactly one TimeBlock. The
-        result is not cached on the block — assigning a Pyomo component to an
-        attribute would trip ``Block.__setattr__`` (pitfall 2).
+        Interim time access until the ``flowsheet()``: search the model for
+        exactly one TimeBlock. The result is not cached on the block —
+        assigning a Pyomo component to an attribute would trip
+        ``Block.__setattr__`` (pitfall 2).
 
         Returns:
             The model's ``TimeBlockData``.
@@ -407,7 +401,6 @@ class OpsBlockData(UnitModelBlockData):
             )
         )
         # Forward the association to a FlexCosting block when one was given
-        # (strictly conditional -- costing-less units, M04, are unaffected).
         costing_package = self.config.costing_package
         if costing_package is not None:
             costing_package.register_unit_power(self, var, kind)
@@ -478,7 +471,7 @@ class OpsBlockData(UnitModelBlockData):
         registered IO variable is the live state-block ``Var`` itself (e.g.
         ``inlet_state.flow_vol_phase``), never a ``Reference`` or slice. The
         extensive/intensive split of the states a port carries is applied when
-        the topology layer wires the ports onto arcs in M09.
+        the topology layer wires the ports onto arcs.
 
         Args:
             inlet_ports: Names of the inlet ports to build (default one
@@ -704,7 +697,7 @@ class OpsBlockData(UnitModelBlockData):
         For each time point ``t``, sets ``var[t]`` to ``series[t]`` and, when
         ``fix`` is True, fixes it — removing the dispatch degree of freedom while
         leaving sizing free (the DERMS/aggregator case, §3.2). Available on all
-        units; first-classed on ``BatteryModel`` in M08.
+        units; first-classed on ``BatteryModel``.
 
         Args:
             var: A time-indexed ``Var`` on this unit.
@@ -739,17 +732,16 @@ class OpsBlockData(UnitModelBlockData):
             if fix:
                 var[t].fix()
 
-    # -- config-driven construction (M09) ---------------------------------
+    # -- config-driven construction ---------------------------------
 
     @classmethod
     def build_from_config(cls, cfg: UnitConfig, **kwargs):
-        """Construct a unit from a validated ``UnitConfig`` (deferred to M09).
+        """Construct a unit from a validated ``UnitConfig``.
 
         Raises:
             NotImplementedError: Always; config-driven construction and the
-                whole-model ``flexops.build_model`` land in M09.
+                whole-model ``flexops.build_model``.
         """
         raise NotImplementedError(
-            "Config-driven construction lands in M09. Build units directly for "
-            "now; whole-model construction is flexops.build_model in M09."
+            "build_from_config is not implemented; build units directly."
         )

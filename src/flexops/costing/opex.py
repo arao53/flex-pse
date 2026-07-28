@@ -5,8 +5,8 @@ tiered/fixed charges, and both the optimization-time and post-optimization cost
 computations come from the external **EECO** package (``eeco`` on PyPI). This
 module is the thin flex-pse interface around it — loaders, a CSV→dict tariff
 converter, pandas signal helpers, the in-objective Pyomo bridge, and the
-post-optimization evaluator — and, by convention (decision R12,
-``plan/00_conventions.md`` §6), the **only** file in the codebase that imports
+post-optimization evaluator — and, by convention (``plan/00_conventions.md``
+§6), the **only** file in the codebase that imports
 ``eeco``. Localizing the import means one file to fix when EECO's API moves.
 
 **EECO owns the math; this file is glue.** No cost arithmetic lives here — no
@@ -15,7 +15,7 @@ figure is produced by ``eeco.costs``; the wrappers only marshal inputs, rename
 outputs to stable flex-pse names, and translate errors into the flex-pse
 exception hierarchy.
 
-**Two ways EECO is used** (architecture §2.4, decisions R4/R9):
+**Two ways EECO is used** (architecture §2.4):
 
 1. *In-objective* — :func:`add_operating_cost` (the facility umbrella over the
    single-utility :func:`add_electricity_cost` / :func:`add_gas_cost`) asks EECO
@@ -55,7 +55,7 @@ import numpy as np
 import pandas as pd
 import pyomo.environ as pyo
 
-# THE sole eeco import point in the whole codebase (decision R12, §6).
+# THE sole eeco import point in the whole codebase (§6).
 from eeco import costs as _eeco_costs
 
 import flexcore.nomenclature as nm
@@ -556,7 +556,7 @@ class DRConfig:
 def _build_dr(block: pyo.Block, dr_config: "DRConfig | None") -> None:
     """No-op demand-response hook (v0 is containers-only).
 
-    Exists so FlexCosting wiring (M07) and later DR work are additive: it only
+    Exists so FlexCosting wiring and later DR work are additive: it only
     stores/verifies the container and builds **no** DR event, curtailment,
     incentive, or capacity constraints.
 
@@ -685,8 +685,7 @@ def _assert_linear_demand(demand_charge) -> None:
     The demand charge must stay an epigraph (linear), not a ``max()``: a
     nonlinear objective silently breaks the LP/relaxable character the scheduler
     depends on. EECO's Pyomo path builds ``>=`` epigraph vars, so a
-    higher-than-quadratic degree here signals an incompatibility to fail on now
-    rather than let M07's classifier flag it late.
+    higher-than-quadratic degree here signals an incompatibility to fail.
 
     Args:
         demand_charge: The demand-charge Expression/Var from EECO.
@@ -724,7 +723,7 @@ def add_electricity_cost(
     Hands EECO the kW series, tariff, and timestep; EECO owns the math (energy
     cost, demand-charge epigraphs, kWh conversion). The returned
     ``total_operating_cost`` is a RELAXED proxy for the objective, **not** the
-    reported bill — use :func:`evaluate_cost` post-solve for that (R4/R9). DR is
+    reported bill — use :func:`evaluate_cost` post-solve for that. DR is
     containers-only in v0: ``dr_config`` is accepted and stored but builds NO DR
     constraints.
 
@@ -816,7 +815,7 @@ def add_operating_cost(
     collide) and returns one :class:`OperatingCostHandles` whose fields are the
     per-utility sums — the single ``total_operating_cost`` the scheduler
     minimizes. Still a RELAXED proxy, not the reported bill (use
-    :func:`evaluate_cost`/:func:`evaluate_gas_cost` post-solve, R4/R9).
+    :func:`evaluate_cost`/:func:`evaluate_gas_cost` post-solve).
 
     The facility-level consumption defaults to the standard series registered on
     ``block`` — ``block.power_electrical`` (the canonical
@@ -891,7 +890,7 @@ def add_operating_cost(
 
 
 # --------------------------------------------------------------------------- #
-# Post-optimization evaluator (the reported bill; R4/R9, §2.4)
+# Post-optimization evaluator (the reported bill; §2.4)
 # --------------------------------------------------------------------------- #
 def _evaluation_index(
     n: int, dt_hours: float, time_index: "pd.DatetimeIndex | None"
@@ -900,9 +899,8 @@ def _evaluation_index(
 
     EECO's charge windows are keyed on ``month``/``weekday``/``hour``, so a bare
     realized array must be paired with a calendar to bill it correctly. When
-    ``time_index`` is given (the M07 path: ``time_block.datetime_index``) it is
-    used; otherwise a naive epoch-based index is fabricated — valid only for a
-    calendar-independent (flat) tariff.
+    ``time_index`` is given it is used; otherwise a naive epoch-based index is
+    fabricated — valid only for a calendar-independent (flat) tariff.
 
     Args:
         n: Number of timesteps in the realized array.
@@ -999,7 +997,7 @@ def evaluate_cost(
 ) -> float:
     """Compute the TRUE (de-relaxed) electricity cost on a fixed realized load.
 
-    This is the user-facing bill (§6 reporting rule, R4/R9): once the dispatch is
+    This is the user-facing bill (§6 reporting rule): once the dispatch is
     fixed the pricing non-convexity is harmless, so it is an exact post-hoc EECO
     evaluation, not a relaxation. All ``eeco.*`` calls route through this module
     (the sole import point).
@@ -1010,11 +1008,9 @@ def evaluate_cost(
         dt_hours: Timestep length in hours; passed to EECO once for kW→kWh.
         dr_config: Ignored in v0 (DR is containers-only).
         time_index: The load's naive datetime index, aligning it to the tariff's
-            month/weekday/hour windows (M07 passes ``time_block.datetime_index``).
-            Omit only for a calendar-independent (flat) tariff. This keyword is a
-            documented addition to the M06 spec's signature — EECO's charge
-            windows are calendar-dependent, so a bare array is insufficient to
-            reproduce a real (e.g. July) bill.
+            month/weekday/hour windows. Omit only for a calendar-independent
+            (flat) tariff. EECO's charge windows are calendar-dependent, so a
+            bare array is insufficient to reproduce a real (e.g. July) bill.
 
     Returns:
         The horizon-total electricity cost in dollars.

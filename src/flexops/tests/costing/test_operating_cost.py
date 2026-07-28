@@ -1,4 +1,4 @@
-"""Golden-bill and in-objective tests for the EECO cost bridge (M06).
+"""Golden-bill and in-objective tests for the EECO cost bridge.
 
 ``test_golden_monthly_bill`` is the ``unit``-tier truth check: it evaluates a
 hand-computed PG&E-B-20-flavored bill on a fixed realized load, no solve. The
@@ -338,8 +338,8 @@ def test_add_operating_cost_requires_a_utility():
 def test_wrapper_block_t_matches_time_block_time_index():
     """The injected `block.t` EECO iterates aligns with the TimeBlock's time_index.
 
-    Guards the M07 integration contract: a power Var indexed on
-    `time_block.time_index` is consumed correctly by EECO under `block.t`.
+    Makes sure the power Var indexed on`time_block.time_index` is consumed correctly
+    by EECO under `block.t`.
     """
     tariff = load_tariff(_TARIFF_JSON)
     m = pyo.ConcreteModel()

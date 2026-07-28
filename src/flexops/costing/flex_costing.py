@@ -1,11 +1,11 @@
-"""FlexCosting: the costing block that wraps EECO (architecture §3.6, decision R4).
+"""FlexCosting: the costing block that wraps EECO (architecture §3.6).
 
 ``FlexCosting`` subclasses IDAES :class:`FlowsheetCostingBlockData` for its
 registration/CapEx machinery and organizes every cost into two sub-blocks it
 owns:
 
 * **``opex``** — all operating cost: **electricity** and **fuel** cost (both
-  delegated to the external EECO package via the M06 :mod:`flexops.costing.opex`
+  delegated to the external EECO package via the :mod:`flexops.costing.opex`
   bridge), a user-defined **fixed operating cost** (maintenance/labor/chemicals),
   and any **scalar operating cost** (non-energy flows/supplies/products priced
   natively in flex-pse, never through EECO). ``opex.total_operating_cost`` is
@@ -29,7 +29,7 @@ different temperatures are never summed together). Electrical and fuel carriers
 are billed through EECO (electricity via ``add_electricity_cost``; each fuel via
 ``add_gas_cost`` against the same tariff, normalized to EECO's gas-usage units
 with the fuel's heating value). FlexCosting writes **no** tariff cost math of its
-own (that is EECO's, decision R4).
+own (that is EECO's).
 
 Construction-order invariant: FlexCosting may be constructed before any units
 exist, because all aggregation and the EECO call are deferred to
@@ -327,27 +327,25 @@ class FlexCostingData(FlowsheetCostingBlockData):
 
         self.dr = DRConfig(program=load_dr_program(self.config.dr_event_file))
 
-        # _registered_power: units that opted into this costing package (the
-        # push association, consumed for capex attribution from M08). Power
+        # _registered_power: units that opted into this costing package. Power
         # AGGREGATION does not read this -- it pulls from the model in
         # cost_process so it is construction-order independent.
         self._registered_power: list[tuple[Any, Any, nm.PowerKind]] = []
         # _registered_sizing: sizing Vars + capex constraints the modes toggle.
-        # Empty in M07 (no unit registers capex); wiring for M08/M16.
         self._registered_sizing: list[_SizingEntry] = []
         # Fuels and non-energy scalar costs registered on this block.
         self._registered_fuels: dict[str, FuelSpec] = {}
         self._registered_scalar_costs: dict[str, ScalarCostSpec] = {}
 
-    # -- registration (push association; consumed from M08) ---------------
+    # -- registration ---------------
 
     def register_unit_power(self, unit, var, kind: nm.PowerKind) -> None:
         """Record that ``unit`` associated a power draw with this costing package.
 
         Called by :meth:`~flexops.core.ops_block.OpsBlockData.register_power` when
         a unit is built with ``costing_package=`` set. The record is the explicit
-        unit↔costing association used for capex attribution from M08; power
-        aggregation in :meth:`cost_process` pulls from the model instead, so it
+        unit↔costing association used for capex attribution; power aggregation in
+        :meth:`cost_process` pulls from the model instead, so it
         does not depend on this being called.
 
         Args:
@@ -577,7 +575,7 @@ class FlexCostingData(FlowsheetCostingBlockData):
     def _build_opex(self, tb, cur, dt_hours) -> None:
         """Build the ``opex`` block: electricity + fuel + fixed + scalar (Vars).
 
-        Electricity and every registered fuel are billed via the M06 ``opex.py``
+        Electricity and every registered fuel are billed via the ``opex.py``
         bridge (EECO owns the cost math). Fuel legs are built on per-fuel
         sub-blocks so EECO's ``gas_*`` components never collide. Non-energy scalar
         costs are built natively (no EECO). A final unit-consistency check forces
@@ -829,13 +827,13 @@ class FlexCostingData(FlowsheetCostingBlockData):
             + self.aggregate_capital_cost * self.capital_recovery_factor
         )
 
-    # -- design / operations modes (single-model; empty registries in M07) --
+    # -- design / operations modes --
 
     def set_operations_mode(self) -> None:
         """Fix every registered sizing Var and deactivate its capex constraint.
 
-        The operations objective is ``aggregate_operating_cost`` alone. In
-        M07 the sizing registry is empty, so this is a no-op; it is the documented
+        The operations objective is ``aggregate_operating_cost`` alone. In the
+        sizing registry is empty, so this is a no-op; it is the documented
         single-model toggle later milestones populate. Idempotent.
         """
         for entry in self._registered_sizing:
@@ -846,16 +844,14 @@ class FlexCostingData(FlowsheetCostingBlockData):
     def set_design_mode(self) -> None:
         """Unfix every registered sizing Var and activate its capex constraint.
 
-        The design objective is ``total_cost`` (operating + capital). In M07
-        the sizing registry is empty, so this is a no-op. Idempotent. Single-model
-        only — multi-period sizing is the M16 design wrapper, not this mode.
+        The design objective is ``total_cost`` (operating + capital).
         """
         for entry in self._registered_sizing:
             entry.var.unfix()
             if entry.capex_constraint is not None:
                 entry.capex_constraint.activate()
 
-    # -- reported cost (post-solve; never the objective, R4/R9/§6) --------
+    # -- reported cost (post-solve; never the objective, §6) --------
 
     def report_cost(self, model) -> CostReport:
         """Return the reported, categorized cost, evaluated **post-solve**.
@@ -865,8 +861,7 @@ class FlexCostingData(FlowsheetCostingBlockData):
         dispatch; fixed is the config constant; scalar costs are recomputed
         natively; DR revenue is ``0`` in v0 (containers-only); capital is read off
         the (empty in v0) capex block. This is an independent recomputation —
-        never ``value(model.objective)``, which is a relaxed/scalarized proxy
-        (R4/R9).
+        never ``value(model.objective)``, which is a relaxed/scalarized proxy.
 
         Args:
             model: The solved model (accepted for the documented API; the costing

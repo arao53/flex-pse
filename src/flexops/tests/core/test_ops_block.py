@@ -175,9 +175,9 @@ def test_no_time_block_raises():
 
 @pytest.mark.unit
 def test_build_from_config_not_implemented():
-    """Config-driven construction is deferred to M09."""
+    """Config-driven construction is deferred"""
     cfg = UnitConfig(unit_model_class="DummyOps")
-    with pytest.raises(NotImplementedError, match="M09"):
+    with pytest.raises(NotImplementedError, match="build_from_config"):
         OpsBlockData.build_from_config(cfg)
 
 

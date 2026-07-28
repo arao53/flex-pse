@@ -1,10 +1,10 @@
 """The versioned flex-pse config schema (pydantic v2, the schema authority).
 
 A whole flex-pse model and run are built from a single version-controlled
-config artifact (``flexops.build_model(config)``, M09): the TimeBlock,
+config artifact (``flexops.build_model(config)``): the TimeBlock,
 properties, costing, and the network/plant/unit tree all come from one
 :class:`ModelConfig`. These pydantic models are the **authority** for that
-config (``plan/01_architecture.md`` §2.3, decision R3); JSON is the canonical
+config (``plan/01_architecture.md`` §2.3); JSON is the canonical
 and only on-disk format (see :mod:`flexcore.config.io`).
 
 Every field carries a ``description`` (it renders into the docs) and every model
@@ -95,8 +95,7 @@ class ExternalDispatchSpec(_StrictModel):
 
 # Architecture references: unit commitment is plan/01_architecture.md §3.5.
 class UnitCommitmentConfig(_StrictModel):
-    """Per-unit unit-commitment configuration, a validated container only in
-    M03; the constraint-building logic layer that consumes it is built in M08.
+    """Per-unit unit-commitment configuration, a validated container.
     Every piece is optional except status."""
 
     status: bool = Field(
@@ -122,11 +121,11 @@ class UnitCommitmentConfig(_StrictModel):
     )
     delays: dict[str, Any] | None = Field(
         default=None,
-        description="Upstream-linked startup-delay specification (M08).",
+        description="Upstream-linked startup-delay specification.",
     )
     conditional: dict[str, Any] | None = Field(
         default=None,
-        description="Conditional status implications between units (M08).",
+        description="Conditional status implications between units.",
     )
 
 
