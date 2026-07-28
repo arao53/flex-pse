@@ -123,12 +123,16 @@ else:  # pragma: no cover - see above
 # it today. Add an entry here once EECO exposes a hydrogen utility.
 _FUEL_UTILITY = {"gas": _GAS}
 
-# The units EECO expects across the cost boundary: electrical power in kW and
-# gas/fuel usage as a volumetric rate in m^3/hr. FlexCosting builds every
-# aggregate in these units before handing it to add_electricity_cost /
-# add_fuel_cost. The pint counterparts are passed to eeco explicitly at every
-# call site (they match its defaults, so an upstream default change surfaces as a
-# loud conversion rather than a silently mis-scaled bill).
+# The units EECO measures in across the cost boundary: electrical power in kW and
+# gas/fuel usage as a volumetric rate in m^3/hr. What crosses the boundary is a
+# bare number in these units, never a units-carrying expression: eeco applies its
+# unit conversion as a plain float factor and constrains its own dimensionless
+# Vars to the series it is given, so a units-carrying input makes eeco's internal
+# constraints dimensionally inconsistent. Callers convert to these units and
+# divide them out (see FlexCosting's normalization Vars). The pint counterparts
+# are passed to eeco explicitly at every call site (they match its defaults, so an
+# upstream default change surfaces as a loud conversion rather than a silently
+# mis-scaled bill).
 EECO_POWER_UNITS = pyo.units.kW
 EECO_GAS_USAGE_UNITS = pyo.units.m**3 / pyo.units.hr
 
@@ -154,8 +158,8 @@ _CURRENCY_SYMBOLS = {"$": "USD"}
 
 # Standard block attribute names the combined :func:`add_operating_cost` reads
 # when a consumption series is not passed explicitly, both canonical nomenclature
-# names: ``power_electrical`` (kW) and ``fuel_usage`` — a volumetric gas-usage
-# series in m³/hr, not a kW ``power_thermal`` duty.
+# names: ``power_electrical`` (a bare kW magnitude) and ``fuel_usage`` — a
+# volumetric gas-usage series in m³/hr, not a kW ``power_thermal`` duty.
 
 
 # --------------------------------------------------------------------------- #
@@ -928,8 +932,11 @@ def _add_utility_cost(
 
     Args:
         block: The Pyomo block to build cost expressions on.
-        power: Time-indexed kW (electric) / gas-usage Var or Expression, indexed
-            ``0..N-1`` to align with ``time_index`` order.
+        power: Time-indexed Var or Expression carrying **no units** — a bare kW
+            (electric) / m³/hr (gas) magnitude, indexed ``0..N-1`` to align with
+            ``time_index`` order. EECO constrains its own dimensionless Vars to
+            this series, so a units-carrying input makes those constraints
+            inconsistent.
         time_index: Naive datetime index aligning to ``power``'s order.
         dt_hours: Timestep length in hours (EECO does the kW→kWh conversion).
         tariff: An EECO rate_data DataFrame, covering ``utility``.
@@ -1019,7 +1026,7 @@ def add_electricity_cost(
     facility-level umbrella that wraps this and :func:`add_fuel_cost` onto one
     opex block; call this directly only when you want the electric leg alone.
 
-    Hands EECO the kW series, tariff, and timestep; EECO owns the math (energy
+    Hands EECO the kW magnitudes, tariff, and timestep; EECO owns the math (energy
     cost, demand-charge epigraphs, kWh conversion). The returned
     ``total_operating_cost`` is a RELAXED proxy for the objective, **not** the
     reported bill — use :func:`evaluate_cost` post-solve for that. DR is
@@ -1028,8 +1035,9 @@ def add_electricity_cost(
 
     Args:
         block: The Pyomo block to build cost expressions on.
-        electrical_power: Time-indexed kW aggregate-load Var/Expression, indexed
-            ``0..N-1`` to align with ``time_index`` order.
+        electrical_power: Time-indexed aggregate-load Var/Expression carrying **no
+            units** — a bare kW magnitude — indexed ``0..N-1`` to align with
+            ``time_index`` order.
         time_index: Naive ``pd.DatetimeIndex`` aligning to ``electrical_power``.
         dt_hours: Timestep length in hours; passed to EECO once for kW→kWh.
         tariff: An EECO rate_data DataFrame (electric utility).
@@ -1076,8 +1084,8 @@ def add_fuel_cost(
 
     Args:
         block: The Pyomo block to build cost expressions on.
-        fuel_power: Time-indexed fuel-usage Var/Expression — a volumetric flow in
-            m³/hr — indexed ``0..N-1``.
+        fuel_power: Time-indexed fuel-usage Var/Expression carrying **no units** —
+            a bare volumetric-flow magnitude in m³/hr — indexed ``0..N-1``.
         time_index: Naive ``pd.DatetimeIndex`` aligning to ``fuel_power``.
         dt_hours: Timestep length in hours; passed to EECO once.
         tariff: An EECO rate_data DataFrame (must carry the utility's rows).
@@ -1151,12 +1159,12 @@ def add_operating_cost(
         time_index: Naive ``pd.DatetimeIndex`` aligning to the power series.
         dt_hours: Timestep length in hours; passed to EECO once for kW→kWh.
         tariff: An EECO rate_data DataFrame (its electric and/or gas rows).
-        electrical_power: Time-indexed kW series; defaults to
-            ``block.power_electrical`` if present, or whatever pyo object is provided,
-            else the electric leg is skipped.
-        fuel_power: Time-indexed fuel-usage series (a volumetric flow in m³/hr);
-            defaults to ``block.fuel_usage`` if present, else the fuel leg is
-            skipped.
+        electrical_power: Time-indexed series of bare kW magnitudes (no units);
+            defaults to ``block.power_electrical`` if present, or whatever pyo
+            object is provided, else the electric leg is skipped.
+        fuel_power: Time-indexed fuel-usage series of bare m³/hr magnitudes (no
+            units); defaults to ``block.fuel_usage`` if present, else the fuel leg
+            is skipped.
         dr_config: Optional DR container (v0: no constraints built).
 
     Returns:

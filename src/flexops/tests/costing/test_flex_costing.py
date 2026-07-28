@@ -15,11 +15,11 @@ from pathlib import Path
 import numpy as np
 import pyomo.environ as pyo
 import pytest
-from pyomo.core.base.units_container import InconsistentUnitsError
+from pyomo.core.base.units_container import InconsistentUnitsError, UnitsError
 from pyomo.environ import units as pyunits
 from pyomo.network import Arc
 from pyomo.util.calc_var_value import calculate_variable_from_constraint
-from pyomo.util.check_units import assert_units_equivalent
+from pyomo.util.check_units import assert_units_consistent, assert_units_equivalent
 
 import flexops as fo
 from flexcore import nomenclature as nm
@@ -497,6 +497,50 @@ def test_fuel_usage_aggregated_and_billed():
     )
 
 
+def _tariff_and_fuel_model():
+    """A tariff-priced model with one EECO electric leg and one EECO fuel leg."""
+    m = _pump_tank_costing(tariff=_two_utility_tariff(), run_cost_process=False)
+    _add_fuel_usage(m, "biogas", {t: 10.0 for t in range(24)})
+    m.costing.cost_process()
+    return m
+
+
+@pytest.mark.unit
+def test_eeco_normalization_vars_are_dimensionless():
+    """Both EECO normalization Vars carry no units — EECO bills bare magnitudes."""
+    opex = _tariff_and_fuel_model().costing.opex
+
+    assert_units_equivalent(
+        opex.eeco_aggregate_electrical_power[0], pyunits.dimensionless
+    )
+    assert_units_equivalent(
+        opex.fuel_biogas.eeco_aggregate_fuel_usage[0], pyunits.dimensionless
+    )
+
+
+@pytest.mark.unit
+def test_opex_constraints_are_unit_consistent():
+    """Every constraint under ``opex`` — including EECO's own — is unit-consistent.
+
+    ``_assert_cost_units_consistent`` only checks flex-pse's ``eq_*`` cost
+    constraints, so this covers what it cannot see: the constraints EECO builds
+    inside its own components. EECO treats the series it is handed as bare
+    numbers (``converted[t] == series[t] * factor``), so handing it a Var carrying
+    kW or m3/hr makes those constraints dimensionally inconsistent.
+    """
+    opex = _tariff_and_fuel_model().costing.opex
+
+    inconsistent = []
+    for con in opex.component_data_objects(
+        pyo.Constraint, active=True, descend_into=True
+    ):
+        try:
+            assert_units_consistent(con)
+        except UnitsError:
+            inconsistent.append(con.name)
+    assert inconsistent == []
+
+
 @pytest.mark.unit
 def test_no_fuel_in_model_leaves_fuel_cost_zero():
     """With no registered fuel flow, no leg is built and fuel_cost is 0."""
@@ -796,6 +840,8 @@ def test_flat_fuel_price_with_tariff_electricity():
     # The flat leg is a native constraint, so it propagates without a solver:
     # 24 h x 10 m3/hr x $0.25/m3 = $60.00 (not the tariff's $0.50/m3).
     assert pyo.value(m.costing.opex.fuel_cost_biogas) == pytest.approx(60.0)
+    # A flat-priced fuel has no EECO sub-block, so no normalization Var either.
+    assert m.costing.opex.find_component("fuel_biogas") is None
     # The EECO leg's in-objective cost is built from EECO's own Vars, which have
     # no eq_ sibling to propagate through, so read the tariff leg post-hoc:
     # 24 h x 100 kW x $0.10/kWh = $240.00.

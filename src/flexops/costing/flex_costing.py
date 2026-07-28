@@ -796,14 +796,23 @@ class FlexCostingData(FlowsheetCostingBlockData):
                 )
             )
         else:
-            # EECO wants its own units; normalize into them first.
+            # EECO bills bare numbers, so hand it the magnitude in EECO's units
+            # (convert, then divide the units out) rather than a units-carrying
+            # expression, which would make EECO's own conversion constraints
+            # dimensionally inconsistent.
             opex.eeco_aggregate_electrical_power = pyo.Var(
-                tb.time_index, initialize=0.0, units=EECO_POWER_UNITS
+                tb.time_index,
+                initialize=0.0,
+                doc=f"Aggregate electrical power as a bare {EECO_POWER_UNITS} number.",
             )
 
             def _norm_elec(_b, t):
-                return opex.eeco_aggregate_electrical_power[t] == pyunits.convert(
-                    self.aggregate_power[t, "electrical"], EECO_POWER_UNITS
+                return (
+                    opex.eeco_aggregate_electrical_power[t]
+                    == pyunits.convert(
+                        self.aggregate_power[t, "electrical"], EECO_POWER_UNITS
+                    )
+                    / EECO_POWER_UNITS
                 )
 
             opex.eq_eeco_aggregate_electrical_power = pyo.Constraint(
@@ -932,9 +941,10 @@ class FlexCostingData(FlowsheetCostingBlockData):
     def _build_fuel_leg(self, tb, cur, dt_hours, name: str) -> None:
         """Bill one fuel: a flat price natively, or EECO's gas leg on the tariff.
 
-        ``aggregate_fuel_usage`` is already in EECO's units, so the tariff path
-        bills it directly through a ``Reference`` — no normalization Var, and no
-        heating value.
+        ``aggregate_fuel_usage`` is already in EECO's units, so the flat-price path
+        bills it directly through a ``Reference``. The tariff path normalizes it to
+        a bare number first, as EECO bills magnitudes, not units-carrying
+        expressions. No heating value is applied either way.
         """
         opex = self.opex
         self._require_priced(name, "gas")
@@ -956,9 +966,27 @@ class FlexCostingData(FlowsheetCostingBlockData):
         # fuel its own sub-block so multiple fuels never collide.
         leg = pyo.Block()
         opex.add_component(f"fuel_{name}", leg)
+        leg.eeco_aggregate_fuel_usage = pyo.Var(
+            tb.time_index,
+            initialize=0.0,
+            doc=f"Aggregate {name} usage as a bare {EECO_GAS_USAGE_UNITS} number.",
+        )
+
+        def _norm_usage(_b, t):
+            return (
+                leg.eeco_aggregate_fuel_usage[t]
+                == pyunits.convert(
+                    self.aggregate_fuel_usage[t, name], EECO_GAS_USAGE_UNITS
+                )
+                / EECO_GAS_USAGE_UNITS
+            )
+
+        leg.eq_eeco_aggregate_fuel_usage = pyo.Constraint(
+            tb.time_index, rule=_norm_usage
+        )
         fuel = add_fuel_cost(
             block=leg,
-            fuel_power=usage,
+            fuel_power=leg.eeco_aggregate_fuel_usage,
             time_index=tb.datetime_index,
             dt_hours=dt_hours,
             tariff=self._tariff,

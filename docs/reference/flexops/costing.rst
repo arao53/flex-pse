@@ -119,9 +119,12 @@ the electricity and fuel costs onto one opex block (EECO namespaces its Pyomo
 components by utility, so ``electric_*`` and ``gas_*`` never collide) and returns
 a single :class:`OperatingCostHandles` whose ``total_operating_cost`` is the sum
 across utilities. The facility consumption defaults to the standard series on the
-block — ``block.power_electrical`` (kW) and ``block.fuel_usage`` (a volumetric
-flow in m³/hr) — so a caller need not re-declare them each use; pass
-``electrical_power``/``fuel_power`` to override. The
+block — ``block.power_electrical`` and ``block.fuel_usage`` — so a caller need not
+re-declare them each use; pass ``electrical_power``/``fuel_power`` to override.
+Every series handed to these builders must carry **no units**: a bare magnitude in
+kW (electric) or m³/hr (fuel volumetric flow), because EECO applies its unit
+conversion as a plain float factor and constrains its own dimensionless Vars to
+the series it is given. The
 single-utility builders :func:`add_electricity_cost` and :func:`add_fuel_cost`
 remain available for building one leg alone. :func:`add_fuel_cost` takes a
 ``fuel_type`` (default ``"gas"``, the only value EECO 0.2.1 supports); a
@@ -197,8 +200,10 @@ FlexCosting block
 
 ``FlexCosting`` subclasses IDAES ``FlowsheetCostingBlockData`` and **delegates
 all tariff/energy operating cost to EECO** (decision R4), in two ways: it hands
-EECO the aggregate electrical power (kW) + tariff to build the convex-relaxed
-in-objective cost (:func:`~flexops.costing.add_electricity_cost`), and post-solve
+EECO the aggregate electrical power (as a bare kW magnitude, via a dimensionless
+``opex.eeco_aggregate_electrical_power`` normalization Var) + tariff to build the
+convex-relaxed in-objective cost
+(:func:`~flexops.costing.add_electricity_cost`), and post-solve
 calls EECO's evaluator (:func:`~flexops.costing.evaluate_cost`) for the reported
 bill. Its own jobs are aggregation, the ``opex``/``capex`` block structure and
 naming, CapEx + modes, and ``report_cost``; it writes no tariff cost math.
@@ -243,7 +248,8 @@ Every cost lives in one of two sub-blocks built by
    not a volumetric rate fails **loudly** there). Each fuel is billed through
    :func:`~flexops.costing.add_fuel_cost` against the **same tariff** loaded at
    construction, on its own ``opex.fuel_<name>`` sub-block so EECO's ``gas_*``
-   components never collide.
+   components never collide — via that sub-block's dimensionless
+   ``eeco_aggregate_fuel_usage`` Var, the m³/hr aggregate as a bare magnitude.
 
    Fuels are **discovered from the model**, so there is nothing to declare on the
    costing block; a model with no fuel flow builds no gas leg and
