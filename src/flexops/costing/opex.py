@@ -30,9 +30,13 @@ energy surcharge, which the relaxation drops when no consumption estimate is
 supplied), the in-objective total is a proxy that is **≤ or ≈** the post-hoc
 true bill. The raw solver objective is never the user-facing cost.
 
-**Units.** Electrical power is a **kW** series and gas usage is in EECO's gas
-units (m³/hr by default); EECO converts to energy (kWh / m³) internally from the
-timestep, so ``dt_hours`` is passed exactly once — never multiply by it here.
+**Units.** Electrical power is a **kW** series and fuel usage is a **volumetric
+m³/hr** series — always, since fuel is metered and billed on volume. Both are
+passed to ``eeco`` with their units stated explicitly. EECO converts to energy
+(kWh / m³) internally from the timestep, so ``dt_hours`` is passed exactly once —
+never multiply by it here. flex-pse applies **no** heating value: if a tariff
+prices gas on an energy basis, EECO converts it with its own fuel heating-value
+assumption.
 
 **Timezones / DST.** EECO reasons in naive local wall-clock time (its charge
 windows are keyed on ``datetime.hour``/``weekday``/``month`` with no tz
@@ -45,9 +49,11 @@ Supplying a DR file never changes the objective. EECO 0.2.1 exposes no DR API,
 so the DR file format is a flex-pse placeholder loaded into the container only.
 """
 
+import calendar
 import dataclasses
 import json
 import logging
+from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
 
@@ -55,68 +61,153 @@ import numpy as np
 import pandas as pd
 import pyomo.environ as pyo
 
-# THE sole eeco import point in the whole codebase (§6).
-from eeco import costs as _eeco_costs
+# THE sole eeco import point in the whole codebase (§6). The import is soft:
+# EECO is only needed to price a *tariff*. A model whose every carrier carries a
+# flat price (FlexCosting's ``energy_prices``) builds, solves, and reports without
+# it, so ``import flexops`` must not hard-require it. Every function that reaches
+# into eeco calls _require_eeco() first.
+try:
+    from eeco import costs as _eeco_costs
+    from eeco.units import u as _eeco_units
+except ImportError:  # pragma: no cover - exercised by monkeypatching _HAS_EECO
+    _eeco_costs = None
+    _eeco_units = None
 
 import flexcore.nomenclature as nm
 from flexcore.exceptions import FlexConfigError, FlexDataError
 
 _log = logging.getLogger(__name__)
 
+_HAS_EECO = _eeco_costs is not None
+
 # EECO rate_data columns flex-pse requires present before handing the frame to
 # eeco.costs.get_charge_dict. The *choice* of which columns to require is
 # flex-pse's; the column *names* are sourced from eeco's own constants so an
 # upstream rename tracks automatically instead of silently breaking validation.
-_REQUIRED_COLUMNS = (
-    _eeco_costs.UTILITY,
-    _eeco_costs.TYPE,
-    _eeco_costs.NAME,
-    _eeco_costs.MONTH_START,
-    _eeco_costs.MONTH_END,
-    _eeco_costs.WEEKDAY_START,
-    _eeco_costs.WEEKDAY_END,
-    _eeco_costs.HOUR_START,
-    _eeco_costs.HOUR_END,
-)
-# One of these charge columns must be present (eeco accepts metric/imperial/bare).
-_CHARGE_COLUMNS = (
-    _eeco_costs.CHARGE_METRIC,
-    _eeco_costs.CHARGE_IMPERIAL,
-    _eeco_costs.CHARGE,
-)
-
-_ELECTRIC = _eeco_costs.ELECTRIC
-_GAS = _eeco_costs.GAS
+# Only reachable from tariff paths, so they are empty when eeco is absent.
+if _HAS_EECO:
+    _REQUIRED_COLUMNS = (
+        _eeco_costs.UTILITY,
+        _eeco_costs.TYPE,
+        _eeco_costs.NAME,
+        _eeco_costs.MONTH_START,
+        _eeco_costs.MONTH_END,
+        _eeco_costs.WEEKDAY_START,
+        _eeco_costs.WEEKDAY_END,
+        _eeco_costs.HOUR_START,
+        _eeco_costs.HOUR_END,
+    )
+    # One of these charge columns must be present (eeco accepts
+    # metric/imperial/bare).
+    _CHARGE_COLUMNS = (
+        _eeco_costs.CHARGE_METRIC,
+        _eeco_costs.CHARGE_IMPERIAL,
+        _eeco_costs.CHARGE,
+    )
+    _ELECTRIC = _eeco_costs.ELECTRIC
+    _GAS = _eeco_costs.GAS
+    _CUSTOMER = _eeco_costs.CUSTOMER
+    _DEMAND = _eeco_costs.DEMAND
+    _ASSESSED = _eeco_costs.ASSESSED
+else:  # pragma: no cover - see above
+    _REQUIRED_COLUMNS = ()
+    _CHARGE_COLUMNS = ()
+    _ELECTRIC = "electric"
+    _GAS = "gas"
+    _CUSTOMER = "customer"
+    _DEMAND = "demand"
+    _ASSESSED = "assessed"
 
 # Fuel type -> underlying EECO utility. "gas" is the only fuel utility EECO
 # 0.2.1 exposes; every registered fuel (natural gas, biogas, ...) bills through
 # it today. Add an entry here once EECO exposes a hydrogen utility.
 _FUEL_UTILITY = {"gas": _GAS}
 
-# The units EECO expects across the cost boundary. EECO exposes no unit
-# attributes of its own (its numbers are plain magnitudes); these are the
-# flex-pse conventions its electric and gas legs assume — electrical power in kW,
-# gas/fuel usage as a volumetric rate in m^3/hr. FlexCosting normalizes every
-# aggregate to these units (via an explicit Var + constraint) before handing it
-# to add_electricity_cost / add_fuel_cost.
+# The units EECO expects across the cost boundary: electrical power in kW and
+# gas/fuel usage as a volumetric rate in m^3/hr. FlexCosting builds every
+# aggregate in these units before handing it to add_electricity_cost /
+# add_fuel_cost. The pint counterparts are passed to eeco explicitly at every
+# call site (they match its defaults, so an upstream default change surfaces as a
+# loud conversion rather than a silently mis-scaled bill).
 EECO_POWER_UNITS = pyo.units.kW
 EECO_GAS_USAGE_UNITS = pyo.units.m**3 / pyo.units.hr
+
+
+def _eeco_consumption_units() -> dict:
+    """Return the pint consumption units to pass EECO at every call site.
+
+    Built on demand rather than at import so the module loads without ``eeco``
+    installed (only tariff paths need it).
+
+    Returns:
+        The ``electric_consumption_units``/``gas_consumption_units`` kwargs.
+    """
+    return {
+        "electric_consumption_units": _eeco_units.kW,
+        "gas_consumption_units": _eeco_units.meter**3 / _eeco_units.hour,
+    }
+
 
 # Currency basis: map a tariff charge-``units`` symbol (the numerator before the
 # ``/``) to a Pyomo currency unit name. EECO tariffs are dollar-based.
 _CURRENCY_SYMBOLS = {"$": "USD"}
 
 # Standard block attribute names the combined :func:`add_operating_cost` reads
-# when a consumption series is not passed explicitly. Electric uses the canonical
-# nomenclature name (``power_electrical``); fuel has no nomenclature entry in v0,
-# so its name is a documented local convention — a fuel-usage series in EECO's
-# gas units (m³/hr by default), not a kW ``power_thermal`` duty.
-_FUEL_USAGE_ATTR = "fuel_usage"
+# when a consumption series is not passed explicitly, both canonical nomenclature
+# names: ``power_electrical`` (kW) and ``fuel_usage`` — a volumetric gas-usage
+# series in m³/hr, not a kW ``power_thermal`` duty.
 
 
 # --------------------------------------------------------------------------- #
 # Internal helpers
 # --------------------------------------------------------------------------- #
+def _require_eeco(feature: str) -> None:
+    """Fail with both remedies if ``feature`` needs ``eeco`` and it is missing.
+
+    Args:
+        feature: What the caller was trying to do, named in the message.
+
+    Raises:
+        FlexConfigError: If the optional ``eeco`` package is unavailable.
+    """
+    if not _HAS_EECO:
+        raise FlexConfigError(
+            f"{feature} needs the optional 'eeco' package, which is not "
+            "installed. Either install it (pip install eeco) to price against a "
+            "tariff, or give this carrier a flat price instead — e.g. "
+            "FlexCosting(energy_prices={'electrical': 0.12 * pyunits.USD / "
+            "pyunits.kWh}), which needs no tariff and no eeco.",
+            field="tariff_source",
+        )
+
+
+def monthly_scale_factor(time_index: pd.DatetimeIndex, dt_hours: float) -> float:
+    """Fraction of its starting calendar month that a horizon covers (``<= 1``).
+
+    Monthly-assessed charges — the demand charge and the tariff's fixed
+    (customer) charge — are billed per calendar month, so a horizon shorter than
+    a month must only pay its share of them. This is that share, computed from
+    the real length of the month the horizon starts in (February and 30-day
+    months differ), and clamped to ``1.0`` so a full-month horizon pays the full
+    charge and nothing is ever scaled up.
+
+    Args:
+        time_index: The horizon's naive datetime index.
+        dt_hours: Timestep length in hours.
+
+    Returns:
+        The prorating factor in ``(0, 1]``.
+
+    Raises:
+        FlexDataError: If ``time_index`` is tz-aware.
+    """
+    _reject_tz_aware(time_index)
+    start = time_index[0]
+    horizon_hours = len(time_index) * dt_hours
+    month_hours = calendar.monthrange(start.year, start.month)[1] * 24.0
+    return min(1.0, horizon_hours / month_hours)
+
+
 def _resolution_str(dt_hours: float) -> str:
     """Return EECO's resolution string for a timestep length in hours.
 
@@ -243,6 +334,7 @@ def load_tariff(source: str | Path | dict | list | pd.DataFrame) -> pd.DataFrame
         FlexDataError: If the file/structure is malformed or missing required
             columns; the message names the file and the offending field.
     """
+    _require_eeco("Loading a tariff")
     if isinstance(source, pd.DataFrame):
         return _validate_rate_data(source.copy(), source="<DataFrame>")
     if isinstance(source, (dict, list)):
@@ -260,6 +352,105 @@ def load_tariff(source: str | Path | dict | list | pd.DataFrame) -> pd.DataFrame
             field="tariff_source",
         ) from exc
     return _tariff_data_from_dict(payload, source=str(path))
+
+
+# The row fields that identify one charge. Two rows agreeing on all of these are
+# the same charge: EECO keys its charge arrays on exactly this tuple, and
+# add_to_charge_array *sums* colliding keys, so a duplicate silently doubles a
+# line item rather than erroring. merge_tariffs rejects them instead.
+_CHARGE_IDENTITY_COLUMNS = (
+    "utility",
+    "type",
+    "name",
+    "month_start",
+    "month_end",
+    "weekday_start",
+    "weekday_end",
+    "hour_start",
+    "hour_end",
+)
+
+
+def merge_tariffs(sources: Any) -> pd.DataFrame:
+    """Load several tariff sources and merge them into one rate_data frame.
+
+    Use this when a facility's charges live in more than one file — typically an
+    electric sheet and a gas sheet. Both forms end at the same place: a single
+    validated ``rate_data`` frame whose ``utility`` column is what selects rows
+    per leg downstream, so there is no separate tariff object per utility.
+
+    * **Sequence** — ``["electric.json", "gas.json"]`` merges every source as-is.
+    * **Mapping** — ``{"electric": "e.json", "gas": "g.json"}`` additionally
+      *assigns* each source to a utility and keeps only that utility's rows, so a
+      sheet carrying stray rows for another utility cannot leak into the bill.
+
+    Args:
+        sources: A sequence of tariff sources, or a mapping of EECO utility name
+            (``"electric"``/``"gas"``) to tariff source. Each source is anything
+            :func:`load_tariff` accepts.
+
+    Returns:
+        The merged, validated EECO ``rate_data`` DataFrame.
+
+    Raises:
+        FlexConfigError: If ``sources`` is empty or not a mapping/sequence, if a
+            mapping key is not a known EECO utility, if a mapping-assigned source
+            contributes no rows for its utility, or if two sources define the
+            same charge.
+    """
+    _require_eeco("Merging tariffs")
+    if isinstance(sources, Mapping):
+        known = (_ELECTRIC, _GAS)
+        frames = []
+        for utility, source in sources.items():
+            if utility not in known:
+                raise FlexConfigError(
+                    f"Unknown tariff utility {utility!r}; expected one of "
+                    f"{sorted(known)}.",
+                    field="tariff_source",
+                    value=utility,
+                )
+            frame = load_tariff(source)
+            rows = frame[frame["utility"] == utility]
+            if rows.empty:
+                raise FlexConfigError(
+                    f"The tariff assigned to utility {utility!r} contains no "
+                    f"{utility!r} rows (it has "
+                    f"{sorted(set(frame['utility']))}). Assign it to the utility "
+                    "it actually prices, or pass the sources as a list to merge "
+                    "them without per-utility assignment.",
+                    field="tariff_source",
+                    value=utility,
+                )
+            frames.append(rows)
+    elif isinstance(sources, Sequence) and not isinstance(sources, (str, bytes)):
+        frames = [load_tariff(s) for s in sources]
+    else:
+        raise FlexConfigError(
+            "merge_tariffs needs a sequence of tariff sources or a mapping of "
+            f"utility -> source; got {type(sources).__name__}.",
+            field="tariff_source",
+            value=sources,
+        )
+
+    if not frames:
+        raise FlexConfigError(
+            "No tariff sources to merge.", field="tariff_source", value=sources
+        )
+
+    merged = pd.concat(frames, ignore_index=True)
+    identity = [c for c in _CHARGE_IDENTITY_COLUMNS if c in merged.columns]
+    duplicated = merged.duplicated(subset=identity, keep=False)
+    if duplicated.any():
+        dupes = merged.loc[duplicated, identity].drop_duplicates()
+        raise FlexConfigError(
+            "Merged tariffs define the same charge more than once, which would "
+            "silently double that line item. Remove the duplicate row(s) or "
+            "assign each source to one utility. Duplicated charge(s):\n"
+            f"{dupes.to_string(index=False)}",
+            field="tariff_source",
+        )
+    return _validate_rate_data(merged, source="<merged tariffs>")
 
 
 def load_dr_program(source: str | Path | dict | None) -> dict | None:
@@ -363,6 +554,25 @@ def _register_currency(unit_name: str):
     if not hasattr(pyo.units, unit_name):
         pyo.units.load_definitions_from_strings([f"{unit_name} = [currency]"])
     return getattr(pyo.units, unit_name)
+
+
+def currency_units(symbol: str = "USD"):
+    """Return the Pyomo currency unit named ``symbol``, registering it on first use.
+
+    Pyomo has no built-in currency dimension, so a currency unit has to be
+    declared before it can be used. This is the public way to get one, for
+    writing flat prices (``0.12 * currency_units("USD") / pyunits.kWh``) and for
+    FlexCosting's currency basis when no tariff supplies one. Tariff-priced
+    models get their basis from the sheet instead — see
+    :func:`tariff_currency_units`.
+
+    Args:
+        symbol: The currency unit name, e.g. ``"USD"``.
+
+    Returns:
+        The Pyomo units object for ``symbol``.
+    """
+    return _register_currency(symbol)
 
 
 def tariff_currency_units(tariff: pd.DataFrame):
@@ -584,21 +794,92 @@ class OperatingCostHandles:
 
     Attributes:
         energy_cost: Aggregate electric (or gas) **energy** charge Expression.
-        demand_charge: Aggregate **demand** charge Expression.
+        demand_charge: Aggregate **demand** charge Expression, already prorated.
+        customer_charge: The tariff's fixed (customer) charge for the horizon, as
+            billed — i.e. already prorated. A constant, not a decision.
         total_operating_cost: Scalar horizon-total cost — the CONVEX-RELAXED
             proxy the scheduler minimizes, **not** the reported bill (use
             :func:`evaluate_cost` post-solve for that).
+        scale_factor: The prorating factor applied to the monthly-assessed
+            charges (``1.0`` when not prorating or on a full-month horizon).
         eeco_block: The raw EECO itemized-cost structure, for debugging only.
     """
 
     energy_cost: Any
     demand_charge: Any
+    customer_charge: Any
     total_operating_cost: Any
+    scale_factor: float
     eeco_block: Any
 
 
+def _daily_assessed_demand_names(tariff: pd.DataFrame) -> set[str]:
+    """Names of demand charges the tariff assesses per day rather than per month.
+
+    A daily-assessed demand charge is already billed at the horizon's own
+    granularity, so it must never be prorated. EECO treats a missing/absent
+    ``assessed`` value as ``"monthly"``.
+
+    Args:
+        tariff: An EECO rate_data DataFrame.
+
+    Returns:
+        The charge names, in the dashed form EECO builds its keys from.
+    """
+    if _ASSESSED not in tariff.columns or "type" not in tariff.columns:
+        return set()
+    rows = tariff[
+        (tariff["type"] == _DEMAND)
+        & (tariff[_ASSESSED].astype(str).str.lower() == "daily")
+    ]
+    return {str(name).replace("_", "-") for name in rows["name"]}
+
+
+def _prorate_charge_dict(charge_dict: dict, tariff: pd.DataFrame, scale: float) -> dict:
+    """Scale monthly-assessed demand and fixed charge *rates* to the horizon.
+
+    Prorating is applied to the charge rates rather than to the computed cost.
+    Both are billed linearly in their rate (``$/kW × kW``, and a flat ``$/month``),
+    so scaling the rate scales that line item exactly — and doing it here leaves
+    the energy charges, and therefore EECO's tiered-surcharge arithmetic,
+    completely untouched. This is the same technique EECO applies internally in
+    ``get_charge_df``; flex-pse needs its own copy because ``get_charge_dict`` (the
+    Pyomo-compatible path) exposes no such option.
+
+    Two EECO behaviors make this the right level to intervene at:
+    ``calculate_cost`` adds the customer charge whole, with no scale factor
+    available at all; and its ``demand_scale_factor`` is suppressed for charges
+    spanning ``<= 1`` day, which — because EECO clips charge-key dates to the
+    horizon — silently includes *every* monthly charge on a one-day horizon, the
+    very case prorating exists for. Deciding from the tariff's ``assessed``
+    column instead is correct at any horizon length.
+
+    Args:
+        charge_dict: EECO's charge-array dictionary, modified in place.
+        tariff: The rate_data frame the dictionary came from.
+        scale: The prorating factor from :func:`monthly_scale_factor`.
+
+    Returns:
+        ``charge_dict``, with monthly-assessed arrays scaled.
+    """
+    if scale >= 1.0:
+        return charge_dict
+    daily = _daily_assessed_demand_names(tariff)
+    for key, array in charge_dict.items():
+        # Keys are "<utility>_<type>_<name>_<start>_<end>_<limit>"; the name never
+        # contains an underscore (EECO dashes them) so this split is unambiguous.
+        _utility, charge_type, name = key.split("_")[:3]
+        if charge_type == _CUSTOMER or (charge_type == _DEMAND and name not in daily):
+            charge_dict[key] = array * scale
+    return charge_dict
+
+
 def _charge_dict(
-    tariff: pd.DataFrame, time_index: pd.DatetimeIndex, dt_hours: float
+    tariff: pd.DataFrame,
+    time_index: pd.DatetimeIndex,
+    dt_hours: float,
+    *,
+    prorate: bool = False,
 ) -> dict:
     """Build EECO's charge dictionary for a horizon (delegates to EECO).
 
@@ -606,18 +887,25 @@ def _charge_dict(
         tariff: An EECO rate_data DataFrame.
         time_index: The horizon's naive datetime index.
         dt_hours: Timestep length in hours.
+        prorate: Scale monthly-assessed demand and fixed charges to the horizon
+            length (see :func:`_prorate_charge_dict`).
 
     Returns:
         EECO's charge-array dictionary.
     """
+    _require_eeco("Pricing against a tariff")
     _reject_tz_aware(time_index)
     start = time_index[0].to_pydatetime()
     end = (
         time_index[0] + len(time_index) * pd.Timedelta(hours=dt_hours)
     ).to_pydatetime()
-    return _eeco_costs.get_charge_dict(
+    charge_dict = _eeco_costs.get_charge_dict(
         start, end, tariff, resolution=_resolution_str(dt_hours)
     )
+    if prorate:
+        scale = monthly_scale_factor(time_index, dt_hours)
+        charge_dict = _prorate_charge_dict(charge_dict, tariff, scale)
+    return charge_dict
 
 
 def _add_utility_cost(
@@ -629,6 +917,7 @@ def _add_utility_cost(
     tariff: pd.DataFrame,
     utility: str,
     dr_config: "DRConfig | None",
+    prorate: bool = True,
 ) -> OperatingCostHandles:
     """Ask EECO to build the convex-relaxed in-objective cost for one utility.
 
@@ -646,6 +935,8 @@ def _add_utility_cost(
         tariff: An EECO rate_data DataFrame, covering ``utility``.
         utility: ``"electric"`` or ``"gas"``.
         dr_config: DR container (v0: stored via the no-op hook only).
+        prorate: Prorate monthly-assessed demand and fixed charges to the horizon
+            (see :func:`monthly_scale_factor`).
 
     Returns:
         The renamed :class:`OperatingCostHandles`.
@@ -655,7 +946,8 @@ def _add_utility_cost(
             breaking the LP/relaxable character.
     """
     n = len(time_index)
-    charge_dict = _charge_dict(tariff, time_index, dt_hours)
+    charge_dict = _charge_dict(tariff, time_index, dt_hours, prorate=prorate)
+    scale = monthly_scale_factor(time_index, dt_hours) if prorate else 1.0
 
     # EECO's Pyomo helpers (eeco.utils) build indexed vars/constraints against
     # `model.t`; provide it as the block's 0..N-1 step set if absent.
@@ -670,12 +962,15 @@ def _add_utility_cost(
         resolution=_resolution_str(dt_hours),
         desired_utility=utility,
         model=block,
+        **_eeco_consumption_units(),
     )
     util_costs = itemized[utility]
     handles = OperatingCostHandles(
         energy_cost=util_costs["energy"],
         demand_charge=util_costs["demand"],
+        customer_charge=util_costs.get("customer", 0.0),
         total_operating_cost=util_costs["total"],
+        scale_factor=scale,
         eeco_block=itemized,
     )
     _assert_linear_demand(handles.demand_charge)
@@ -716,6 +1011,7 @@ def add_electricity_cost(
     dt_hours: float,
     tariff: pd.DataFrame,
     dr_config: "DRConfig | None" = None,
+    prorate: bool = True,
 ) -> OperatingCostHandles:
     """Build EECO's convex-relaxed in-objective **electricity** cost on ``block``.
 
@@ -738,6 +1034,8 @@ def add_electricity_cost(
         dt_hours: Timestep length in hours; passed to EECO once for kW→kWh.
         tariff: An EECO rate_data DataFrame (electric utility).
         dr_config: Optional DR container (v0: no constraints built).
+        prorate: Prorate monthly demand and fixed charges to the horizon length
+            (see :func:`monthly_scale_factor`).
 
     Returns:
         The :class:`OperatingCostHandles` for the electric utility.
@@ -754,6 +1052,7 @@ def add_electricity_cost(
         tariff=tariff,
         utility=_ELECTRIC,
         dr_config=dr_config,
+        prorate=prorate,
     )
 
 
@@ -766,6 +1065,7 @@ def add_fuel_cost(
     tariff: pd.DataFrame,
     fuel_type: str = "gas",
     dr_config: "DRConfig | None" = None,
+    prorate: bool = True,
 ) -> OperatingCostHandles:
     """Build EECO's convex-relaxed in-objective fuel cost on ``block``.
 
@@ -776,8 +1076,8 @@ def add_fuel_cost(
 
     Args:
         block: The Pyomo block to build cost expressions on.
-        fuel_power: Time-indexed fuel-usage Var/Expression in EECO's usage units
-            for ``fuel_type`` (m³/hr by default for ``"gas"``), indexed ``0..N-1``.
+        fuel_power: Time-indexed fuel-usage Var/Expression — a volumetric flow in
+            m³/hr — indexed ``0..N-1``.
         time_index: Naive ``pd.DatetimeIndex`` aligning to ``fuel_power``.
         dt_hours: Timestep length in hours; passed to EECO once.
         tariff: An EECO rate_data DataFrame (must carry the utility's rows).
@@ -785,6 +1085,8 @@ def add_fuel_cost(
             value EECO 0.2.1 supports; every registered fuel (natural gas,
             biogas, ...) bills through it today.
         dr_config: Optional DR container (v0: no constraints built).
+        prorate: Prorate monthly demand and fixed charges to the horizon length
+            (see :func:`monthly_scale_factor`).
 
     Returns:
         The :class:`OperatingCostHandles` for the fuel utility.
@@ -809,6 +1111,7 @@ def add_fuel_cost(
         tariff=tariff,
         utility=_FUEL_UTILITY[fuel_type],
         dr_config=dr_config,
+        prorate=prorate,
     )
 
 
@@ -821,6 +1124,7 @@ def add_operating_cost(
     electrical_power=None,
     fuel_power=None,
     dr_config: "DRConfig | None" = None,
+    prorate: bool = True,
 ) -> OperatingCostHandles:
     """Build the facility's whole in-objective operating cost — electric **and** fuel.
 
@@ -850,8 +1154,9 @@ def add_operating_cost(
         electrical_power: Time-indexed kW series; defaults to
             ``block.power_electrical`` if present, or whatever pyo object is provided,
             else the electric leg is skipped.
-        fuel_power: Time-indexed fuel-usage series in EECO's gas units; defaults
-            to ``block.fuel_usage`` if present, else the fuel leg is skipped.
+        fuel_power: Time-indexed fuel-usage series (a volumetric flow in m³/hr);
+            defaults to ``block.fuel_usage`` if present, else the fuel leg is
+            skipped.
         dr_config: Optional DR container (v0: no constraints built).
 
     Returns:
@@ -868,12 +1173,12 @@ def add_operating_cost(
     if electrical_power is None:
         electrical_power = getattr(block, nm.POWER_ELECTRICAL, None)
     if fuel_power is None:
-        fuel_power = getattr(block, _FUEL_USAGE_ATTR, None)
+        fuel_power = getattr(block, nm.FUEL_USAGE, None)
     if electrical_power is None and fuel_power is None:
         raise FlexConfigError(
             "add_operating_cost found no utility consumption to cost: pass "
             "electrical_power and/or fuel_power, or register them on the block "
-            f"as '{nm.POWER_ELECTRICAL}' / '{_FUEL_USAGE_ATTR}'.",
+            f"as '{nm.POWER_ELECTRICAL}' / '{nm.FUEL_USAGE}'.",
             field="electrical_power",
         )
 
@@ -886,6 +1191,7 @@ def add_operating_cost(
             dt_hours=dt_hours,
             tariff=tariff,
             dr_config=dr_config,
+            prorate=prorate,
         )
     if fuel_power is not None:
         per_utility[_GAS] = add_fuel_cost(
@@ -895,13 +1201,16 @@ def add_operating_cost(
             dt_hours=dt_hours,
             tariff=tariff,
             dr_config=dr_config,
+            prorate=prorate,
         )
 
     legs = list(per_utility.values())
     return OperatingCostHandles(
         energy_cost=sum(leg.energy_cost for leg in legs),
         demand_charge=sum(leg.demand_charge for leg in legs),
+        customer_charge=sum(leg.customer_charge for leg in legs),
         total_operating_cost=sum(leg.total_operating_cost for leg in legs),
+        scale_factor=legs[0].scale_factor,
         eeco_block={util: leg.eeco_block for util, leg in per_utility.items()},
     )
 
@@ -950,31 +1259,41 @@ def _itemized_cost(
     utility: str,
     by_charge_key: bool = False,
     time_index: "pd.DatetimeIndex | None" = None,
+    prorate: bool = True,
 ) -> dict:
     """Evaluate EECO's itemized cost on a fixed, realized usage array.
 
     Args:
-        usage: Realized usage per timestep (kW electric / gas units).
+        usage: Realized usage per timestep (kW electric / m³/hr gas).
         tariff: An EECO rate_data DataFrame.
         dt_hours: Timestep length in hours.
         utility: ``"electric"`` or ``"gas"``.
         by_charge_key: Pass through to EECO to itemize by individual charge key.
         time_index: Calendar index aligning ``usage`` to the tariff's windows.
+        prorate: Prorate monthly demand and fixed charges to the horizon. Must
+            match what the in-objective leg used, or the reported bill will not
+            reconcile with the objective.
 
     Returns:
-        EECO's per-utility itemized-cost dict (``itemized[utility]``).
+        EECO's per-utility itemized-cost dict (``itemized[utility]``), plus a
+        ``"scale_factor"`` entry recording the prorating factor that was applied.
     """
     array = np.asarray(usage, dtype=float)
     index = _evaluation_index(len(array), dt_hours, time_index)
-    charge_dict = _charge_dict(tariff, index, dt_hours)
+    charge_dict = _charge_dict(tariff, index, dt_hours, prorate=prorate)
     itemized, _ = _eeco_costs.calculate_itemized_cost(
         charge_dict,
         {utility: array},
         resolution=_resolution_str(dt_hours),
         desired_utility=utility,
         by_charge_key=by_charge_key,
+        **_eeco_consumption_units(),
     )
-    return itemized[utility]
+    util_costs = itemized[utility]
+    util_costs["scale_factor"] = (
+        monthly_scale_factor(index, dt_hours) if prorate else 1.0
+    )
+    return util_costs
 
 
 def _itemized_electricity_cost(
@@ -1011,6 +1330,7 @@ def evaluate_cost(
     *,
     dr_config: "DRConfig | None" = None,
     time_index: "pd.DatetimeIndex | None" = None,
+    prorate: bool = True,
 ) -> float:
     """Compute the TRUE (de-relaxed) electricity cost on a fixed realized load.
 
@@ -1028,6 +1348,9 @@ def evaluate_cost(
             month/weekday/hour windows. Omit only for a calendar-independent
             (flat) tariff. EECO's charge windows are calendar-dependent, so a
             bare array is insufficient to reproduce a real (e.g. July) bill.
+        prorate: Prorate monthly demand and fixed charges to the horizon length.
+            Leave at the default so the reported bill matches the objective; pass
+            ``False`` only to reproduce a full un-prorated monthly bill.
 
     Returns:
         The horizon-total electricity cost in dollars.
@@ -1039,6 +1362,7 @@ def evaluate_cost(
             dt_hours,
             utility=_ELECTRIC,
             time_index=time_index,
+            prorate=prorate,
         )["total"]
     )
 
@@ -1051,20 +1375,23 @@ def evaluate_fuel_cost(
     fuel_type: str = "gas",
     dr_config: "DRConfig | None" = None,
     time_index: "pd.DatetimeIndex | None" = None,
+    prorate: bool = True,
 ) -> float:
     """Compute the TRUE (de-relaxed) fuel cost on a fixed realized usage array.
 
     Mirrors :func:`evaluate_cost` for a fuel utility.
 
     Args:
-        aggregate_fuel_usage: Realized fuel usage per timestep (EECO usage
-            units for ``fuel_type``).
+        aggregate_fuel_usage: Realized fuel usage per timestep, a volumetric flow
+            in m³/hr.
         tariff: An EECO rate_data DataFrame (the utility's rows).
         dt_hours: Timestep length in hours; passed to EECO once.
         fuel_type: The fuel's EECO utility; see :func:`add_fuel_cost`.
         dr_config: Ignored in v0 (DR is containers-only).
         time_index: The usage array's naive datetime index (see
             :func:`evaluate_cost`); omit only for a flat tariff.
+        prorate: Prorate monthly demand and fixed charges to the horizon length
+            (see :func:`evaluate_cost`).
 
     Returns:
         The horizon-total fuel cost in dollars.
@@ -1086,5 +1413,6 @@ def evaluate_fuel_cost(
             dt_hours,
             utility=_FUEL_UTILITY[fuel_type],
             time_index=time_index,
+            prorate=prorate,
         )["total"]
     )

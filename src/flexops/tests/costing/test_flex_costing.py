@@ -12,26 +12,31 @@ EECO.
 
 from pathlib import Path
 
+import numpy as np
 import pyomo.environ as pyo
 import pytest
 from pyomo.core.base.units_container import InconsistentUnitsError
 from pyomo.environ import units as pyunits
 from pyomo.network import Arc
 from pyomo.util.calc_var_value import calculate_variable_from_constraint
+from pyomo.util.check_units import assert_units_equivalent
 
 import flexops as fo
 from flexcore import nomenclature as nm
-from flexcore.exceptions import FlexConfigError
+from flexcore.exceptions import FlexConfigError, FlexDataError
 from flexcore.solvers import ProblemClass, classify
-from flexops.core.registration import IORegistry, PowerRecord
+from flexops.core.registration import FuelUsageRecord, IORegistry, PowerRecord
 from flexops.core.time_block import TimeBlock
 from flexops.costing import (
     CapitalCostBreakdown,
     CostReport,
     FlexCosting,
-    FuelSpec,
     OperatingCostBreakdown,
+    currency_units,
+    evaluate_fuel_cost,
     load_tariff,
+    merge_tariffs,
+    monthly_scale_factor,
 )
 from flexops.properties.simple_aqueous import SimpleAqueousFlow
 from flexops.unit_models import Pump, Tank
@@ -94,6 +99,9 @@ def _pump_tank_costing(
     dr_event_file=None,
     tariff=None,
     run_cost_process: bool = True,
+    energy_prices=None,
+    no_tariff: bool = False,
+    **costing_kwargs,
 ) -> pyo.ConcreteModel:
     """Build a Pump -> Arc -> Tank system with a FlexCosting block.
 
@@ -101,7 +109,9 @@ def _pump_tank_costing(
     construction-order invariant). When costing is created after the units they
     are built with ``costing_package=None`` (aggregation pulls from the model, so
     the association is not required). ``tariff`` overrides the default electric
-    demo tariff with a pre-loaded rate_data object.
+    demo tariff with a pre-loaded rate_data object; ``no_tariff=True`` passes no
+    tariff at all (pricing then comes from ``energy_prices``). Extra
+    ``costing_kwargs`` go straight to the FlexCosting constructor.
     """
     m = _time_model()
 
@@ -110,10 +120,13 @@ def _pump_tank_costing(
             time_block=m.time_block,
             fixed_operating_cost=fixed_operating_cost,
             dr_event_file=dr_event_file,
+            **costing_kwargs,
         )
+        if energy_prices is not None:
+            kwargs["energy_prices"] = energy_prices
         if tariff is not None:
             kwargs["tariff"] = tariff
-        else:
+        elif not no_tariff:
             kwargs["tariff_file"] = str(_TARIFF_JSON)
         m.costing = FlexCosting(**kwargs)
 
@@ -176,18 +189,24 @@ def _propagate(costing, passes: int = 8) -> None:
             calculate_variable_from_constraint(v, c)
 
 
-def _add_fuel_draw(m, fuel_name: str, values: dict[int, float], *, units=pyunits.kW):
-    """Attach a bare block carrying a registered fuel-draw Var, fixed."""
+def _add_fuel_usage(
+    m,
+    fuel_name: str,
+    values: dict[int, float],
+    *,
+    units=pyunits.m**3 / pyunits.hr,
+    tag: str = "",
+):
+    """Attach a bare block carrying a registered volumetric fuel-usage Var, fixed."""
     blk = pyo.Block()
-    setattr(m, f"fuel_{fuel_name}", blk)
+    setattr(m, f"burner_{fuel_name}{tag}", blk)
     var = pyo.Var(m.time_block.time_index, initialize=0.0, units=units)
-    blk.add_component(f"{nm.POWER_FUEL}_{fuel_name}", var)
+    blk.add_component(f"{nm.FUEL_USAGE}_{fuel_name}", var)
     blk._io_registry = IORegistry()
-    blk._io_registry.power.append(
-        PowerRecord(
+    blk._io_registry.fuel.append(
+        FuelUsageRecord(
             var=var,
-            name=f"{nm.POWER_FUEL}_{fuel_name}",
-            kind=nm.PowerKind.FUEL,
+            name=f"{nm.FUEL_USAGE}_{fuel_name}",
             fuel_name=fuel_name,
         )
     )
@@ -218,10 +237,15 @@ def _add_thermal_draw(m, tag: str, temperature, values: dict[int, float]):
 
 @pytest.mark.unit
 def test_config_exclusivity():
-    """Both or neither of tariff_file/tariff -> FlexConfigError naming the options."""
+    """At most one tariff source, and some pricing source, or FlexConfigError.
+
+    Both tariff_file and tariff -> error (they are alternatives). Neither, with no
+    energy_prices either -> error (nothing prices the model). Neither, but with
+    energy_prices -> valid: a flat price needs no tariff.
+    """
     m = _time_model()
     with pytest.raises(FlexConfigError, match="tariff"):
-        m.costing = FlexCosting(time_block=m.time_block)  # neither
+        m.costing = FlexCosting(time_block=m.time_block)  # neither, unpriced
 
     m2 = _time_model()
     with pytest.raises(FlexConfigError, match="tariff"):
@@ -230,6 +254,13 @@ def test_config_exclusivity():
             tariff_file=str(_TARIFF_JSON),
             tariff=load_tariff(_TARIFF_JSON),  # both
         )
+
+    m3 = _time_model()
+    m3.costing = FlexCosting(  # neither, but priced -> valid
+        time_block=m3.time_block,
+        energy_prices={"electrical": 0.12 * currency_units("USD") / pyunits.kWh},
+    )
+    assert m3.costing.find_component("dr") is not None
 
 
 @pytest.mark.unit
@@ -397,12 +428,13 @@ def test_annualized_cost():
 def test_power_units_normalized():
     """A power var in MW normalizes to kW; a non-power var raises loudly."""
     m = _pump_tank_costing(tariff=_two_utility_tariff(), run_cost_process=False)
-    # An MW-denominated fuel draw aggregates in kW (x1000).
-    _add_fuel_draw(m, "biogas", {t: 2.0 for t in range(24)}, units=pyunits.MW)
-    m.costing.register_fuel("biogas", heating_value=10.0)
+    # An MW-denominated thermal duty aggregates in kW (x1000).
+    _add_thermal_draw(m, "hot", 400 * pyunits.K, {t: 10.0 for t in range(24)})
     m.costing.cost_process()
     _propagate(m.costing)
-    assert pyo.value(m.costing.aggregate_power[0, "biogas"]) == pytest.approx(2000.0)
+    assert pyo.value(m.costing.aggregate_power[0, "thermal@400K"]) == pytest.approx(
+        10.0
+    )
 
     # A non-power (volumetric) var registered as electrical must raise at aggregation.
     m2 = _pump_tank_costing(run_cost_process=False)
@@ -419,43 +451,94 @@ def test_power_units_normalized():
 
 
 @pytest.mark.unit
-def test_register_fuel():
-    """A registered fuel is aggregated and billed via EECO's gas leg."""
+def test_fuel_usage_units_normalized():
+    """A fuel flow in L/min normalizes to m3/hr; a non-volumetric flow raises."""
     m = _pump_tank_costing(tariff=_two_utility_tariff(), run_cost_process=False)
-    fuel = _add_fuel_draw(m, "natural_gas", {t: 50.0 for t in range(24)})
-    m.costing.register_fuel("natural_gas", heating_value=10.0)
+    # 1000 L/min = 60 m^3/hr.
+    _add_fuel_usage(
+        m,
+        "biogas",
+        {t: 1000.0 for t in range(24)},
+        units=pyunits.L / pyunits.min,
+    )
+    m.costing.cost_process()
+    _propagate(m.costing)
+    assert pyo.value(m.costing.aggregate_fuel_usage[0, "biogas"]) == pytest.approx(60.0)
+
+    # A fuel usage var that is not a volumetric rate must raise at aggregation.
+    m2 = _pump_tank_costing(tariff=_two_utility_tariff(), run_cost_process=False)
+    _add_fuel_usage(m2, "natural_gas", {t: 1.0 for t in range(24)}, units=pyunits.kW)
+    with pytest.raises(InconsistentUnitsError):
+        m2.costing.cost_process()
+
+
+@pytest.mark.unit
+def test_fuel_usage_aggregated_and_billed():
+    """Registered fuel flows sum per fuel and are billed via EECO's gas leg."""
+    m = _pump_tank_costing(tariff=_two_utility_tariff(), run_cost_process=False)
+    # Two burners on the same fuel: the aggregate is their sum, one EECO leg.
+    _add_fuel_usage(m, "natural_gas", {t: 6.0 for t in range(24)}, tag="_a")
+    _add_fuel_usage(m, "natural_gas", {t: 4.0 for t in range(24)}, tag="_b")
     m.costing.cost_process()
     _propagate(m.costing)
 
     for t in (0, 12, 23):
-        assert pyo.value(m.costing.aggregate_power[t, "natural_gas"]) == pytest.approx(
-            pyo.value(fuel[t])
-        )
-    # The fuel leg wired through add_fuel_cost: normalized usage var + EECO gas_* comps.
-    assert m.costing.opex.find_component("eeco_gas_usage_natural_gas") is not None
+        assert pyo.value(
+            m.costing.aggregate_fuel_usage[t, "natural_gas"]
+        ) == pytest.approx(10.0)
+    # Fuel is a volumetric flow, never a power carrier.
+    assert "natural_gas" not in {c for _t, c in m.costing.aggregate_power}
+    # The fuel leg wired through add_fuel_cost: its own sub-block + EECO gas_* comps.
+    assert m.costing.opex.find_component("fuel_natural_gas") is not None
     assert m.costing.opex.find_component("fuel_cost_natural_gas") is not None
     assert any(
         v.local_name.startswith("gas_")
-        for v in m.costing.opex.component_objects(pyo.Var)
+        for v in m.costing.opex.fuel_natural_gas.component_objects(pyo.Var)
     )
-    assert m.costing.fuel_spec("natural_gas").heating_value == 10.0
 
 
 @pytest.mark.unit
-def test_register_fuel_returns_fuelspec():
-    """register_fuel records a FuelSpec queryable by name (default m^3 basis)."""
+def test_no_fuel_in_model_leaves_fuel_cost_zero():
+    """With no registered fuel flow, no leg is built and fuel_cost is 0."""
+    m = _pump_tank_costing(tariff=_two_utility_tariff())
+    _set_power(m, {t: 10.0 for t in range(24)})
+    _propagate(m.costing)
+
+    assert len(m.costing.aggregate_fuel_usage) == 0
+    assert pyo.value(m.costing.opex.fuel_cost) == pytest.approx(0.0)
+
+
+@pytest.mark.unit
+def test_report_cost_fuel_is_post_hoc_on_volume_series():
+    """report_cost recomputes the fuel bill from the realized m3/hr aggregate."""
     m = _pump_tank_costing(tariff=_two_utility_tariff(), run_cost_process=False)
-    m.costing.register_fuel("hydrogen", heating_value=3.0)
-    spec = m.costing.fuel_spec("hydrogen")
-    assert isinstance(spec, FuelSpec)
-    assert spec.name == "hydrogen"
-    assert spec.heating_value == 3.0
-    assert str(spec.fuel_units) == "m**3"
+    _add_fuel_usage(m, "natural_gas", {t: 10.0 for t in range(24)})
+    m.costing.cost_process()
+    _set_power(m, {t: 10.0 for t in range(24)})
+    _propagate(m.costing)
+
+    report = m.costing.report_cost(m)
+    expected = evaluate_fuel_cost(
+        np.full(len(m.time_block.time_index), 10.0),
+        _two_utility_tariff(),
+        dt_hours=1.0,
+        time_index=m.time_block.datetime_index,
+    )
+    # 24 h x 10 m3/hr x $0.50/m3 = $120.
+    assert expected == pytest.approx(120.0)
+    assert report.operating.fuel == pytest.approx(expected)
 
 
 @pytest.mark.unit
-def test_register_fuel_therm_basis():
-    """A fuel can be metered in therms (energy basis); usage is therm/hr."""
+def test_therm_priced_tariff_billed_on_volume_series():
+    """A therm-priced tariff changes nothing: flex-pse assumes no heating value.
+
+    The gas row's ``charge (metric)`` is read by EECO as $/m3 whatever its
+    ``units`` string says (``tariff_currency_units`` reads that column only for the
+    ``$`` symbol), and EECO applies its own CH4 heating value only for a
+    therm-denominated bare ``charge`` column. Either way flex-pse hands EECO the
+    metered volumetric flow, unconverted.
+    """
     tariff = load_tariff(
         [
             {
@@ -489,17 +572,13 @@ def test_register_fuel_therm_basis():
         ]
     )
     m = _pump_tank_costing(tariff=tariff, run_cost_process=False)
-    _add_fuel_draw(m, "natural_gas", {t: 293.07 for t in range(24)})  # kW
-    # 1 therm = 29.307 kWh, so heating_value = 29.307 kWh/therm.
-    m.costing.register_fuel(
-        "natural_gas", heating_value=29.307, fuel_units=pyunits.therm
-    )
+    _add_fuel_usage(m, "natural_gas", {t: 10.0 for t in range(24)})  # m3/hr
     m.costing.cost_process()
     _propagate(m.costing)
 
-    usage = m.costing.opex.eeco_gas_usage_natural_gas
-    # 293.07 kW / 29.307 kWh/therm = 10 therm/hr.
-    assert pyo.value(usage[0]) == pytest.approx(10.0, rel=1e-3)
+    usage = m.costing.aggregate_fuel_usage
+    assert_units_equivalent(usage[0, "natural_gas"], pyunits.m**3 / pyunits.hr)
+    assert pyo.value(usage[0, "natural_gas"]) == pytest.approx(10.0)
 
 
 @pytest.mark.unit
@@ -672,3 +751,337 @@ def test_model_classifies_lp():
     m = _pump_tank_costing()
     m.objective = pyo.Objective(expr=m.costing.aggregate_operating_cost)
     assert classify(m) is ProblemClass.LP
+
+
+# --------------------------------------------------------------------------- #
+# Flat (scalar) energy prices: pricing without a tariff / without EECO
+# --------------------------------------------------------------------------- #
+_USD = currency_units("USD")
+
+
+def _gas_only_tariff():
+    """The flat two-utility tariff with its electric rows dropped."""
+    tariff = _two_utility_tariff()
+    return tariff[tariff["utility"] == "gas"].reset_index(drop=True)
+
+
+@pytest.mark.unit
+def test_flat_electricity_price_without_tariff():
+    """A flat $/kWh price bills electricity natively, with no tariff and no EECO."""
+    price = 0.12 * _USD / pyunits.kWh
+    m = _pump_tank_costing(no_tariff=True, energy_prices={"electrical": price})
+    _set_power(m, {t: 100.0 for t in range(24)})
+    _propagate(m.costing)
+
+    # 24 h x 100 kW x $0.12/kWh = $288.00
+    assert pyo.value(m.costing.opex.electricity_cost) == pytest.approx(288.0)
+    assert pyo.value(m.costing.aggregate_operating_cost) == pytest.approx(288.0)
+    # The EECO normalization Var only exists on the tariff path.
+    assert m.costing.opex.find_component("eeco_aggregate_electrical_power") is None
+
+
+@pytest.mark.unit
+def test_flat_fuel_price_with_tariff_electricity():
+    """A fuel priced flat and electricity priced by tariff bill on separate legs."""
+    m = _pump_tank_costing(
+        tariff=_two_utility_tariff(),
+        energy_prices={"biogas": 0.25 * _USD / pyunits.m**3},
+        run_cost_process=False,
+    )
+    _add_fuel_usage(m, "biogas", {t: 10.0 for t in range(24)})
+    m.costing.cost_process()
+    _set_power(m, {t: 100.0 for t in range(24)})
+    _propagate(m.costing)
+
+    # The flat leg is a native constraint, so it propagates without a solver:
+    # 24 h x 10 m3/hr x $0.25/m3 = $60.00 (not the tariff's $0.50/m3).
+    assert pyo.value(m.costing.opex.fuel_cost_biogas) == pytest.approx(60.0)
+    # The EECO leg's in-objective cost is built from EECO's own Vars, which have
+    # no eq_ sibling to propagate through, so read the tariff leg post-hoc:
+    # 24 h x 100 kW x $0.10/kWh = $240.00.
+    report = m.costing.report_cost(m)
+    assert report.operating.electricity == pytest.approx(240.0)
+    assert report.operating.fuel == pytest.approx(60.0)
+
+
+@pytest.mark.unit
+def test_flat_price_overrides_tariff_for_that_carrier():
+    """A flat price wins over a tariff that also covers the carrier."""
+    m = _pump_tank_costing(
+        tariff=_two_utility_tariff(),  # prices electric at $0.10/kWh
+        energy_prices={"electrical": 0.20 * _USD / pyunits.kWh},
+    )
+    _set_power(m, {t: 100.0 for t in range(24)})
+    _propagate(m.costing)
+
+    # The flat $0.20/kWh is used, not the tariff's $0.10/kWh.
+    assert pyo.value(m.costing.opex.electricity_cost) == pytest.approx(480.0)
+    assert m.costing.opex.find_component("eeco_aggregate_electrical_power") is None
+
+
+@pytest.mark.unit
+def test_registered_draw_with_no_pricing_source_raises():
+    """A carrier with draws but neither a price nor tariff coverage errors by name."""
+    m = _pump_tank_costing(tariff=_gas_only_tariff(), run_cost_process=False)
+    with pytest.raises(FlexConfigError, match="electrical"):
+        m.costing.cost_process()
+
+
+@pytest.mark.unit
+def test_flat_price_wrong_dimension_raises():
+    """A price whose units do not reconcile with the carrier raises loudly."""
+    m = _pump_tank_costing(
+        no_tariff=True,
+        energy_prices={"electrical": 0.12 * _USD / pyunits.m**3},  # not a $/energy
+        run_cost_process=False,
+    )
+    with pytest.raises((FlexConfigError, InconsistentUnitsError)):
+        m.costing.cost_process()
+
+
+@pytest.mark.unit
+def test_flat_price_must_carry_units():
+    """A bare float price is rejected — prices carry Pyomo units.
+
+    Pyomo wraps a ConfigValue domain's exception in ValueError (as for the other
+    declared domains), so the FlexConfigError message is asserted through it.
+    """
+    m = _time_model()
+    with pytest.raises(ValueError, match="has no units"):
+        m.costing = FlexCosting(
+            time_block=m.time_block, energy_prices={"electrical": 0.12}
+        )
+
+
+@pytest.mark.unit
+def test_report_cost_flat_priced_is_native():
+    """report_cost recomputes a flat-priced carrier natively (no EECO call)."""
+    m = _pump_tank_costing(
+        no_tariff=True, energy_prices={"electrical": 0.12 * _USD / pyunits.kWh}
+    )
+    _set_power(m, {t: 100.0 for t in range(24)})
+    _propagate(m.costing)
+
+    report = m.costing.report_cost(m)
+    assert report.operating.electricity == pytest.approx(288.0)
+    assert report.operating.fuel == 0.0
+    assert report.total == pytest.approx(report.operating.total)
+
+
+@pytest.mark.unit
+def test_flat_priced_model_needs_no_eeco(monkeypatch):
+    """With every carrier flat-priced, build/cost/report never touch eeco."""
+    from flexops.costing import opex as opex_mod
+
+    monkeypatch.setattr(opex_mod, "_HAS_EECO", False)
+    m = _pump_tank_costing(
+        no_tariff=True, energy_prices={"electrical": 0.12 * _USD / pyunits.kWh}
+    )
+    _set_power(m, {t: 100.0 for t in range(24)})
+    _propagate(m.costing)
+    assert m.costing.report_cost(m).operating.electricity == pytest.approx(288.0)
+
+
+@pytest.mark.unit
+def test_tariff_path_without_eeco_raises_install_hint(monkeypatch):
+    """A tariff path with eeco unavailable errors naming both remedies."""
+    from flexops.costing import opex as opex_mod
+
+    monkeypatch.setattr(opex_mod, "_HAS_EECO", False)
+    with pytest.raises(FlexConfigError, match="eeco"):
+        load_tariff(_TARIFF_JSON)
+
+
+@pytest.mark.unit
+def test_priced_leg_rejects_foreign_time_index():
+    """A priced series on a time set other than the TimeBlock's errors loudly."""
+    m = _pump_tank_costing(run_cost_process=False)
+    m.other_time = pyo.Set(initialize=range(5), ordered=True)
+    m.other_flow = pyo.Var(
+        m.other_time, initialize=1.0, units=pyunits.m**3 / pyunits.hr
+    )
+    m.costing.register_scalar_cost(
+        "water", m.other_flow, 1.0, pyunits.m**3 / pyunits.hr
+    )
+    with pytest.raises(FlexConfigError, match="time"):
+        m.costing.cost_process()
+
+
+# --------------------------------------------------------------------------- #
+# Several tariff files -> one merged frame, indexed by utility
+# --------------------------------------------------------------------------- #
+def _electric_only_records():
+    """Records list holding only the flat electric energy charge."""
+    return [
+        r
+        for r in _two_utility_tariff().to_dict("records")
+        if r["utility"] == "electric"
+    ]
+
+
+def _gas_only_records():
+    """Records list holding only the flat gas energy charge."""
+    return [
+        r for r in _two_utility_tariff().to_dict("records") if r["utility"] == "gas"
+    ]
+
+
+@pytest.mark.unit
+def test_merge_tariffs_sequence():
+    """A sequence of sources merges into one frame carrying both utilities."""
+    merged = merge_tariffs([_electric_only_records(), _gas_only_records()])
+    assert set(merged["utility"]) == {"electric", "gas"}
+    assert len(merged) == 2
+
+
+@pytest.mark.unit
+def test_merge_tariffs_mapping_assigns_by_utility():
+    """A mapping assigns each source to a utility and drops its stray rows."""
+    # Each source is the FULL two-utility tariff; the mapping keeps only the
+    # rows for the utility it was assigned to, so no charge is duplicated.
+    both = _two_utility_tariff()
+    merged = merge_tariffs({"electric": both, "gas": both})
+    assert sorted(merged["utility"]) == ["electric", "gas"]
+    assert len(merged) == 2
+
+
+@pytest.mark.unit
+def test_merge_tariffs_mapping_missing_utility_raises():
+    """A source contributing no rows for its assigned utility errors by name."""
+    with pytest.raises((FlexConfigError, FlexDataError), match="gas"):
+        merge_tariffs({"gas": _electric_only_records()})
+
+
+@pytest.mark.unit
+def test_merge_tariffs_duplicate_charge_raises():
+    """The same charge from two sources errors rather than silently doubling."""
+    with pytest.raises((FlexConfigError, FlexDataError), match="[Dd]uplicate"):
+        merge_tariffs([_electric_only_records(), _electric_only_records()])
+
+
+@pytest.mark.unit
+def test_merged_tariff_bills_both_legs():
+    """A merged electric+gas tariff bills electricity and fuel from one frame."""
+    merged = merge_tariffs(
+        {"electric": _electric_only_records(), "gas": _gas_only_records()}
+    )
+    m = _pump_tank_costing(tariff=merged, run_cost_process=False)
+    _add_fuel_usage(m, "natural_gas", {t: 10.0 for t in range(24)})
+    m.costing.cost_process()
+    _set_power(m, {t: 100.0 for t in range(24)})
+    _propagate(m.costing)
+
+    assert m.costing._tariff_utilities == {"electric", "gas"}
+    # Both legs are EECO legs, so read them post-hoc (see the note in
+    # test_flat_fuel_price_with_tariff_electricity).
+    report = m.costing.report_cost(m)
+    assert report.operating.electricity == pytest.approx(240.0)
+    assert report.operating.fuel == pytest.approx(120.0)
+
+
+# --------------------------------------------------------------------------- #
+# Annualization: interest + discount -> one effective rate
+# --------------------------------------------------------------------------- #
+@pytest.mark.unit
+def test_crf_interest_unset_matches_discount_rate():
+    """interest_rate=None leaves the CRF exactly as the discount rate alone."""
+    m = _pump_tank_costing()
+    i, n = 0.08, 20.0
+    expected = i * (1 + i) ** n / ((1 + i) ** n - 1)
+    assert pyo.value(m.costing.capital_recovery_factor) == pytest.approx(expected)
+    assert pyo.value(m.costing.effective_rate) == pytest.approx(0.08)
+
+
+@pytest.mark.unit
+def test_crf_combines_interest_and_discount():
+    """Both rates given -> effective rate (1+i)/(1+d)-1 drives the CRF."""
+    i, d, n = 0.10, 0.03, 25.0
+    m = _pump_tank_costing(interest_rate=i, discount_rate=d, lifetime_years=n)
+    r = (1 + i) / (1 + d) - 1
+    expected = r * (1 + r) ** n / ((1 + r) ** n - 1)
+    assert pyo.value(m.costing.effective_rate) == pytest.approx(r)
+    assert pyo.value(m.costing.capital_recovery_factor) == pytest.approx(expected)
+
+
+@pytest.mark.unit
+def test_crf_zero_effective_rate_is_straight_line():
+    """Equal interest and discount -> zero effective rate -> CRF == 1/lifetime."""
+    m = _pump_tank_costing(interest_rate=0.05, discount_rate=0.05, lifetime_years=20.0)
+    assert pyo.value(m.costing.effective_rate) == pytest.approx(0.0)
+    assert pyo.value(m.costing.capital_recovery_factor) == pytest.approx(1.0 / 20.0)
+
+
+@pytest.mark.unit
+def test_crf_rejects_degenerate_rates():
+    """An effective rate <= -1 and a non-positive lifetime both error by field."""
+    with pytest.raises(FlexConfigError, match="rate"):
+        _pump_tank_costing(interest_rate=-1.0, discount_rate=0.5)
+
+    with pytest.raises(FlexConfigError, match="lifetime"):
+        _pump_tank_costing(lifetime_years=0.0)
+
+
+# --------------------------------------------------------------------------- #
+# Sub-monthly prorating of monthly demand + fixed charges
+# --------------------------------------------------------------------------- #
+@pytest.mark.unit
+def test_monthly_scale_factor_partial_and_full_month():
+    """The scale factor is horizon / calendar-month length, clamped at 1.0."""
+    import pandas as pd
+
+    july_day = pd.date_range("2025-07-08", periods=24, freq="h")
+    assert monthly_scale_factor(july_day, 1.0) == pytest.approx(24.0 / 744.0)
+
+    full_july = pd.date_range("2025-07-01", periods=744, freq="h")
+    assert monthly_scale_factor(full_july, 1.0) == pytest.approx(1.0)
+
+    # 30-day month -> a different denominator than July's 31 days.
+    nov_day = pd.date_range("2025-11-05", periods=24, freq="h")
+    assert monthly_scale_factor(nov_day, 1.0) == pytest.approx(24.0 / 720.0)
+
+
+@pytest.mark.unit
+def test_monthly_scale_factor_handles_december():
+    """December works (a naive month+1 rollover would raise)."""
+    import pandas as pd
+
+    dec_day = pd.date_range("2025-12-10", periods=24, freq="h")
+    assert monthly_scale_factor(dec_day, 1.0) == pytest.approx(24.0 / 744.0)
+
+
+@pytest.mark.unit
+def test_prorating_scales_demand_and_fixed_charges():
+    """On a 24-h horizon the monthly demand + customer charges are prorated.
+
+    Read post-hoc, so the demand charges are real numbers rather than the
+    in-objective EECO Vars (which no solver has touched here).
+    """
+    m_on = _pump_tank_costing(prorate_monthly_charges=True)
+    m_off = _pump_tank_costing(prorate_monthly_charges=False)
+    for m in (m_on, m_off):
+        _set_power(m, {t: 100.0 for t in range(24)})
+        _propagate(m.costing)
+
+    on = m_on.costing.report_cost(m_on).operating.electricity
+    off = m_off.costing.report_cost(m_off).operating.electricity
+    # Prorating only ever reduces the bill on a sub-monthly horizon.
+    assert on < off
+    # Only the monthly-assessed charges scale: $150 customer + $40.50/kW demand at
+    # a flat 100 kW. The energy charge is untouched, so it cancels in the diff.
+    scale = 24.0 / 744.0
+    monthly_assessed = 150.0 + (21.5 + 19.0) * 100.0
+    assert off - on == pytest.approx(monthly_assessed * (1.0 - scale), rel=1e-6)
+
+
+@pytest.mark.unit
+def test_prorating_leaves_the_energy_charge_alone():
+    """Prorating touches demand and fixed charges only, never energy."""
+    m = _pump_tank_costing(prorate_monthly_charges=True)
+    _set_power(m, {t: 100.0 for t in range(24)})
+    _propagate(m.costing)
+
+    scale = 24.0 / 744.0
+    # Summer weekday (2025-07-08): 5 peak hours @ $0.18 + 19 off-peak @ $0.09.
+    energy = 100.0 * (5 * 0.18 + 19 * 0.09)
+    expected = energy + (150.0 + 40.5 * 100.0) * scale
+    assert m.costing.report_cost(m).operating.electricity == pytest.approx(expected)

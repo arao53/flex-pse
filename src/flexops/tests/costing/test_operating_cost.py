@@ -383,3 +383,75 @@ def test_wrapper_preserves_existing_block_t():
         tariff=tariff,
     )
     assert m.t is existing  # guard did not overwrite it
+
+
+# --------------------------------------------------------------------------- #
+# Sub-monthly prorating of monthly-assessed charges
+# --------------------------------------------------------------------------- #
+def _one_day_index():
+    """Hourly index over a single summer weekday (2025-07-08, a Tuesday)."""
+    return pd.date_range("2025-07-08", periods=24, freq="h")
+
+
+# The demo tariff's monthly-assessed charges, at a flat 100 kW draw:
+# $150/month customer + ($21.50 + $19.00)/kW demand.
+_MONTHLY_ASSESSED_AT_100KW = 150.0 + (21.5 + 19.0) * 100.0
+# One summer weekday's energy at 100 kW: 5 peak hours @ $0.18, 19 off-peak @ $0.09.
+_ONE_DAY_ENERGY_AT_100KW = 100.0 * (5 * 0.18 + 19 * 0.09)
+
+
+@pytest.mark.unit
+def test_prorate_false_bills_full_monthly_charges():
+    """prorate=False bills the whole monthly demand + fixed charge on one day."""
+    tariff = load_tariff(_TARIFF_JSON)
+    load = np.full(24, 100.0)
+    total = evaluate_cost(
+        load, tariff, dt_hours=1.0, time_index=_one_day_index(), prorate=False
+    )
+    assert total == pytest.approx(
+        _ONE_DAY_ENERGY_AT_100KW + _MONTHLY_ASSESSED_AT_100KW, abs=0.005
+    )
+
+
+@pytest.mark.unit
+def test_prorate_scales_only_the_monthly_assessed_charges():
+    """Prorating scales demand + fixed by days/month and leaves energy alone."""
+    tariff = load_tariff(_TARIFF_JSON)
+    load = np.full(24, 100.0)
+    scale = 24.0 / 744.0  # one day of a 31-day month
+    total = evaluate_cost(
+        load, tariff, dt_hours=1.0, time_index=_one_day_index(), prorate=True
+    )
+    assert total == pytest.approx(
+        _ONE_DAY_ENERGY_AT_100KW + _MONTHLY_ASSESSED_AT_100KW * scale, abs=0.005
+    )
+
+
+@pytest.mark.unit
+def test_prorate_is_a_noop_on_a_full_month():
+    """A full-month horizon covers the whole month, so nothing is scaled."""
+    tariff = load_tariff(_TARIFF_JSON)
+    load = _reference_load()
+    index = _july_index()
+    prorated = evaluate_cost(load, tariff, dt_hours=1.0, time_index=index, prorate=True)
+    assert prorated == pytest.approx(14085.00, abs=0.005)
+
+
+@pytest.mark.unit
+def test_daily_assessed_demand_charge_is_not_prorated():
+    """A demand charge assessed per day is already horizon-scaled; leave it be."""
+    tariff = load_tariff(_TARIFF_JSON)
+    # Reassess the anytime demand charge daily; the peak one stays monthly.
+    tariff = tariff.copy()
+    tariff["assessed"] = "monthly"
+    tariff.loc[tariff["name"] == "anytime-demand", "assessed"] = "daily"
+    load = np.full(24, 100.0)
+    scale = 24.0 / 744.0
+
+    total = evaluate_cost(
+        load, tariff, dt_hours=1.0, time_index=_one_day_index(), prorate=True
+    )
+    # Daily anytime demand bills in full ($19/kW x 100 kW); the monthly peak
+    # demand and the customer charge are prorated.
+    expected = _ONE_DAY_ENERGY_AT_100KW + 19.0 * 100.0 + (150.0 + 21.5 * 100.0) * scale
+    assert total == pytest.approx(expected, abs=0.005)

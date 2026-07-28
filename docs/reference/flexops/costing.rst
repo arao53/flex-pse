@@ -20,6 +20,13 @@ the flex-pse exception hierarchy. A flex-pse tariff object is simply an EECO
 ``rate_data`` ``DataFrame`` (EECO 0.2.1 has no tariff loader of its own; its
 cost functions consume that frame directly).
 
+.. note:: **EECO is only needed for tariffs.** The ``eeco`` import is soft, so
+   every carrier priced with a flat :ref:`energy price <flat-energy-prices>`
+   builds, solves, and reports without EECO installed — including
+   ``report_cost``. Reaching a tariff path without ``eeco`` raises
+   :class:`~flexcore.exceptions.FlexConfigError` naming both remedies (install
+   it, or price the carrier flat).
+
 Loaders and CSV conversion
 ---------------------------
 
@@ -28,9 +35,28 @@ Loaders and CSV conversion
    :nosignatures:
 
    load_tariff
+   merge_tariffs
    load_dr_program
    tariff_csv_to_dict
    tariff_currency_units
+   currency_units
+   monthly_scale_factor
+
+**Several tariff files** merge into one frame with :func:`merge_tariffs`, which
+is what ``FlexCosting(tariff_file=...)`` uses when given a list or a mapping.
+Passing a list merges every source as-is; passing a mapping of EECO utility to
+source *assigns* each file to a utility and keeps only that utility's rows, so a
+sheet carrying stray rows for another utility cannot leak into the bill::
+
+    m.costing = fo.FlexCosting(
+        time_block=m.time_block,
+        tariff_file={"electric": "pge_b20.json", "gas": "socal_gn10.json"},
+    )
+
+Both forms end at a single ``rate_data`` frame — there is no separate tariff
+object per utility, because the frame's ``utility`` column is what selects rows
+for each cost leg. Two sources defining the same charge raise rather than
+silently doubling that line item (EECO sums colliding charge keys).
 
 A tariff may be authored as a JSON records structure or imported from an EECO
 ``rate_data`` CSV. The JSON form is a ``tariff_data`` records list, e.g. (an
@@ -93,8 +119,9 @@ the electricity and fuel costs onto one opex block (EECO namespaces its Pyomo
 components by utility, so ``electric_*`` and ``gas_*`` never collide) and returns
 a single :class:`OperatingCostHandles` whose ``total_operating_cost`` is the sum
 across utilities. The facility consumption defaults to the standard series on the
-block — ``block.power_electrical`` and ``block.fuel_usage`` — so a caller need not
-re-declare them each use; pass ``electrical_power``/``fuel_power`` to override. The
+block — ``block.power_electrical`` (kW) and ``block.fuel_usage`` (a volumetric
+flow in m³/hr) — so a caller need not re-declare them each use; pass
+``electrical_power``/``fuel_power`` to override. The
 single-utility builders :func:`add_electricity_cost` and :func:`add_fuel_cost`
 remain available for building one leg alone. :func:`add_fuel_cost` takes a
 ``fuel_type`` (default ``"gas"``, the only value EECO 0.2.1 supports); a
@@ -166,7 +193,6 @@ FlexCosting block
    CostReport
    OperatingCostBreakdown
    CapitalCostBreakdown
-   FuelSpec
    ScalarCostSpec
 
 ``FlexCosting`` subclasses IDAES ``FlowsheetCostingBlockData`` and **delegates
@@ -200,25 +226,32 @@ Every cost lives in one of two sub-blocks built by
 
    :meth:`~FlexCostingData.cost_process` pulls every registered power draw from
    the model and defines ``aggregate_power[t, carrier]`` in kW, where ``carrier``
-   is ``"electrical"``, a registered **fuel** name, or a per-temperature thermal
-   label ``"thermal@<T>K"``. Every draw is normalized to kW with
-   ``pyunits.convert`` at aggregation, so a non-power (or non-kW-convertible) draw
-   fails **loudly**. Thermal duties at **different temperatures are never summed**
-   together — each temperature is its own carrier; ``aggregate_thermal_power`` is a
-   temperature-blind total kept for backward compatibility.
+   is ``"electrical"`` or a per-temperature thermal label ``"thermal@<T>K"``.
+   Every draw is normalized to kW with ``pyunits.convert`` at aggregation, so a
+   non-power (or non-kW-convertible) draw fails **loudly**. Thermal duties at
+   **different temperatures are never summed** together — each temperature is its
+   own carrier; ``aggregate_thermal_power`` is a temperature-blind total kept for
+   backward compatibility.
 
-.. note:: **Fuels — all billed via EECO's gas leg.**
+.. note:: **Fuel is a volume, not a power.**
 
-   :meth:`~FlexCostingData.register_fuel` registers a named fuel (natural gas,
-   hydrogen, biogas, …) with a ``heating_value`` and a ``fuel_units`` basis —
-   volumetric (``m**3``, the default) or energy (``therm``). Its kW draws
-   aggregate under the fuel's carrier and are billed through the existing
+   A combustible fuel is metered and billed on **volume**, so it is aggregated
+   separately from power: ``cost_process`` pulls every fuel-usage flow a unit
+   registered with
+   :meth:`~flexops.core.ops_block.OpsBlockData.register_fuel_usage` and defines
+   ``aggregate_fuel_usage[t, fuel]`` directly in EECO's **m³/hr** (a flow that is
+   not a volumetric rate fails **loudly** there). Each fuel is billed through
    :func:`~flexops.costing.add_fuel_cost` against the **same tariff** loaded at
-   construction, normalized to the fuel's usage rate (``fuel_units/hr``) via the
-   heating value. flex-pse synthesizes **no** tariff content and does **no**
-   fuel-type recognition; a fuel priced in the tariff sheet's ``gas``-utility rows
-   just works, and a tariff missing those rows surfaces EECO's own validation
-   error.
+   construction, on its own ``opex.fuel_<name>`` sub-block so EECO's ``gas_*``
+   components never collide.
+
+   Fuels are **discovered from the model**, so there is nothing to declare on the
+   costing block; a model with no fuel flow builds no gas leg and
+   ``opex.fuel_cost`` is ``0``. flex-pse applies **no heating value** and does
+   **no** fuel-type recognition: a fuel priced in the tariff sheet's
+   ``gas``-utility rows just works, a tariff missing those rows surfaces EECO's
+   own validation error, and if a tariff prices gas on an energy basis, converting
+   it is EECO's job (it applies its own fuel heating-value assumption).
 
 .. note:: **Non-energy scalar costs — native, never via EECO.**
 
@@ -229,13 +262,65 @@ Every cost lives in one of two sub-blocks built by
    ``quantity`` that does not convert to the declared ``quantity_units`` raises,
    forcing unit consistency.
 
+.. _flat-energy-prices:
+
+.. note:: **Flat energy prices — no tariff, no EECO.**
+
+   A carrier does not need a tariff at all: give ``energy_prices`` a
+   units-carrying price per carrier or fuel and that carrier is billed natively
+   as ``price × Σ_t quantity[t] × dt``, exactly like a scalar cost::
+
+       m.costing = fo.FlexCosting(
+           time_block=m.time_block,
+           energy_prices={
+               "electrical":  0.12 * currency_units("USD") / pyunits.kWh,
+               "natural_gas": 0.50 * currency_units("USD") / pyunits.m**3,
+           },
+       )
+
+   Keys are ``"electrical"`` or a registered fuel name. A flat price **wins over
+   a tariff** that also covers that carrier, so the two can be mixed freely —
+   tariff-priced electricity alongside a flat-priced fuel, say. Prices must carry
+   Pyomo units (a bare number is rejected) and must reconcile with the base
+   currency, or the existing unit-consistency check raises.
+
+   A carrier that has registered draws but is priced by *neither* a flat price
+   nor a tariff covering its utility raises
+   :class:`~flexcore.exceptions.FlexConfigError` naming the carrier, rather than
+   contributing a silent ``$0`` to the bill.
+
+.. note:: **Sub-monthly horizons prorate the monthly-assessed charges.**
+
+   A demand charge and a tariff's fixed (customer) charge are billed per calendar
+   month, so a horizon shorter than a month owes only its share. With
+   ``prorate_monthly_charges`` (the default), both are scaled by
+   :func:`~flexops.costing.monthly_scale_factor` — the horizon's length over the
+   real length of the calendar month it starts in. Energy charges are never
+   scaled, and a demand charge the tariff marks ``"assessed": "daily"`` is
+   already at horizon granularity so it is left alone. Set the option to
+   ``False`` to bill full monthly charges regardless of horizon length.
+
+   Prorating is applied to the charge *rates* before EECO sees them, which leaves
+   EECO's tiered-surcharge arithmetic untouched. flex-pse does this itself because
+   EECO's ``get_charge_dict`` path exposes no equivalent option: its
+   ``calculate_cost`` adds the customer charge whole, and its
+   ``demand_scale_factor`` is suppressed for charges spanning ``<= 1`` day —
+   which, because EECO clips charge-key dates to the horizon, would silently
+   include *every* monthly charge on a one-day horizon.
+
 .. note:: **Annualization.**
 
-   ``cost_process`` builds a ``capital_recovery_factor`` (from
-   ``CostingConfig.lifetime_years`` and ``discount_rate``) and an
+   ``cost_process`` builds a ``capital_recovery_factor`` and an
    ``annualized_cost`` Var ($/year): operating cost scaled from the horizon to a
    year plus capital cost times the CRF. With the empty v0 capex block, the
    annualized cost is just the operating cost on an annual basis.
+
+   The CRF is built on a single ``effective_rate``. Supplying only
+   ``discount_rate`` uses it directly; supplying ``interest_rate`` as well (the
+   nominal cost of capital) deflates it into a real rate,
+   ``(1 + interest_rate) / (1 + discount_rate) - 1``. An effective rate of ``0``
+   falls back to straight-line ``1/lifetime_years``, and an effective rate
+   ``<= -1`` or a non-positive lifetime raises.
 
 .. note:: **Currency basis.**
 
@@ -243,9 +328,11 @@ Every cost lives in one of two sub-blocks built by
    capital-cost expression it builds — is the tariff sheet's currency basis, read
    from the charge ``units`` column by
    :func:`~flexops.costing.tariff_currency_units` (EECO tariffs
-   are dollar-based: ``"$"`` → ``USD``). EECO's own cost expressions are
-   dimensionless dollars, so FlexCosting casts them to this currency; the
-   ``report_cost`` numbers are magnitudes in that currency.
+   are dollar-based: ``"$"`` → ``USD``). With no tariff it is the configured
+   ``currency`` (default ``USD``), available as
+   :func:`~flexops.costing.currency_units` for writing flat prices. EECO's own
+   cost expressions are dimensionless dollars, so FlexCosting casts them to this
+   currency; the ``report_cost`` numbers are magnitudes in that currency.
 
 .. note:: **Capital cost enters the objective only in design mode.**
 
@@ -263,10 +350,10 @@ Every cost lives in one of two sub-blocks built by
    :meth:`~FlexCostingData.report_cost` returns a categorized :class:`CostReport`
    — capital vs. operating, each itemized — recomputed **post-solve**, never read
    off the solver objective (a relaxed/scalarized proxy). Operating electricity
-   and fuel are EECO post-hoc evaluations on the realized dispatch; fixed is the
-   config constant. In v0 ``fuel``, ``dr_revenue``, and the whole ``capital``
-   breakdown are zero placeholders, so the structure is stable as those features
-   land.
+   and fuel are EECO post-hoc evaluations on the realized dispatch (fuel on the
+   realized ``aggregate_fuel_usage``, ``0`` when the model burns none); fixed is
+   the config constant. In v0 ``dr_revenue`` and the whole ``capital`` breakdown
+   are zero placeholders, so the structure is stable as those features land.
 
 Construction-order invariant
 ----------------------------
@@ -274,5 +361,5 @@ Construction-order invariant
 ``FlexCosting`` may be constructed **before any units exist** — the API-freeze
 script builds ``m.costing`` before ``m.svcw.tank`` — because all aggregation and
 the EECO call are deferred to ``cost_process()``, which pulls every unit's
-registered power from the model. Building costing first, last, or between units
-gives the identical result.
+registered power and fuel usage from the model. Building costing first, last, or
+between units gives the identical result.

@@ -22,23 +22,29 @@ per-line-item costs, the annualized cost, and the totals are all first-class
 model variables.
 
 **Energy carriers.** FlexCosting aggregates every registered power draw into an
-indexed kW series :attr:`aggregate_power` ``[t, carrier]``: ``"electrical"``, one
-carrier per registered **fuel** name (natural gas, hydrogen, biogas, …), and one
-per distinct **thermal** temperature (``"thermal@<T>K"`` — heat duties at
-different temperatures are never summed together). Electrical and fuel carriers
-are billed through EECO (electricity via ``add_electricity_cost``; each fuel via
-``add_fuel_cost`` against the same tariff, normalized to EECO's gas-usage units
-with the fuel's heating value). FlexCosting writes **no** tariff cost math of its
-own (that is EECO's).
+indexed kW series :attr:`aggregate_power` ``[t, carrier]``: ``"electrical"`` and
+one carrier per distinct **thermal** temperature (``"thermal@<T>K"`` — heat duties
+at different temperatures are never summed together). Electricity is billed
+through EECO via ``add_electricity_cost``.
+
+**Fuel is a volume, not a power.** A combustible fuel is metered and billed on
+volume, so every fuel-usage flow a unit registered
+(:meth:`~flexops.core.ops_block.OpsBlockData.register_fuel_usage`) is aggregated
+separately into :attr:`aggregate_fuel_usage` ``[t, fuel]`` in EECO's m³/hr and
+billed via ``add_fuel_cost`` against the same tariff. Fuels are discovered from
+the model, so there is nothing to declare on this block. flex-pse assumes **no**
+heating value: if a tariff prices gas on an energy basis, converting it is EECO's
+job. FlexCosting writes **no** tariff cost math of its own (that is EECO's).
 
 Construction-order invariant: FlexCosting may be constructed before any units
 exist, because all aggregation and the EECO call are deferred to
-:meth:`cost_process`, which **pulls** every unit's registered power from the
-model (via :func:`~flexops.core.registration.iter_io_registry`).
+:meth:`cost_process`, which **pulls** every unit's registered power and fuel usage
+from the model (via :func:`~flexops.core.registration.iter_io_registry`).
 """
 
 import dataclasses
 import logging
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import numpy as np
@@ -53,18 +59,111 @@ from flexcore import nomenclature as nm
 from flexcore.exceptions import FlexConfigError
 from flexops.core.registration import iter_io_registry
 from flexops.costing.opex import (
+    EECO_GAS_USAGE_UNITS,
     EECO_POWER_UNITS,
     DRConfig,
     add_electricity_cost,
     add_fuel_cost,
+    currency_units,
     evaluate_cost,
     evaluate_fuel_cost,
     load_dr_program,
     load_tariff,
+    merge_tariffs,
     tariff_currency_units,
 )
 
 _log = logging.getLogger(__name__)
+
+
+def _is_multi_tariff_source(source) -> bool:
+    """Whether a configured tariff source holds several tariffs to merge.
+
+    Distinguishes the multi-tariff forms from the single-source forms
+    :func:`~flexops.costing.opex.load_tariff` already accepts, which include a
+    records ``list[dict]`` and a ``{"tariff_data": [...]}`` payload:
+
+    * a mapping is multi-tariff unless it carries the ``"tariff_data"`` key;
+    * a sequence is multi-tariff unless its entries are row records (dicts).
+
+    Args:
+        source: The configured ``tariff_file``/``tariff`` value.
+
+    Returns:
+        ``True`` if ``source`` should go to
+        :func:`~flexops.costing.opex.merge_tariffs`.
+    """
+    if isinstance(source, Mapping):
+        return "tariff_data" not in source
+    if isinstance(source, (str, bytes)) or not isinstance(source, Sequence):
+        return False
+    return len(source) > 0 and not all(isinstance(item, Mapping) for item in source)
+
+
+def _energy_prices_domain(value):
+    """Validate the ``energy_prices`` mapping: carrier name -> units-carrying price.
+
+    Args:
+        value: The configured mapping, or ``None``.
+
+    Returns:
+        The mapping unchanged (``{}`` for ``None``).
+
+    Raises:
+        FlexConfigError: If it is not a mapping, a key is not a string, or a price
+            carries no Pyomo units (a bare number is always ambiguous).
+    """
+    if value is None:
+        return {}
+    if not isinstance(value, Mapping):
+        raise FlexConfigError(
+            "energy_prices must be a mapping of carrier or fuel name to a "
+            f"units-carrying price; got {type(value).__name__}.",
+            field="energy_prices",
+            value=value,
+        )
+    for name, price in value.items():
+        if not isinstance(name, str):
+            raise FlexConfigError(
+                f"energy_prices keys must be carrier or fuel names (strings); got "
+                f"{name!r}.",
+                field="energy_prices",
+                value=name,
+            )
+        if isinstance(price, int | float):
+            raise FlexConfigError(
+                f"energy_prices[{name!r}]={price!r} has no units. Multiply it by a "
+                "currency over the metered quantity, e.g. "
+                "0.12 * currency_units('USD') / pyunits.kWh for electricity or "
+                "0.5 * currency_units('USD') / pyunits.m**3 for a fuel.",
+                field="energy_prices",
+                value=price,
+            )
+    return dict(value)
+
+
+def _optional_rate_domain(value):
+    """Validate an optional annual rate (a fraction, or ``None`` for unset).
+
+    Args:
+        value: A float-like rate, or ``None``.
+
+    Returns:
+        The rate as a float, or ``None``.
+
+    Raises:
+        FlexConfigError: If ``value`` is not None and not float-convertible.
+    """
+    if value is None:
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError) as exc:
+        raise FlexConfigError(
+            f"interest_rate must be a fraction (e.g. 0.06) or None; got {value!r}.",
+            field="interest_rate",
+            value=value,
+        ) from exc
 
 
 @dataclasses.dataclass
@@ -74,8 +173,8 @@ class OperatingCostBreakdown:
     Attributes:
         electricity: EECO post-hoc electricity bill on the realized aggregate
             power ($).
-        fuel: EECO post-hoc fuel bill summed over registered fuels ($); ``0`` in
-            v0 when no fuel-consuming unit is present.
+        fuel: EECO post-hoc fuel bill on the realized volumetric usage, summed
+            over every fuel found in the model ($); ``0`` when none burns fuel.
         fixed: The configured fixed operating cost ($, a constant).
         scalar: Non-energy scalar operating cost summed over registered
             scalar-cost entries ($); ``0`` when none registered.
@@ -119,25 +218,6 @@ class CostReport:
     operating: OperatingCostBreakdown
     capital: CapitalCostBreakdown
     total: float
-
-
-@dataclasses.dataclass
-class FuelSpec:
-    """A fuel registered on FlexCosting for EECO gas-leg billing.
-
-    Attributes:
-        name: The fuel's name (e.g. ``"natural_gas"``, ``"hydrogen"``); the
-            carrier key its kW draws aggregate under.
-        heating_value: The fuel's energy content in kWh per ``fuel_units``, used
-            to convert the fuel's kW draw into its EECO usage rate.
-        fuel_units: The Pyomo unit the fuel is metered/billed in — volumetric
-            (``m**3``) or energy (``therm``) — matching the tariff's gas charge
-            basis. The EECO usage series is built in ``fuel_units / hr``.
-    """
-
-    name: str
-    heating_value: float
-    fuel_units: Any
 
 
 @dataclasses.dataclass
@@ -207,16 +287,53 @@ class FlexCostingData(FlowsheetCostingBlockData):
         "tariff_file",
         ConfigValue(
             default=None,
-            description="Path to an EECO tariff file. Exactly one of tariff_file "
-            "or tariff must be given.",
+            description="Path to an EECO tariff file, or several to merge: a list "
+            "of paths, or a mapping of EECO utility ('electric'/'gas') to path to "
+            "also assign each file to a utility. At most one of tariff_file or "
+            "tariff; omit both to price every carrier from energy_prices.",
         ),
     )
     CONFIG.declare(
         "tariff",
         ConfigValue(
             default=None,
-            description="An already-loaded EECO tariff object. Exactly one of "
-            "tariff or tariff_file must be given.",
+            description="An already-loaded EECO tariff object (or a list/mapping "
+            "of them to merge, as for tariff_file). At most one of tariff or "
+            "tariff_file.",
+        ),
+    )
+    CONFIG.declare(
+        "energy_prices",
+        ConfigValue(
+            default=None,
+            domain=_energy_prices_domain,
+            description="Optional flat prices, as a mapping of carrier or fuel "
+            "name to a units-carrying price, e.g. {'electrical': 0.12 * "
+            "pyunits.USD / pyunits.kWh, 'natural_gas': 0.5 * pyunits.USD / "
+            "pyunits.m**3}. Keys are 'electrical' or a registered fuel name. A "
+            "carrier priced here is billed natively at that flat price and is NOT "
+            "sent to EECO, so it needs no tariff.",
+        ),
+    )
+    CONFIG.declare(
+        "currency",
+        ConfigValue(
+            default="USD",
+            domain=str,
+            description="Currency basis to use when no tariff is given (a "
+            "tariff's own currency basis always wins). Registered as a Pyomo "
+            "currency unit, so flat prices must be written in it.",
+        ),
+    )
+    CONFIG.declare(
+        "prorate_monthly_charges",
+        ConfigValue(
+            default=True,
+            domain=bool,
+            description="Prorate a tariff's monthly-assessed demand charge and "
+            "fixed (customer) charge to the horizon length when the horizon is "
+            "shorter than the calendar month it starts in. Set False to bill the "
+            "full monthly charges regardless of horizon length.",
         ),
     )
     CONFIG.declare(
@@ -242,8 +359,9 @@ class FlexCostingData(FlowsheetCostingBlockData):
         ConfigValue(
             default=20.0,
             domain=float,
-            description="Plant lifetime in years, used with discount_rate to form "
-            "the capital recovery factor that annualizes capital cost.",
+            description="Plant lifetime in years (> 0), used with the effective "
+            "rate to form the capital recovery factor that annualizes capital "
+            "cost.",
         ),
     )
     CONFIG.declare(
@@ -251,48 +369,89 @@ class FlexCostingData(FlowsheetCostingBlockData):
         ConfigValue(
             default=0.08,
             domain=float,
-            description="Annual discount rate (fraction) for the capital recovery "
-            "factor. 0 falls back to straight-line 1/lifetime.",
+            description="Annual discount rate (fraction, e.g. 0.08 = 8%). Used "
+            "alone as the effective rate when interest_rate is unset; otherwise "
+            "it deflates interest_rate into a real effective rate. An effective "
+            "rate of 0 falls back to straight-line 1/lifetime.",
+        ),
+    )
+    CONFIG.declare(
+        "interest_rate",
+        ConfigValue(
+            default=None,
+            domain=_optional_rate_domain,
+            description="Optional annual cost of capital (fraction, e.g. 0.06). "
+            "When given, the capital recovery factor uses the effective rate "
+            "(1 + interest_rate) / (1 + discount_rate) - 1. Leave unset to use "
+            "discount_rate alone.",
         ),
     )
 
     # -- required FlowsheetCostingBlockData overloads ---------------------
 
     def build_global_params(self) -> None:
-        """Resolve the tariff and set the base currency from its currency basis.
+        """Resolve the tariff (if any) and set the base currency.
 
-        Called during :meth:`build`. The base currency is the tariff sheet's
-        currency basis (EECO tariffs are dollar-based → ``USD``, from the charge
-        ``units`` column); every operating-cost expression FlexCosting builds is
+        Called during :meth:`build`. When a tariff is given the base currency is
+        the tariff sheet's currency basis (EECO tariffs are dollar-based → ``USD``,
+        from the charge ``units`` column); otherwise it is the configured
+        ``currency``. Every operating-cost expression FlexCosting builds is
         labeled with it. EECO's own cost expressions are dimensionless dollars,
         so FlexCosting casts them to this currency (:meth:`cost_process`).
+
+        Also records which utilities the tariff prices, so :meth:`cost_process`
+        can tell a carrier the tariff covers from one it does not.
         """
         self._tariff = self._resolve_tariff()
-        self._currency = tariff_currency_units(self._tariff)
+        if self._tariff is None:
+            self._currency = currency_units(self.config.currency)
+            self._tariff_utilities: set[str] = set()
+        else:
+            self._currency = tariff_currency_units(self._tariff)
+            self._tariff_utilities = set(self._tariff["utility"].dropna().unique())
         self.base_currency = self._currency
         self.base_period = pyunits.year
 
     def _resolve_tariff(self):
-        """Load the tariff from config, requiring exactly one source.
+        """Load the tariff from config, or ``None`` when pricing is flat-only.
+
+        Accepts a single source, a sequence of sources to merge, or a mapping of
+        EECO utility to source to merge *and* assign per utility — several files
+        always collapse into one ``rate_data`` frame, whose ``utility`` column is
+        what selects rows per leg.
 
         Returns:
-            The loaded EECO tariff object.
+            The loaded EECO tariff object, or ``None`` if no tariff was given.
 
         Raises:
-            FlexConfigError: If not exactly one of ``tariff_file``/``tariff`` is
-                given.
+            FlexConfigError: If both ``tariff_file`` and ``tariff`` are given, or
+                if neither is and ``energy_prices`` is empty (nothing would price
+                the model).
         """
         tariff_file = self.config.tariff_file
         tariff = self.config.tariff
-        if (tariff_file is None) == (tariff is None):
+        if tariff_file is not None and tariff is not None:
             raise FlexConfigError(
-                "Provide exactly one of tariff_file (a path) or tariff (a loaded "
-                f"EECO tariff object); got tariff_file={tariff_file!r}, "
-                f"tariff={'set' if tariff is not None else None}.",
+                "Provide at most one of tariff_file (a path, or several to merge) "
+                "or tariff (an already-loaded EECO tariff object); got both.",
                 field="tariff_file",
                 value=tariff_file,
             )
-        return load_tariff(tariff_file if tariff_file is not None else tariff)
+        source = tariff_file if tariff_file is not None else tariff
+        if source is None:
+            if not self.config.energy_prices:
+                raise FlexConfigError(
+                    "Nothing prices this costing block: give a tariff "
+                    "(tariff_file= or tariff=) or a flat price per carrier "
+                    "(energy_prices={'electrical': 0.12 * currency_units('USD') / "
+                    "pyunits.kWh}).",
+                    field="tariff_file",
+                    value=None,
+                )
+            return None
+        if _is_multi_tariff_source(source):
+            return merge_tariffs(source)
+        return load_tariff(source)
 
     def build_process_costs(self) -> None:
         """No-op: flex-native process costs are built in :meth:`cost_process`.
@@ -336,8 +495,8 @@ class FlexCostingData(FlowsheetCostingBlockData):
         self._registered_power: list[tuple[Any, Any, nm.PowerKind]] = []
         # _registered_sizing: sizing Vars + capex constraints the modes toggle.
         self._registered_sizing: list[_SizingEntry] = []
-        # Fuels and non-energy scalar costs registered on this block.
-        self._registered_fuels: dict[str, FuelSpec] = {}
+        # Non-energy scalar costs registered on this block. (Fuels need no
+        # registration here -- cost_process discovers them from the model.)
         self._registered_scalar_costs: dict[str, ScalarCostSpec] = {}
 
     # -- registration ---------------
@@ -368,57 +527,6 @@ class FlexCostingData(FlowsheetCostingBlockData):
                 (de)activate, or ``None``.
         """
         self._registered_sizing.append(_SizingEntry(var, capex_constraint))
-
-    def register_fuel(
-        self, name: str, heating_value: float, *, fuel_units=None
-    ) -> FuelSpec:
-        """Register a fuel to be billed through EECO's gas leg.
-
-        The fuel's kW draws (declared with ``PowerKind.FUEL`` and this ``name``)
-        aggregate under carrier ``name`` and are billed via
-        :func:`~flexops.costing.add_fuel_cost` against the same tariff loaded
-        at construction, normalized to the fuel's usage rate (``fuel_units/hr``)
-        with ``heating_value``. flex-pse synthesizes no tariff content; if the
-        tariff lacks the ``gas``-utility rows the fuel needs, EECO's own
-        validation raises when :meth:`cost_process` runs.
-
-        Args:
-            name: The fuel's name (the carrier key its kW draws aggregate under).
-            heating_value: The fuel's energy content in kWh per ``fuel_units``
-                (e.g. ~10.5 for natural gas in kWh/m³; ~29.3 for a therm basis).
-            fuel_units: The Pyomo unit the fuel is metered/billed in, matching the
-                tariff's gas charge basis — volumetric (``pyunits.m**3``, the
-                default) or energy (``pyunits.therm``).
-
-        Returns:
-            The stored :class:`FuelSpec`.
-
-        Raises:
-            FlexConfigError: If ``name`` was already registered.
-        """
-        if name in self._registered_fuels:
-            raise FlexConfigError(
-                f"Fuel {name!r} is already registered.", field="name", value=name
-            )
-        if fuel_units is None:
-            fuel_units = pyunits.m**3
-        spec = FuelSpec(name=name, heating_value=heating_value, fuel_units=fuel_units)
-        self._registered_fuels[name] = spec
-        return spec
-
-    def fuel_spec(self, name: str) -> FuelSpec:
-        """Return the :class:`FuelSpec` registered under ``name``.
-
-        Args:
-            name: A registered fuel name.
-
-        Returns:
-            The stored :class:`FuelSpec`.
-
-        Raises:
-            KeyError: If ``name`` is not a registered fuel.
-        """
-        return self._registered_fuels[name]
 
     def register_scalar_cost(
         self, name: str, quantity, price: float, quantity_units, *, unit=None
@@ -483,9 +591,9 @@ class FlexCostingData(FlowsheetCostingBlockData):
     def _carrier_key(record) -> str:
         """Return the aggregation carrier key for a power record.
 
-        Electrical draws share one ``"electrical"`` carrier; fuel draws use their
-        fuel name; thermal draws use a per-temperature label
-        (``"thermal@<T>K"``) so duties at different temperatures never mix.
+        Electrical draws share one ``"electrical"`` carrier; thermal draws use a
+        per-temperature label (``"thermal@<T>K"``) so duties at different
+        temperatures never mix.
 
         Args:
             record: A :class:`~flexops.core.registration.PowerRecord`.
@@ -493,8 +601,6 @@ class FlexCostingData(FlowsheetCostingBlockData):
         Returns:
             The carrier key string.
         """
-        if record.kind is nm.PowerKind.FUEL:
-            return record.fuel_name
         if record.kind is nm.PowerKind.THERMAL:
             temp_k = pyo.value(pyunits.convert(record.temperature, pyunits.K))
             return f"thermal@{temp_k:.6g}K"
@@ -503,7 +609,7 @@ class FlexCostingData(FlowsheetCostingBlockData):
     # -- cost_process (all aggregation + the EECO call, deferred here) ----
 
     def cost_process(self) -> None:
-        """Aggregate power, build the ``opex``/``capex`` blocks, enter operations mode.
+        """Aggregate energy, build the ``opex``/``capex`` blocks, enter operations mode.
 
         Overrides the parent ``FlowsheetCostingBlockData.cost_process`` (whose
         ``aggregate_capital_cost`` Var would collide with the flex-native
@@ -516,6 +622,7 @@ class FlexCostingData(FlowsheetCostingBlockData):
         dt_hours = pyo.value(pyunits.convert(tb.dt, pyunits.hr))
 
         self._build_power_aggregation(tb)
+        self._build_fuel_aggregation(tb)
         self._build_opex(tb, cur, dt_hours)
         self._build_capex(cur)
         self._build_totals_and_annualization(tb, cur)
@@ -526,7 +633,7 @@ class FlexCostingData(FlowsheetCostingBlockData):
         """Build the indexed per-carrier kW aggregation (Var + Constraint).
 
         Pulls every registered power draw from the model, buckets it by carrier
-        (``"electrical"`` / fuel name / ``"thermal@<T>K"``), and defines
+        (``"electrical"`` / ``"thermal@<T>K"``), and defines
         ``aggregate_power[t, carrier]`` in kW. ``pyunits.convert(v[t], kW)``
         loudly rejects any draw that is not a power. Also exposes the API-freeze
         ``aggregate_electrical_power`` (a Reference) and a temperature-blind
@@ -537,8 +644,7 @@ class FlexCostingData(FlowsheetCostingBlockData):
             for rec in registry.power:
                 vars_by_carrier.setdefault(self._carrier_key(rec), []).append(rec.var)
 
-        carriers = set(vars_by_carrier) | {"electrical"} | set(self._registered_fuels)
-        carriers = sorted(carriers)
+        carriers = sorted(set(vars_by_carrier) | {"electrical"})
         thermal_carriers = [c for c in carriers if c.startswith("thermal@")]
 
         self.aggregate_power = pyo.Var(
@@ -581,50 +687,143 @@ class FlexCostingData(FlowsheetCostingBlockData):
             tb.time_index, rule=_therm_rule
         )
 
+    def _build_fuel_aggregation(self, tb) -> None:
+        """Build the indexed per-fuel volumetric aggregation (Var + Constraint).
+
+        Pulls every registered fuel-usage flow from the model, buckets it by fuel
+        name, and defines ``aggregate_fuel_usage[t, fuel]`` directly in EECO's
+        m³/hr — so this Var *is* the series EECO bills, with no heating value
+        applied anywhere. ``pyunits.convert(v[t], m³/hr)`` loudly rejects a flow
+        that is not a volumetric rate. Fuels are discovered here rather than
+        declared, so a model with no fuel gets an empty Var and no gas leg.
+        """
+        vars_by_fuel: dict[str, list] = {}
+        for _block, registry in iter_io_registry(self.model()):
+            for rec in registry.fuel:
+                vars_by_fuel.setdefault(rec.fuel_name, []).append(rec.var)
+
+        self._fuel_names = sorted(vars_by_fuel)
+        self.aggregate_fuel_usage = pyo.Var(
+            tb.time_index,
+            self._fuel_names,
+            initialize=0.0,
+            units=EECO_GAS_USAGE_UNITS,
+            doc=f"Aggregate fuel usage by fuel ({EECO_GAS_USAGE_UNITS}).",
+        )
+
+        def _agg_rule(_b, t, fuel):
+            return self.aggregate_fuel_usage[t, fuel] == sum(
+                pyunits.convert(v[t], EECO_GAS_USAGE_UNITS) for v in vars_by_fuel[fuel]
+            )
+
+        self.eq_aggregate_fuel_usage = pyo.Constraint(
+            tb.time_index, self._fuel_names, rule=_agg_rule
+        )
+
+    def _price_for(self, carrier: str):
+        """Return the configured flat price for ``carrier``, or ``None``.
+
+        A carrier with a flat price is billed natively and never sent to EECO.
+
+        Args:
+            carrier: A power carrier key (``"electrical"``) or a fuel name.
+
+        Returns:
+            The units-carrying price expression, or ``None`` if not priced.
+        """
+        # Pyomo stores a ConfigValue default verbatim without running its domain,
+        # so an unset energy_prices is None rather than the domain's {}.
+        return (self.config.energy_prices or {}).get(carrier)
+
+    def _require_priced(self, carrier: str, utility: str) -> None:
+        """Fail if nothing prices ``carrier`` — neither a flat price nor a tariff.
+
+        Without this an unpriced carrier would silently contribute ``$0`` to the
+        bill, which looks like a working model rather than a missing tariff.
+
+        Args:
+            carrier: The carrier/fuel name, named in the error.
+            utility: The EECO utility that would have to price it.
+
+        Raises:
+            FlexConfigError: If no flat price covers ``carrier`` and the tariff
+                does not cover ``utility``.
+        """
+        if self._price_for(carrier) is not None:
+            return
+        if utility in self._tariff_utilities:
+            return
+        priced = sorted(self._tariff_utilities) or "nothing"
+        raise FlexConfigError(
+            f"Nothing prices the {carrier!r} carrier: the tariff has no "
+            f"{utility!r} rows (it prices {priced}) and energy_prices has no "
+            f"{carrier!r} entry. Add {utility!r} charges to the tariff, or give it "
+            f"a flat price: energy_prices={{{carrier!r}: ...}}.",
+            field="energy_prices",
+            value=carrier,
+        )
+
     def _build_opex(self, tb, cur, dt_hours) -> None:
         """Build the ``opex`` block: electricity + fuel + fixed + scalar (Vars).
 
-        Electricity and every registered fuel are billed via the ``opex.py``
-        bridge (EECO owns the cost math). Fuel legs are built on per-fuel
-        sub-blocks so EECO's ``gas_*`` components never collide. Non-energy scalar
-        costs are built natively (no EECO). A final unit-consistency check forces
-        every operating-cost line item onto the tariff currency or errors loudly.
+        Each energy carrier is billed one of two ways: a **flat price** from
+        ``energy_prices`` is applied natively here, and anything else goes to the
+        ``opex.py`` bridge so EECO owns the tariff cost math. Fuel legs are built
+        on per-fuel sub-blocks so EECO's ``gas_*`` components never collide.
+        Non-energy scalar costs are always native. A final unit-consistency check
+        forces every operating-cost line item onto the base currency or errors
+        loudly.
         """
         self.opex = pyo.Block(
             doc="All operating cost: electricity + fuel + fixed + scalar."
         )
         opex = self.opex
 
-        # --- electricity: normalize to EECO power units, then bill ---------
-        opex.eeco_aggregate_electrical_power = pyo.Var(
-            tb.time_index, initialize=0.0, units=EECO_POWER_UNITS
+        # --- electricity: a flat price, or EECO against the tariff ----------
+        self._require_priced("electrical", "electric")
+        opex.electricity_cost = pyo.Var(
+            initialize=0.0, units=cur, doc="Electricity cost ($)."
         )
-
-        def _norm_elec(_b, t):
-            return opex.eeco_aggregate_electrical_power[t] == pyunits.convert(
-                self.aggregate_power[t, "electrical"], EECO_POWER_UNITS
+        price = self._price_for("electrical")
+        if price is not None:
+            opex.eq_electricity_cost = pyo.Constraint(
+                expr=opex.electricity_cost
+                == self._priced_integral(
+                    pyo.Reference(self.aggregate_power[:, "electrical"]),
+                    price,
+                    tb,
+                    dt_hours,
+                )
+            )
+        else:
+            # EECO wants its own units; normalize into them first.
+            opex.eeco_aggregate_electrical_power = pyo.Var(
+                tb.time_index, initialize=0.0, units=EECO_POWER_UNITS
             )
 
-        opex.eq_eeco_aggregate_electrical_power = pyo.Constraint(
-            tb.time_index, rule=_norm_elec
-        )
-        elec = add_electricity_cost(
-            block=opex,
-            electrical_power=opex.eeco_aggregate_electrical_power,
-            time_index=tb.datetime_index,
-            dt_hours=dt_hours,
-            tariff=self._tariff,
-            dr_config=self.dr,
-        )
-        opex.electricity_cost = pyo.Var(
-            initialize=0.0, units=cur, doc="EECO electricity cost ($)."
-        )
-        opex.eq_electricity_cost = pyo.Constraint(
-            expr=opex.electricity_cost == elec.total_operating_cost * cur
-        )
+            def _norm_elec(_b, t):
+                return opex.eeco_aggregate_electrical_power[t] == pyunits.convert(
+                    self.aggregate_power[t, "electrical"], EECO_POWER_UNITS
+                )
 
-        # --- fuels: normalize kW -> m^3/hr, bill each on its own sub-block --
-        fuel_names = sorted(self._registered_fuels)
+            opex.eq_eeco_aggregate_electrical_power = pyo.Constraint(
+                tb.time_index, rule=_norm_elec
+            )
+            elec = add_electricity_cost(
+                block=opex,
+                electrical_power=opex.eeco_aggregate_electrical_power,
+                time_index=tb.datetime_index,
+                dt_hours=dt_hours,
+                tariff=self._tariff,
+                dr_config=self.dr,
+                prorate=self.config.prorate_monthly_charges,
+            )
+            opex.eq_electricity_cost = pyo.Constraint(
+                expr=opex.electricity_cost == elec.total_operating_cost * cur
+            )
+
+        # --- fuels: bill each discovered fuel on its own sub-block ---------
+        fuel_names = self._fuel_names
         for name in fuel_names:
             self._build_fuel_leg(tb, cur, dt_hours, name)
 
@@ -678,30 +877,80 @@ class FlexCostingData(FlowsheetCostingBlockData):
         self._build_dr()  # no-op in v0
         self._assert_cost_units_consistent(fuel_names, scalar_names)
 
-    def _build_fuel_leg(self, tb, cur, dt_hours, name: str) -> None:
-        """Normalize a fuel's kW draw to a usage rate; bill it via EECO's gas leg."""
-        opex = self.opex
-        spec = self._registered_fuels[name]
-        heating_value = spec.heating_value * pyunits.kWh / spec.fuel_units
-        usage_units = spec.fuel_units / pyunits.hr
+    def _priced_integral(self, series, price, tb, dt_hours, *, convert_to=None):
+        """Return ``price × Σ_t series[t] × dt`` — the one flat-price cost formula.
 
-        usage = pyo.Var(
-            tb.time_index,
-            initialize=0.0,
-            units=usage_units,
-            doc=f"EECO usage rate for fuel {name} ({usage_units}).",
-        )
-        opex.add_component(f"eeco_gas_usage_{name}", usage)
+        Shared by every natively priced line item: a flat-priced energy carrier or
+        fuel, and any registered scalar cost. ``price`` carries Pyomo units, so
+        the resulting constraint is dimensionally checked and a price whose units
+        do not reconcile with the metered quantity raises rather than producing a
+        silently wrong number.
 
-        def _norm_fuel(_b, t):
-            return usage[t] == pyunits.convert(
-                self.aggregate_power[t, name] / heating_value, usage_units
+        The integration domain is the *series'* own index set rather than an
+        assumed one, and the timestep is passed in — so this stays correct if a
+        series is ever defined over a subset of time. It is still guarded to the
+        model's single time index, because everything upstream (aggregation, the
+        EECO ``block.t``, ``TimeBlock`` discovery) assumes one uniform grid;
+        costing a batch or cyclic unit on its own time index needs those changed
+        first, and until then a foreign index is an error, not a wrong bill.
+
+        Args:
+            series: A time-indexed rate (Var/Expression/Reference).
+            price: A units-carrying price per unit of the integrated quantity.
+            tb: The TimeBlock, whose ``time_index`` the series must be on.
+            dt_hours: Timestep length in hours.
+            convert_to: Optional units to convert each ``series[t]`` into first.
+
+        Returns:
+            The cost expression.
+
+        Raises:
+            FlexConfigError: If ``series`` is not indexed by the TimeBlock's
+                ``time_index``.
+        """
+        index = series.index_set()
+        if index is not tb.time_index:
+            raise FlexConfigError(
+                f"Cannot cost a series indexed by {index.name!r}: flat pricing "
+                f"integrates over the model's time index ({tb.time_index.name!r}). "
+                "Costing a series on its own time index (a batch or cyclic unit) "
+                "is not supported yet — the power/fuel aggregation and the EECO "
+                "bridge are built on a single uniform grid.",
+                field="energy_prices",
+                value=index.name,
             )
-
-        opex.add_component(
-            f"eq_eeco_gas_usage_{name}",
-            pyo.Constraint(tb.time_index, rule=_norm_fuel),
+        terms = sum(
+            (
+                pyunits.convert(series[t], convert_to)
+                if convert_to is not None
+                else series[t]
+            )
+            for t in index
         )
+        return price * terms * dt_hours * pyunits.hr
+
+    def _build_fuel_leg(self, tb, cur, dt_hours, name: str) -> None:
+        """Bill one fuel: a flat price natively, or EECO's gas leg on the tariff.
+
+        ``aggregate_fuel_usage`` is already in EECO's units, so the tariff path
+        bills it directly through a ``Reference`` — no normalization Var, and no
+        heating value.
+        """
+        opex = self.opex
+        self._require_priced(name, "gas")
+        usage = pyo.Reference(self.aggregate_fuel_usage[:, name])
+        cost = pyo.Var(initialize=0.0, units=cur, doc=f"Cost of fuel {name} ($).")
+        opex.add_component(f"fuel_cost_{name}", cost)
+
+        price = self._price_for(name)
+        if price is not None:
+            opex.add_component(
+                f"eq_fuel_cost_{name}",
+                pyo.Constraint(
+                    expr=cost == self._priced_integral(usage, price, tb, dt_hours)
+                ),
+            )
+            return
 
         # EECO namespaces its gas_* components by utility, not by fuel; give each
         # fuel its own sub-block so multiple fuels never collide.
@@ -714,9 +963,8 @@ class FlexCostingData(FlowsheetCostingBlockData):
             dt_hours=dt_hours,
             tariff=self._tariff,
             dr_config=self.dr,
+            prorate=self.config.prorate_monthly_charges,
         )
-        cost = pyo.Var(initialize=0.0, units=cur, doc=f"EECO cost of fuel {name} ($).")
-        opex.add_component(f"fuel_cost_{name}", cost)
         opex.add_component(
             f"eq_fuel_cost_{name}",
             pyo.Constraint(expr=cost == fuel.total_operating_cost * cur),
@@ -726,22 +974,23 @@ class FlexCostingData(FlowsheetCostingBlockData):
         """Build one native scalar-cost line item (price × Σ quantity × dt)."""
         opex = self.opex
         spec = self._registered_scalar_costs[name]
-        # price is a bare $/quantity value; attach cur/(quantity_units*hr) so the
-        # constraint is dimensionally consistent and a mis-unit quantity raises.
-        unit_factor = cur / (spec.quantity_units * pyunits.hr)
+        # spec.price is a bare $/quantity number; attach cur/(quantity_units*hr) to
+        # make it a units-carrying price, so a mis-unit quantity raises.
+        price = spec.price * cur / (spec.quantity_units * pyunits.hr)
         cost = pyo.Var(initialize=0.0, units=cur, doc=f"Scalar cost {name} ($).")
         opex.add_component(f"scalar_cost_{name}", cost)
-        integral = (
-            sum(
-                pyunits.convert(spec.quantity[t], spec.quantity_units)
-                for t in tb.time_index
-            )
-            * dt_hours
-            * pyunits.hr
-        )
         opex.add_component(
             f"eq_scalar_cost_{name}",
-            pyo.Constraint(expr=cost == spec.price * integral * unit_factor),
+            pyo.Constraint(
+                expr=cost
+                == self._priced_integral(
+                    spec.quantity,
+                    price,
+                    tb,
+                    dt_hours,
+                    convert_to=spec.quantity_units,
+                )
+            ),
         )
 
     def _assert_cost_units_consistent(self, fuel_names, scalar_names) -> None:
@@ -784,6 +1033,46 @@ class FlexCostingData(FlowsheetCostingBlockData):
             expr=self.capex.total_capital_cost == 0 * cur
         )
 
+    def _effective_rate(self) -> float:
+        """Return the single annual rate the capital recovery factor is built on.
+
+        Two rates can be configured and they play different roles: ``interest_rate``
+        is the nominal cost of capital, and ``discount_rate`` deflates it to a real
+        rate. Combining them gives one effective rate,
+        ``(1 + interest) / (1 + discount) - 1``. With ``interest_rate`` unset the
+        effective rate is just ``discount_rate``, so a config that predates the
+        second rate annualizes exactly as before.
+
+        Returns:
+            The effective annual rate (a fraction; may be negative).
+
+        Raises:
+            FlexConfigError: If the rates imply an effective rate ``<= -1``, where
+                the capital recovery factor is undefined.
+        """
+        discount = self.config.discount_rate
+        interest = self.config.interest_rate
+        rate = discount if interest is None else (1 + interest) / (1 + discount) - 1
+        if rate <= -1.0:
+            raise FlexConfigError(
+                f"interest_rate={interest!r} and discount_rate={discount!r} imply "
+                f"an effective rate of {rate:.4g}, but the capital recovery factor "
+                "is only defined for an effective rate > -1. Check both rates are "
+                "fractions (0.08, not 8).",
+                field="interest_rate",
+                value=interest,
+            )
+        if rate < 0:
+            _log.warning(
+                "Annualizing %s at a negative effective rate (%.4g) from "
+                "interest_rate=%r and discount_rate=%r.",
+                self.name,
+                rate,
+                interest,
+                discount,
+            )
+        return rate
+
     def _build_totals_and_annualization(self, tb, cur) -> None:
         """Build the aggregate cost Vars, the design-mode total, and annualized cost."""
         self.aggregate_operating_cost = pyo.Var(
@@ -815,14 +1104,27 @@ class FlexCostingData(FlowsheetCostingBlockData):
         )
 
         # Annualization: capital recovery factor + opex scaled horizon -> year.
-        i = self.config.discount_rate
+        rate = self._effective_rate()
         n = self.config.lifetime_years
-        crf = (1.0 / n) if i == 0 else i * (1 + i) ** n / ((1 + i) ** n - 1)
+        if n <= 0:
+            raise FlexConfigError(
+                "lifetime_years must be > 0 (the capital recovery factor is "
+                f"undefined otherwise); got {n}.",
+                field="lifetime_years",
+                value=n,
+            )
+        crf = (1.0 / n) if rate == 0 else rate * (1 + rate) ** n / ((1 + rate) ** n - 1)
         self.lifetime = pyo.Param(
             initialize=n,
             mutable=True,
             units=pyunits.year,
             doc="Plant lifetime (years).",
+        )
+        self.effective_rate = pyo.Param(
+            initialize=rate,
+            mutable=True,
+            units=pyunits.dimensionless,
+            doc="Effective annual rate behind the capital recovery factor.",
         )
         self.capital_recovery_factor = pyo.Param(
             initialize=crf,
@@ -868,6 +1170,28 @@ class FlexCostingData(FlowsheetCostingBlockData):
 
     # -- reported cost (post-solve; never the objective, §6) --------
 
+    def _flat_priced_cost(
+        self, realized, price, dt_hours: float, *, quantity_units=EECO_POWER_UNITS
+    ) -> float:
+        """Recompute a flat-priced carrier's realized cost, independent of the model.
+
+        The reporting counterpart of :meth:`_priced_integral`: same
+        ``price × Σ quantity × dt``, evaluated on the realized array rather than
+        built as a constraint, so the reported cost is a genuine recomputation and
+        never a read of the objective. Needs no EECO.
+
+        Args:
+            realized: The realized per-timestep rates.
+            price: The units-carrying flat price.
+            dt_hours: Timestep length in hours.
+            quantity_units: The units ``realized`` is in.
+
+        Returns:
+            The horizon-total cost in the base currency, as a float.
+        """
+        total = float(realized.sum()) * quantity_units * dt_hours * pyunits.hr
+        return float(pyo.value(pyunits.convert(price * total, self._currency)))
+
     def report_cost(self, model) -> CostReport:
         """Return the reported, categorized cost, evaluated **post-solve**.
 
@@ -891,25 +1215,38 @@ class FlexCostingData(FlowsheetCostingBlockData):
         realized_power = np.array(
             [pyo.value(self.aggregate_electrical_power[t]) for t in tb.time_index]
         )
-        electricity = evaluate_cost(
-            realized_power,
-            self._tariff,
-            dt_hours,
-            dr_config=self.dr,
-            time_index=tb.datetime_index,
-        )
-
-        fuel = 0.0
-        for name in self._registered_fuels:
-            usage = getattr(self.opex, f"eeco_gas_usage_{name}")
-            realized_usage = np.array([pyo.value(usage[t]) for t in tb.time_index])
-            fuel += evaluate_fuel_cost(
-                realized_usage,
+        price = self._price_for("electrical")
+        if price is not None:
+            electricity = self._flat_priced_cost(realized_power, price, dt_hours)
+        else:
+            electricity = evaluate_cost(
+                realized_power,
                 self._tariff,
                 dt_hours,
                 dr_config=self.dr,
                 time_index=tb.datetime_index,
+                prorate=self.config.prorate_monthly_charges,
             )
+
+        fuel = 0.0
+        for name in self._fuel_names:
+            realized_usage = np.array(
+                [pyo.value(self.aggregate_fuel_usage[t, name]) for t in tb.time_index]
+            )
+            price = self._price_for(name)
+            if price is not None:
+                fuel += self._flat_priced_cost(
+                    realized_usage, price, dt_hours, quantity_units=EECO_GAS_USAGE_UNITS
+                )
+            else:
+                fuel += evaluate_fuel_cost(
+                    realized_usage,
+                    self._tariff,
+                    dt_hours,
+                    dr_config=self.dr,
+                    time_index=tb.datetime_index,
+                    prorate=self.config.prorate_monthly_charges,
+                )
 
         fixed = float(pyo.value(self.opex.fixed_operating_cost))
 

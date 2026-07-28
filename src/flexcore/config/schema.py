@@ -216,11 +216,37 @@ class DRConfig(_StrictModel):
     )
 
 
-class CostingConfig(_StrictModel):
-    """Tariff, demand-response, and solve/objective options for a run."""
+class PriceSpec(_StrictModel):
+    """A flat price for one energy carrier or fuel: a number and its units."""
 
-    tariff_source: str = Field(
-        description="File or tag pointing at the EECO tariff definition."
+    value: float = Field(description="The numeric price, in the units below.")
+    units: str = Field(
+        description="Units of the price as a string, e.g. 'USD/kWh' for "
+        "electricity or 'USD/m^3' for a fuel."
+    )
+
+
+class CostingConfig(_StrictModel):
+    """Tariff, price, demand-response, and solve/objective options for a run."""
+
+    tariff_source: str | list[str] | dict[str, str] | None = Field(
+        default=None,
+        description="Where the EECO tariff comes from: one file or tag, a list of "
+        "them to merge, or a mapping of EECO utility ('electric'/'gas') to file to "
+        "merge and also assign each file to a utility. Omit to price every carrier "
+        "from energy_prices instead.",
+    )
+    energy_prices: dict[str, PriceSpec] | None = Field(
+        default=None,
+        description="Optional flat prices keyed by carrier or fuel name "
+        "('electrical', or a fuel such as 'natural_gas'). A carrier priced here is "
+        "billed at that flat price instead of through the tariff, so a run with "
+        "every carrier priced needs no tariff at all.",
+    )
+    currency: str = Field(
+        default="USD",
+        description="Currency basis to use when no tariff is given; a tariff's own "
+        "currency basis always wins.",
     )
     dr: DRConfig | None = Field(
         default=None,
@@ -232,15 +258,30 @@ class CostingConfig(_StrictModel):
         "costs such as maintenance, labor, and chemicals. Distinct from the "
         "tariff's own fixed charge (which EECO includes in the electricity cost).",
     )
+    prorate_monthly_charges: bool = Field(
+        default=True,
+        description="Prorate a tariff's monthly-assessed demand charge and fixed "
+        "(customer) charge to the horizon length when the horizon is shorter than "
+        "the calendar month it starts in. False bills the full monthly charges.",
+    )
     lifetime_years: float = Field(
         default=20.0,
-        description="Plant lifetime in years (> 0), used with discount_rate to "
-        "form the capital recovery factor that annualizes capital cost.",
+        description="Plant lifetime in years (> 0), used with the effective rate "
+        "to form the capital recovery factor that annualizes capital cost.",
     )
     discount_rate: float = Field(
         default=0.08,
-        description="Annual discount rate (fraction, e.g. 0.08 = 8%) for the "
-        "capital recovery factor. 0 falls back to straight-line 1/lifetime.",
+        description="Annual discount rate (fraction, e.g. 0.08 = 8%). Used alone "
+        "as the effective rate when interest_rate is unset; otherwise it deflates "
+        "interest_rate into a real effective rate. An effective rate of 0 falls "
+        "back to straight-line 1/lifetime.",
+    )
+    interest_rate: float | None = Field(
+        default=None,
+        description="Optional annual cost of capital (fraction, e.g. 0.06). When "
+        "given, the capital recovery factor uses the effective rate "
+        "(1 + interest_rate) / (1 + discount_rate) - 1. Omit to use discount_rate "
+        "alone.",
     )
     objective: Literal["cost"] = Field(
         default="cost",
@@ -250,6 +291,16 @@ class CostingConfig(_StrictModel):
         default=None,
         description="Optional explicit solver name; None lets the facade pick.",
     )
+
+    @model_validator(mode="after")
+    def _some_pricing_source(self) -> "CostingConfig":
+        """Require a tariff or at least one flat price, so pricing is never empty."""
+        if self.tariff_source is None and not self.energy_prices:
+            raise ValueError(
+                "costing needs a pricing source: set tariff_source, or give at "
+                "least one entry in energy_prices."
+            )
+        return self
 
 
 # Architecture references: the config artifact is plan/01_architecture.md §2.3.

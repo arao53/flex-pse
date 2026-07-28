@@ -26,9 +26,15 @@ _TARIFF_JSON = _FIXTURES / "tariff_tou_demo.json"
 _PEAK_HOURS = (16, 17, 18, 19, 20)
 
 # Regression baseline: the optimal operating cost ($) of the headline LP under
-# the demo tariff, recorded from the first verified HiGHS run (2026-07-23).
+# the demo tariff, recorded from a verified HiGHS run (2026-07-28).
 # Changing this is a deliberate diff.
-_EXPECTED_OBJECTIVE = 1467.388888888889
+#
+# Re-recorded on 2026-07-28 (was 1467.388888888889, recorded 2026-07-23) when
+# monthly-charge prorating became the default: this horizon is 24 h of a 31-day
+# month, so the $150/month customer charge and the $21.50 + $19.00 per kW monthly
+# demand charges are now billed at 24/744 of their monthly amount instead of in
+# full. The energy charge is unaffected.
+_EXPECTED_OBJECTIVE = 147.4964157706093
 
 
 def _build_headline(tariff=None) -> pyo.ConcreteModel:

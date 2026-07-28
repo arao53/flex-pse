@@ -6,7 +6,8 @@ subclasses hand-write their 1-3 balance constraints. It provides the
 registration API that FlexParameterize and the docs generator consume
 (:meth:`OpsBlockData.register_io_variable`,
 :meth:`~OpsBlockData.register_process_parameter`,
-:meth:`~OpsBlockData.register_power`), the base power Vars
+:meth:`~OpsBlockData.register_power`,
+:meth:`~OpsBlockData.register_fuel_usage`), the base power Vars
 (:meth:`~OpsBlockData.declare_power`), the external-dispatch hook
 (:meth:`~OpsBlockData.set_external_dispatch`), and the config slots
 (``unit_commitment``, ``relaxation``, ``allow_bypass``, ``external_dispatch``)
@@ -38,6 +39,7 @@ from flexcore.config.schema import (
 )
 from flexcore.exceptions import FlexConfigError
 from flexops.core.registration import (
+    FuelUsageRecord,
     IORegistry,
     IOVariableRecord,
     ParameterRecord,
@@ -316,36 +318,20 @@ class OpsBlockData(UnitModelBlockData):
             )
 
     @staticmethod
-    def _check_power_metadata(kind, fuel_name, temperature) -> None:
-        """Validate ``fuel_name``/``temperature`` against ``kind``.
+    def _check_power_metadata(kind, temperature) -> None:
+        """Validate ``temperature`` against ``kind``.
 
-        A fuel draw must name its fuel and carry no temperature; a thermal draw
-        must carry a temperature and no fuel name; an electrical draw carries
-        neither.
+        A thermal draw must carry a temperature (heat duties at different
+        temperatures are never aggregated together); an electrical draw must not.
 
         Args:
             kind: The :class:`~flexcore.nomenclature.PowerKind` of the draw.
-            fuel_name: The fuel name, or ``None``.
             temperature: The heat-duty temperature (unit-carrying), or ``None``.
 
         Raises:
             FlexConfigError: If the metadata does not match ``kind``.
         """
-        if kind is nm.PowerKind.FUEL:
-            if not fuel_name:
-                raise FlexConfigError(
-                    "A PowerKind.FUEL draw requires a fuel_name (e.g. "
-                    "'natural_gas').",
-                    field="fuel_name",
-                    value=fuel_name,
-                )
-            if temperature is not None:
-                raise FlexConfigError(
-                    "A PowerKind.FUEL draw must not carry a temperature.",
-                    field="temperature",
-                    value=temperature,
-                )
-        elif kind is nm.PowerKind.THERMAL:
+        if kind is nm.PowerKind.THERMAL:
             if temperature is None:
                 raise FlexConfigError(
                     "A PowerKind.THERMAL draw requires a temperature (a "
@@ -353,27 +339,18 @@ class OpsBlockData(UnitModelBlockData):
                     field="temperature",
                     value=temperature,
                 )
-            if fuel_name is not None:
-                raise FlexConfigError(
-                    "A PowerKind.THERMAL draw must not carry a fuel_name.",
-                    field="fuel_name",
-                    value=fuel_name,
-                )
-        else:  # ELECTRICAL
-            if fuel_name is not None or temperature is not None:
-                raise FlexConfigError(
-                    f"A PowerKind.{kind.name} draw takes neither fuel_name nor "
-                    "temperature.",
-                    field="kind",
-                    value=kind,
-                )
+        elif temperature is not None:
+            raise FlexConfigError(
+                f"A PowerKind.{kind.name} draw takes no temperature.",
+                field="temperature",
+                value=temperature,
+            )
 
     def register_power(
         self,
         var,
         kind: nm.PowerKind = nm.PowerKind.ELECTRICAL,
         *,
-        fuel_name: str | None = None,
         temperature=None,
     ) -> None:
         """Register a power-draw variable for plant/costing aggregation.
@@ -381,22 +358,20 @@ class OpsBlockData(UnitModelBlockData):
         Args:
             var: The Pyomo ``Var`` (kW) to register.
             kind: The :class:`~flexcore.nomenclature.PowerKind` of the draw.
-            fuel_name: The fuel's name (required only for ``PowerKind.FUEL``).
             temperature: The heat-duty temperature, a unit-carrying value
                 (required only for ``PowerKind.THERMAL``).
 
         Raises:
             FlexConfigError: If ``kind`` is not a ``PowerKind`` member, or the
-                ``fuel_name``/``temperature`` metadata does not match ``kind``.
+                ``temperature`` metadata does not match ``kind``.
         """
         self._check_power_kind(kind)
-        self._check_power_metadata(kind, fuel_name, temperature)
+        self._check_power_metadata(kind, temperature)
         self._io_registry.power.append(
             PowerRecord(
                 var=var,
                 name=var.local_name,
                 kind=kind,
-                fuel_name=fuel_name,
                 temperature=temperature,
             )
         )
@@ -409,20 +384,16 @@ class OpsBlockData(UnitModelBlockData):
         self,
         kind: nm.PowerKind = nm.PowerKind.ELECTRICAL,
         *,
-        fuel_name: str | None = None,
         temperature=None,
     ):
         """Create, register, and return this unit's power-draw Var (kW).
 
-        Creates ``power_electrical[t]`` (resp. ``power_thermal[t]``, or
-        ``power_fuel_<fuel_name>[t]``) indexed over the time set, attaches it
-        under its nomenclature name, registers it (with its fuel/temperature
-        metadata), and returns it.
+        Creates ``power_electrical[t]`` (resp. ``power_thermal[t]``) indexed over
+        the time set, attaches it under its nomenclature name, registers it (with
+        its temperature metadata), and returns it.
 
         Args:
             kind: The :class:`~flexcore.nomenclature.PowerKind` of the draw.
-            fuel_name: The fuel's name (required only for ``PowerKind.FUEL``);
-                the created Var is named ``power_fuel_<fuel_name>``.
             temperature: The heat-duty temperature, a unit-carrying value
                 (required only for ``PowerKind.THERMAL``).
 
@@ -431,25 +402,57 @@ class OpsBlockData(UnitModelBlockData):
 
         Raises:
             FlexConfigError: If ``kind`` is not a ``PowerKind`` member, or the
-                ``fuel_name``/``temperature`` metadata does not match ``kind``.
+                ``temperature`` metadata does not match ``kind``.
         """
         self._check_power_kind(kind)
-        self._check_power_metadata(kind, fuel_name, temperature)
-        if kind is nm.PowerKind.FUEL:
-            name = f"{nm.POWER_FUEL}_{fuel_name}"
-            doc = f"Fuel draw of the unit ({fuel_name})"
-        else:
-            name, doc = _POWER_VARS[kind]
+        self._check_power_metadata(kind, temperature)
+        name, doc = _POWER_VARS[kind]
         tb = self._find_time_block()
         self.add_component(
             name,
             pyo.Var(tb.time_index, initialize=0.0, units=pyunits.kW, doc=doc),
         )
         var = self.find_component(name)
-        self.register_power(
-            var, kind=kind, fuel_name=fuel_name, temperature=temperature
-        )
+        self.register_power(var, kind=kind, temperature=temperature)
         return var
+
+    def register_fuel_usage(self, var, fuel_name: str) -> None:
+        """Register a fuel-usage variable — a volumetric flow — for costing.
+
+        Fuel is metered and billed on **volume**, not as a kW power draw, so a
+        unit that burns fuel registers its usage flow here rather than through
+        :meth:`register_power`. ``var`` is typically an existing process
+        variable: for a stream built from
+        :class:`~flexops.properties.simple_gas.SimpleGasFlow` (whose
+        ``flow_vol_phase`` is already m³/hr), that is
+        ``pyo.Reference(self.inlet_state.flow_vol_phase[:, "Vap"])``.
+
+        FlexCosting pulls every registered flow from the model and sums it into
+        ``aggregate_fuel_usage[t, fuel_name]`` in EECO's m³/hr, converting with
+        ``pyunits.convert`` — so a ``var`` that is not a volumetric rate fails
+        loudly there, the same contract a power draw has. flex-pse applies no
+        heating value; energy-basis tariff conversion is EECO's job.
+
+        Args:
+            var: The time-indexed Pyomo ``Var``/``Reference`` carrying the fuel's
+                volumetric flow (convertible to m³/hr).
+            fuel_name: The fuel's name (e.g. ``"natural_gas"``), the key its flow
+                aggregates and bills under.
+
+        Raises:
+            FlexConfigError: If ``fuel_name`` is empty.
+        """
+        if not fuel_name:
+            raise FlexConfigError(
+                "register_fuel_usage requires a non-empty fuel_name (e.g. "
+                "'natural_gas'); it is the key the flow aggregates and bills "
+                "under.",
+                field="fuel_name",
+                value=fuel_name,
+            )
+        self._io_registry.fuel.append(
+            FuelUsageRecord(var=var, name=var.local_name, fuel_name=fuel_name)
+        )
 
     # -- stream state blocks + ports (property package, §3.7) --------------
 
@@ -742,6 +745,15 @@ class OpsBlockData(UnitModelBlockData):
             NotImplementedError: Always; config-driven construction and the
                 whole-model ``flexops.build_model``.
         """
+        # TODO: whoever implements this JSON-to-model bridge must first parse the
+        # units that persisted configs carry as plain text into Pyomo units --
+        # CostingConfig.energy_prices entries ({"value": 0.12, "units": "USD/kWh"})
+        # and TimeConfig.time_step ("15 min"). No such parser exists anywhere yet;
+        # the runtime APIs take units-carrying Pyomo expressions directly, so
+        # nothing has needed one. Building the model straight from those strings
+        # without converting them would silently mis-scale prices and timesteps.
+        # See architecture §2.3 (the config artifact) and conventions §4 (the two
+        # config layers, which "never mix").
         raise NotImplementedError(
             "build_from_config is not implemented; build units directly."
         )

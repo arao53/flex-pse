@@ -9,7 +9,6 @@ from flexops.costing.flex_costing import (
     CapitalCostBreakdown,
     CostReport,
     FlexCosting,
-    FuelSpec,
     OperatingCostBreakdown,
     ScalarCostSpec,
 )
@@ -19,11 +18,14 @@ from flexops.costing.opex import (
     add_electricity_cost,
     add_fuel_cost,
     add_operating_cost,
+    currency_units,
     evaluate_cost,
     evaluate_fuel_cost,
     is_peak,
     load_dr_program,
     load_tariff,
+    merge_tariffs,
+    monthly_scale_factor,
     peak_windows,
     price_gradient,
     price_series,
@@ -33,9 +35,12 @@ from flexops.costing.opex import (
 
 __all__ = [
     "load_tariff",
+    "merge_tariffs",
     "load_dr_program",
     "tariff_csv_to_dict",
     "tariff_currency_units",
+    "currency_units",
+    "monthly_scale_factor",
     "price_series",
     "is_peak",
     "peak_windows",
@@ -51,6 +56,5 @@ __all__ = [
     "CostReport",
     "OperatingCostBreakdown",
     "CapitalCostBreakdown",
-    "FuelSpec",
     "ScalarCostSpec",
 ]
