@@ -51,7 +51,7 @@ def _():
     from flexops.core.time_block import TimeBlock
     from flexops.costing import FlexCosting, is_peak, load_tariff, price_series
     from flexops.properties.simple_aqueous import SimpleAqueousFlow
-    from flexops.unit_models import Pump, StorageTank
+    from flexops.unit_models import Pump, Tank
 
     return (
         Arc,
@@ -59,7 +59,7 @@ def _():
         Path,
         Pump,
         SimpleAqueousFlow,
-        StorageTank,
+        Tank,
         TimeBlock,
         assert_optimal_termination,
         get_solver,
@@ -112,7 +112,7 @@ def _(
     FlexCosting,
     Pump,
     SimpleAqueousFlow,
-    StorageTank,
+    Tank,
     TimeBlock,
     assert_optimal_termination,
     get_solver,
@@ -127,7 +127,7 @@ def _(
     tariff,
 ):
     def build_month(*, pump_max_flow, tank_max_volume, tank_initial_volume, tariff):
-        """Pump -> Arc -> StorageTank + FlexCosting over all of July 2025 (hourly)."""
+        """Pump -> Arc -> Tank + FlexCosting over all of July 2025 (hourly)."""
         m = pyo.ConcreteModel()
         m.time_block = TimeBlock(
             start_date="2025-07-01", end_date="2025-08-01", time_step=1 * pyunits.hr
@@ -140,7 +140,7 @@ def _(
             energy_intensity=0.5 * pyunits.kWh / pyunits.m**3,
             costing_package=m.costing,
         )
-        m.tank = StorageTank(
+        m.tank = Tank(
             property_package=m.properties,
             max_volume=tank_max_volume * pyunits.m**3,
             initial_volume=tank_initial_volume * pyunits.m**3,
