@@ -564,6 +564,29 @@ def test_scalar_cost_not_via_eeco():
 
 
 @pytest.mark.unit
+def test_register_scalar_cost_unit_attribution():
+    """An optional unit= is stored on the spec for later per-unit attribution."""
+    m = _pump_tank_costing(run_cost_process=False)
+    m.water = pyo.Var(m.time_block.time_index, units=pyunits.m**3 / pyunits.hr)
+
+    # Default: no unit association.
+    plain = m.costing.register_scalar_cost(
+        "water", m.water, price=2.5, quantity_units=pyunits.m**3 / pyunits.hr
+    )
+    assert plain.unit is None
+
+    # An attributed cost records the owning unit block verbatim.
+    attributed = m.costing.register_scalar_cost(
+        "water_pump",
+        m.water,
+        price=2.5,
+        quantity_units=pyunits.m**3 / pyunits.hr,
+        unit=m.pump,
+    )
+    assert attributed.unit is m.pump
+
+
+@pytest.mark.unit
 def test_report_cost_breakdown_shape():
     """report_cost returns a categorized CostReport with v0 zero placeholders."""
     m = _pump_tank_costing(fixed_operating_cost=500.0, dr_event_file=str(_DR_JSON))

@@ -152,12 +152,15 @@ class ScalarCostSpec:
         quantity_units: The Pyomo units ``quantity`` is converted to before
             costing (a rate, e.g. ``m**3/hr``); a quantity that does not convert
             raises, forcing unit consistency.
+        unit: The unit block this cost is attributed to, or ``None`` for a
+            facility-level cost; recorded for per-unit cost attribution.
     """
 
     name: str
     quantity: Any
     price: float
     quantity_units: Any
+    unit: Any = None
 
 
 @dataclasses.dataclass
@@ -418,7 +421,7 @@ class FlexCostingData(FlowsheetCostingBlockData):
         return self._registered_fuels[name]
 
     def register_scalar_cost(
-        self, name: str, quantity, price: float, quantity_units
+        self, name: str, quantity, price: float, quantity_units, *, unit=None
     ) -> ScalarCostSpec:
         """Register a non-energy scalar operating cost (never billed via EECO).
 
@@ -434,6 +437,8 @@ class FlexCostingData(FlowsheetCostingBlockData):
                 = revenue/credit).
             quantity_units: The Pyomo units ``quantity`` is converted to before
                 costing (a rate, e.g. ``m**3/hr``).
+            unit: The unit block this cost is attributed to, or ``None`` for a
+                facility-level cost; recorded for per-unit cost attribution.
 
         Returns:
             The stored :class:`ScalarCostSpec`.
@@ -448,7 +453,11 @@ class FlexCostingData(FlowsheetCostingBlockData):
                 value=name,
             )
         spec = ScalarCostSpec(
-            name=name, quantity=quantity, price=price, quantity_units=quantity_units
+            name=name,
+            quantity=quantity,
+            price=price,
+            quantity_units=quantity_units,
+            unit=unit,
         )
         self._registered_scalar_costs[name] = spec
         return spec
@@ -649,15 +658,21 @@ class FlexCostingData(FlowsheetCostingBlockData):
         )
 
         # --- total operating cost -----------------------------------------
+        # The grand total sums the category sub-totals. Add a new cost category by
+        # building its sub-total Var and appending its local name here; nothing
+        # else changes. (0 * cur seeds the currency and guards an empty list.)
+        line_items = [
+            "electricity_cost",
+            "fuel_cost",
+            "fixed_operating_cost",
+            "scalar_cost",
+        ]
         opex.total_operating_cost = pyo.Var(
             initialize=0.0, units=cur, doc="electricity + fuel + fixed + scalar ($)."
         )
         opex.eq_total_operating_cost = pyo.Constraint(
             expr=opex.total_operating_cost
-            == opex.electricity_cost
-            + opex.fuel_cost
-            + opex.fixed_operating_cost
-            + opex.scalar_cost
+            == sum((getattr(opex, n) for n in line_items), 0 * cur)
         )
 
         self._build_dr()  # no-op in v0
