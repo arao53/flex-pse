@@ -257,7 +257,7 @@ def _(
     ax_tank.plot(when, tank_volume_series, color=aqua, lw=1.6)
     ax_tank.set_ylabel("Tank volume\n(m³)")
     ax_tank.set_ylim(0, max(1050, float(tank_volume_series.max()) * 1.05))
-    ax_tank.set_xlabel("2025 (local wall-clock)")
+    ax_tank.set_xlabel("2025 (local time)")
 
     for ax in (ax_price, ax_pump, ax_tank):
         shade_peaks(ax)
