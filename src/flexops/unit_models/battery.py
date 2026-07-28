@@ -47,6 +47,17 @@ description for the full rationale):
   physical backing. Folding ``t=0`` into ``charge_balance`` closes that hole
   and drops the need for a separate, differently-named initial-condition
   constraint.
+* ``soh`` (state of health) and ``soh_capacity_limit`` are **not** part of the
+  M08 spec; added at explicit user request as a v0 placeholder ahead of any
+  future degradation-modeling milestone. ``soh`` is fixed at the constructor
+  value (default 0.85, mid-life) like ``capacity``.
+* ``eta_charge``/``eta_discharge`` are fixed **Vars** (registered
+  ``regressable=True``), not plain floats read from config -- also added at
+  explicit user request, matching :class:`~flexops.unit_models.pump.Pump`'s
+  ``efficiency`` pattern. ``soh`` is registered the same way. FlexParameterize
+  fits all three from SCADA data: ``power_charge``/``power_discharge`` in,
+  ``charge`` (the SOC state, registered as the process output) out, ``capacity``
+  known.
 
 .. math::
 
@@ -170,6 +181,16 @@ class BatteryModelData(OpsBlockData):
             "[0, 1]; fixes charge[0] via charge_init (rolling-horizon state).",
         ),
     )
+    CONFIG.declare(
+        "initial_soh",
+        ConfigValue(
+            default=0.85,
+            domain=_fraction_domain,
+            description="Initial/current state of health, a fraction of "
+            "nameplate capacity still available due to degradation; fixes "
+            "soh at construction. Default 0.85 represents a mid-life battery.",
+        ),
+    )
 
     def build(self) -> None:
         """Build capacity, power/charge dynamics, SOC bounds, and UC status."""
@@ -204,6 +225,18 @@ class BatteryModelData(OpsBlockData):
         costing_package = self.config.costing_package
         if costing_package is not None:
             costing_package.register_sizing_variable(self.capacity)
+
+        soh_val = self.config.initial_soh
+        self.soh = pyo.Var(
+            initialize=soh_val,
+            bounds=(0.0, 1.0),
+            units=pyunits.dimensionless,
+            doc="State of health: fraction of nameplate capacity still "
+            "available due to degradation. Fixed at the constructor value "
+            "(v0 has no degradation dynamics); default 0.85 is mid-life.",
+        )
+        self.soh.fix(soh_val)
+        self.register_process_parameter(self.soh, regressable=True)
 
         charge_max_val = (
             pyo.value(pyunits.convert(self.config.power_charge_max, pyunits.kW))
@@ -264,8 +297,28 @@ class BatteryModelData(OpsBlockData):
         tb.register_initial_state(self.charge_init)
         self.register_process_parameter(self.charge_init, regressable=False)
 
-        eta_charge = self.config.eta_charge
-        eta_discharge = self.config.eta_discharge
+        self.eta_charge = pyo.Var(
+            initialize=self.config.eta_charge,
+            bounds=(0.0, 1.0),
+            units=pyunits.dimensionless,
+            doc="Charging efficiency. Fixed at the configured value by "
+            "default; a future FlexParameterize regression may estimate it "
+            "from SCADA data (power_charge/power_discharge in, charge/soc "
+            "out, capacity known).",
+        )
+        self.eta_charge.fix(self.config.eta_charge)
+        self.register_process_parameter(self.eta_charge, regressable=True)
+
+        self.eta_discharge = pyo.Var(
+            initialize=self.config.eta_discharge,
+            bounds=(0.0, 1.0),
+            units=pyunits.dimensionless,
+            doc="Discharging efficiency. Fixed at the configured value by "
+            "default; a future FlexParameterize regression may estimate it "
+            "the same way as eta_charge.",
+        )
+        self.eta_discharge.fix(self.config.eta_discharge)
+        self.register_process_parameter(self.eta_discharge, regressable=True)
 
         @self.Constraint(
             tb.time_index,
@@ -282,8 +335,8 @@ class BatteryModelData(OpsBlockData):
             delta_charge = pyunits.convert(
                 tb.dt
                 * (
-                    eta_charge * b.power_charge[t]
-                    - b.power_discharge[t] / eta_discharge
+                    b.eta_charge * b.power_charge[t]
+                    - b.power_discharge[t] / b.eta_discharge
                 ),
                 to_units=pyunits.kWh,
             )
@@ -307,6 +360,16 @@ class BatteryModelData(OpsBlockData):
         )
         def soc_upper(b, t):
             return b.charge[t] <= soc_max * b.capacity
+
+        @self.Constraint(
+            tb.time_index,
+            doc="State-of-health capacity limit: charge[t] <= soh * "
+            "capacity. Independent of soc_max -- soh models capacity fade "
+            "from degradation, while soc_max is an operational headroom "
+            "fraction of nameplate capacity.",
+        )
+        def soh_capacity_limit(b, t):
+            return b.charge[t] <= b.soh * b.capacity
 
         @self.Expression(
             tb.time_index,
@@ -333,6 +396,11 @@ class BatteryModelData(OpsBlockData):
             )
             def discharge_exclusivity(b, t):
                 return b.power_discharge[t] <= discharge_max_val * (1 - status[t])
+
+        # charge (SOC state) is the regression target for eta_charge/
+        # eta_discharge/soh: FlexParameterize fits them from SCADA power
+        # in/out against the observed charge trajectory, using capacity.
+        self.register_io_variable(self.charge, role="output")
 
     def set_dispatch(self, series) -> None:
         """Fix net battery dispatch from an external (DERMS) command series (R9).

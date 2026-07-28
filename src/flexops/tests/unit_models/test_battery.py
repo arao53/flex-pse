@@ -144,6 +144,54 @@ def test_soc_bounds_are_constraints_not_var_bounds():
 
 
 @pytest.mark.unit
+def test_soh_default_mid_life():
+    """soh defaults to 0.85 (mid-life), is fixed, and is regressable."""
+    _, unit = _battery(4)
+    assert unit.soh.fixed
+    assert pyo.value(unit.soh) == pytest.approx(0.85)
+    record = next(r for r in unit._io_registry.parameters if r.name == "soh")
+    assert record.regressable is True
+
+
+@pytest.mark.unit
+def test_eta_charge_eta_discharge_are_fixed_regressable_vars():
+    """eta_charge/eta_discharge are fixed Vars, registered regressable (FlexParameterize
+    fits them from SCADA power in/out + observed charge/SOC, given known capacity)."""
+    _, unit = _battery(4, eta_charge=0.9, eta_discharge=0.8)
+
+    assert unit.eta_charge.fixed
+    assert pyo.value(unit.eta_charge) == pytest.approx(0.9)
+    assert unit.eta_discharge.fixed
+    assert pyo.value(unit.eta_discharge) == pytest.approx(0.8)
+
+    names = {r.name: r for r in unit._io_registry.parameters}
+    assert names["eta_charge"].regressable is True
+    assert names["eta_discharge"].regressable is True
+
+
+@pytest.mark.unit
+def test_charge_registered_as_output_io_variable():
+    """charge (the SOC state) is registered as process output -- FlexParameterize
+    regresses eta_charge/eta_discharge/soh against observed charge trajectories,
+    not against power_electrical (a derived input net, not an independent signal)."""
+    _, unit = _battery(4)
+    names = {r.name: r.role for r in unit._io_registry.io_variables}
+    assert names["charge"] == "output"
+
+
+@pytest.mark.unit
+def test_soh_capacity_limit_constraint_body():
+    """soh_capacity_limit bounds charge by soh * capacity, independent of soc_max."""
+    _, unit = _battery(4, initial_soh=0.6, soc_max=1.0)
+    capacity_val = pyo.value(unit.capacity)
+
+    unit.charge[0].set_value(0.6 * capacity_val)
+    assert pyo.value(unit.soh_capacity_limit[0].body) == pytest.approx(
+        pyo.value(unit.soh_capacity_limit[0].upper), abs=1e-9
+    )
+
+
+@pytest.mark.unit
 def test_capacity_fix_unfix():
     """capacity is fixed at construction; costing modes toggle it (R4)."""
     m = _battery_with_costing()
