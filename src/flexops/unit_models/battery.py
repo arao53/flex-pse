@@ -24,17 +24,13 @@ description for the full rationale):
   ``power_charge_max``/``power_discharge_max`` (the semicontinuous link needs
   a finite bound); a caller who wants an unbounded, non-UC battery passes
   ``unit_commitment=UnitCommitmentConfig(status=False)``.
-* ``soc[t]`` is a derived **Expression** (``charge[t] / capacity``), not a
-  Var tied to ``capacity`` by an equality Constraint. The spec's literal
-  ``charge[t] == soc[t] * capacity`` is a genuine product of two *free*
-  Vars whenever ``capacity`` is unfixed (design mode) -- an unconditional
-  bilinear equality that would force every design-mode solve to NLP,
-  contradicting the milestone's own ``needs_highs`` marker on the
-  external-dispatch sizing-only solve. The SOC bounds instead constrain
-  ``charge[t]`` directly against ``soc_min``/``soc_max`` times ``capacity``
-  (a constant times a Var -- linear, per Pitfall 1's own reasoning), so
-  ``capacity`` never multiplies another free Var and every battery model
-  stays LP/MILP regardless of design/operations mode.
+* ``soc[t]`` is a Var, bounded by ``soc_min``/``soc_max``, tied to
+  ``charge[t]``/``capacity`` by the equality Constraint ``soc_capacity_link``
+  (``charge[t] == soc[t] * capacity``), matching the milestone spec literally.
+  This is a genuine product of two *free* Vars whenever ``capacity`` is
+  unfixed (design mode) -- an unconditional bilinear equality that forces
+  that solve to NLP. Accepted at explicit user request: a single bilinear
+  equality per timestep is not a significant modeling burden.
 * ``charge_balance`` covers **every** ``t``, including ``t=0`` (referencing
   ``charge_init`` in place of ``charge[t-1]`` at the boundary), rather than
   the spec's separate ``t=1..N-1`` difference equation plus an unrelated
@@ -58,12 +54,21 @@ description for the full rationale):
   fits all three from SCADA data: ``power_charge``/``power_discharge`` in,
   ``charge`` (the SOC state, registered as the process output) out, ``capacity``
   known.
+* ``charge_leakage_rate`` (self-discharge) is **not** part of the M08 spec;
+  added at explicit user request as a v0 self-discharge proxy. Like
+  ``eta_charge``/``eta_discharge``/``soh``, it is a fixed **Var** (fraction of
+  stored charge lost per day, default ``0.0005`` i.e. 0.05%/day) registered
+  ``regressable=True``, so a future FlexParameterize regression may fit it
+  from an observed ``charge`` decay trajectory alongside the efficiencies.
 
 .. math::
 
-    \text{charge}[t] = \text{charge}[t-1] + \Delta t \left(
+    \text{charge}[t] = \text{charge}[t-1] \left(1 - \lambda \, \Delta t \right)
+        + \Delta t \left(
         \eta_{charge} \, P_{charge}[t] - \frac{P_{discharge}[t]}{\eta_{discharge}}
     \right), \quad t = 0, \dots, N-1 \;\; (\text{charge}[-1] := \text{charge\_init})
+
+    \lambda = \text{charge\_leakage\_rate (fraction lost per day)}
 
 Usage::
 
@@ -74,9 +79,10 @@ Usage::
     >>> m.battery = BatteryModel(capacity=10 * pyunits.kWh)  # doctest: +SKIP
 
 Config: see ``capacity``, ``power_charge_max``/``power_discharge_max``,
-``eta_charge``/``eta_discharge``, ``soc_min``/``soc_max``, ``initial_soc``
-below, plus the inherited ``relaxation``/``unit_commitment``/
-``external_dispatch``/``costing_package`` (architecture §3.2).
+``eta_charge``/``eta_discharge``, ``soc_min``/``soc_max``, ``initial_soc``,
+``charge_leakage_rate`` below, plus the inherited
+``relaxation``/``unit_commitment``/``external_dispatch``/``costing_package``
+(architecture §3.2).
 
 **Behind-the-meter assumption (v0).** ``power_electrical[t]`` may go negative
 (discharge exports power); any facility-level "net draw >= 0" constraint
@@ -189,6 +195,15 @@ class BatteryModelData(OpsBlockData):
             description="Initial/current state of health, a fraction of "
             "nameplate capacity still available due to degradation; fixes "
             "soh at construction. Default 0.85 represents a mid-life battery.",
+        ),
+    )
+    CONFIG.declare(
+        "charge_leakage_rate",
+        ConfigValue(
+            default=0.0005 / pyunits.day,
+            description="Self-discharge (charge leakage) rate: fraction of "
+            "stored charge lost per day, fixing charge_leakage_rate at "
+            "construction. Default 0.0005/day (0.05%/day).",
         ),
     )
 
@@ -320,10 +335,27 @@ class BatteryModelData(OpsBlockData):
         self.eta_discharge.fix(self.config.eta_discharge)
         self.register_process_parameter(self.eta_discharge, regressable=True)
 
+        leakage_rate_val = pyo.value(
+            pyunits.convert(self.config.charge_leakage_rate, pyunits.day**-1)
+        )
+        self.charge_leakage_rate = pyo.Var(
+            initialize=leakage_rate_val,
+            bounds=(0.0, 0.001),  # 0.1%/day is an upper bound for a Li-ion battery
+            units=pyunits.day**-1,
+            doc="Self-discharge rate: fraction of stored charge lost per day "
+            "(applied to charge[t-1] each step in charge_balance). Fixed at "
+            "the configured value by default; a future FlexParameterize "
+            "regression may estimate it from an observed charge decay "
+            "trajectory, the same way as eta_charge/eta_discharge.",
+        )
+        self.charge_leakage_rate.fix(leakage_rate_val)
+        self.register_process_parameter(self.charge_leakage_rate, regressable=True)
+
         @self.Constraint(
             tb.time_index,
             doc="Charge holdup (backward difference, conventions §2): "
-            "charge[t] == charge[t-1] + dt*(eta_charge*power_charge[t] - "
+            "charge[t] == charge[t-1]*(1 - charge_leakage_rate*dt) + "
+            "dt*(eta_charge*power_charge[t] - "
             "power_discharge[t]/eta_discharge); t=0 references charge_init in "
             "place of charge[-1], so power_charge[0]/power_discharge[0] are "
             "energy-conserving too (a separate, unconstrained-at-t=0 initial "
@@ -340,26 +372,30 @@ class BatteryModelData(OpsBlockData):
                 ),
                 to_units=pyunits.kWh,
             )
-            return b.charge[t] == previous + delta_charge
+            leakage = pyunits.convert(
+                previous * b.charge_leakage_rate * tb.dt, to_units=pyunits.kWh
+            )
+            return b.charge[t] == previous + delta_charge - leakage
 
         soc_min = self.config.soc_min
         soc_max = self.config.soc_max
 
-        @self.Constraint(
+        self.soc = pyo.Var(
             tb.time_index,
-            doc="Lower SOC bound, on charge (kWh) rather than a literal Var "
-            "bound: capacity is itself a Var, so the bound must be a "
-            "Constraint (Pitfall 1). charge[t] >= soc_min * capacity.",
+            bounds=(soc_min, soc_max),
+            units=pyunits.dimensionless,
+            doc="State of charge, a fraction of capacity in [soc_min, "
+            "soc_max]; tied to charge/capacity by soc_capacity_link.",
         )
-        def soc_lower(b, t):
-            return b.charge[t] >= soc_min * b.capacity
 
         @self.Constraint(
             tb.time_index,
-            doc="Upper SOC bound: charge[t] <= soc_max * capacity.",
+            doc="Ties soc to stored energy: charge[t] == soc[t] * capacity "
+            "(a bilinear equality when capacity is unfixed -- see the module "
+            "docstring's 'Deviations from the milestone spec').",
         )
-        def soc_upper(b, t):
-            return b.charge[t] <= soc_max * b.capacity
+        def soc_capacity_link(b, t):
+            return b.charge[t] == b.soc[t] * b.capacity
 
         @self.Constraint(
             tb.time_index,
@@ -370,15 +406,6 @@ class BatteryModelData(OpsBlockData):
         )
         def soh_capacity_limit(b, t):
             return b.charge[t] <= b.soh * b.capacity
-
-        @self.Expression(
-            tb.time_index,
-            doc="State of charge, charge[t] / capacity (a reporting "
-            "Expression, not a Var -- see the module docstring's "
-            "'Deviations from the milestone spec').",
-        )
-        def soc(b, t):
-            return b.charge[t] / b.capacity
 
         if self.config.unit_commitment.status:
             status = add_status(

@@ -101,8 +101,13 @@ def test_soc_constraint_bodies():
     t=0 is governed by charge_balance too (referencing charge_init in place of
     charge[-1]) -- otherwise power_charge[0]/power_discharge[0] would be free
     of any energy-conservation tie (see the class docstring's "Deviations").
+    charge_leakage_rate is pinned to 0 here to isolate the eta_charge/
+    eta_discharge trajectory from self-discharge -- see
+    test_charge_balance_includes_leakage for the leakage term itself.
     """
-    m, unit = _battery(4, eta_charge=0.9, eta_discharge=0.8)
+    m, unit = _battery(
+        4, eta_charge=0.9, eta_discharge=0.8, charge_leakage_rate=0.0 / pyunits.day
+    )
     dt_hr = pyo.value(pyunits.convert(m.time_block.dt, pyunits.hr))
 
     power_charge = [5.0, 0.0, 0.0, 2.0]
@@ -124,23 +129,68 @@ def test_soc_constraint_bodies():
 
 
 @pytest.mark.unit
-def test_soc_bounds_are_constraints_not_var_bounds():
-    """soc_lower/soc_upper bound charge (kWh) via Constraints referencing the
-    capacity Var -- Pitfall 1: a literal Var bound can't reference another Var."""
+def test_charge_leakage_rate_default_fixed_regressable_var():
+    """charge_leakage_rate defaults to 0.05%/day, a fixed Var registered regressable
+    (matching eta_charge/eta_discharge/soh -- see class docstring's "Deviations")."""
+    _, unit = _battery(4)
+
+    assert unit.charge_leakage_rate.fixed
+    assert pyo.value(
+        pyunits.convert(unit.charge_leakage_rate, pyunits.day**-1)
+    ) == pytest.approx(0.0005)
+
+    record = next(
+        r for r in unit._io_registry.parameters if r.name == "charge_leakage_rate"
+    )
+    assert record.regressable is True
+
+
+@pytest.mark.unit
+def test_charge_balance_includes_leakage():
+    """charge_balance subtracts previous*charge_leakage_rate*dt (self-discharge)."""
+    m, unit = _battery(
+        4,
+        eta_charge=0.9,
+        eta_discharge=0.8,
+        charge_leakage_rate=0.01 / pyunits.day,
+    )
+    dt_hr = pyo.value(pyunits.convert(m.time_block.dt, pyunits.hr))
+    dt_days = dt_hr / 24.0
+
+    power_charge = [5.0, 0.0, 0.0, 2.0]
+    power_discharge = [0.0, 3.0, 1.0, 0.0]
+    charge = []
+    previous = 5.0  # charge_init == initial_soc(0.5) * capacity(10).
+    for t in range(4):
+        previous = previous * (1 - 0.01 * dt_days) + dt_hr * (
+            0.9 * power_charge[t] - power_discharge[t] / 0.8
+        )
+        charge.append(previous)
+
+    for t in m.time_block.time_index:
+        unit.power_charge[t].set_value(power_charge[t])
+        unit.power_discharge[t].set_value(power_discharge[t])
+        unit.charge[t].set_value(charge[t])
+
+    for t in unit.charge_balance:
+        assert pyo.value(unit.charge_balance[t].body) == pytest.approx(0.0, abs=1e-9)
+
+
+@pytest.mark.unit
+def test_soc_is_var_bounded_and_linked_to_charge():
+    """soc is a Var bounded by [soc_min, soc_max] and tied to charge/capacity
+    via the soc_capacity_link equality Constraint (see class docstring)."""
     _, unit = _battery(4, soc_min=0.2, soc_max=0.8)
     capacity_val = pyo.value(unit.capacity)
 
-    unit.charge[0].set_value(0.2 * capacity_val)
-    assert pyo.value(unit.soc_lower[0].body) == pytest.approx(
-        pyo.value(unit.soc_lower[0].upper), abs=1e-9
-    )
+    assert unit.soc[0].lb == pytest.approx(0.2)
+    assert unit.soc[0].ub == pytest.approx(0.8)
+
     unit.charge[0].set_value(0.8 * capacity_val)
-    assert pyo.value(unit.soc_upper[0].body) == pytest.approx(
-        pyo.value(unit.soc_upper[0].upper), abs=1e-9
+    unit.soc[0].set_value(0.8)
+    assert pyo.value(unit.soc_capacity_link[0].body) == pytest.approx(
+        pyo.value(unit.soc_capacity_link[0].upper), abs=1e-9
     )
-    # soc itself carries no literal bounds -- it is a reporting Expression
-    # (charge / capacity), never referenced by a Constraint (see class docstring).
-    assert pyo.value(unit.soc[0]) == pytest.approx(0.8, rel=1e-9)
 
 
 @pytest.mark.unit

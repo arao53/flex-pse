@@ -23,6 +23,11 @@ Rules (`plan/00_conventions.md` §2, `plan/01_architecture.md` §4):
 - Never introduce a variable named bare `power`, `energy`, or `work`. Always
   refer to the `flexcore.nomenclature` constants; a literal name string
   anywhere else is review-blocking.
+- Storage units (e.g. {class}`~flexops.unit_models.battery.BatteryModel`) sign
+  `POWER_ELECTRICAL` from the storage device's own frame: **charging is
+  positive, discharging is negative** (an export). This matches the general
+  draw convention above -- charging is a draw, discharging offsets it -- and
+  keeps plant aggregation a plain sum with no per-unit sign-flipping.
 
 The names were agreed to disambiguate the "work vs. power" inconsistencies in
 IDAES/WaterTAP. The group may revisit the exact words, which is why they live in
