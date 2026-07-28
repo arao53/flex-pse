@@ -254,12 +254,12 @@ class BatteryModelData(OpsBlockData):
         self.register_process_parameter(self.soh, regressable=True)
 
         charge_max_val = (
-            pyo.value(pyunits.convert(self.config.power_charge_max, pyunits.kW))
+            pyo.value(pyunits.convert(abs(self.config.power_charge_max), pyunits.kW))
             if self.config.power_charge_max is not None
             else None
         )
         discharge_max_val = (
-            pyo.value(pyunits.convert(self.config.power_discharge_max, pyunits.kW))
+            pyo.value(pyunits.convert(abs(self.config.power_discharge_max), pyunits.kW))
             if self.config.power_discharge_max is not None
             else None
         )
