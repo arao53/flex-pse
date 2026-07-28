@@ -292,10 +292,12 @@ class FlexCostingData(FlowsheetCostingBlockData):
         return load_tariff(tariff_file if tariff_file is not None else tariff)
 
     def build_process_costs(self) -> None:
-        """No-op: flex-native process costs are built in :meth:`cost_process`."""
+        """No-op: flex-native process costs are built in :meth:`cost_process`.
+        Required override from IDAES `FlowsheetCostingBlockData`."""
 
     def initialize_build(self) -> None:
-        """No-op: FlexCosting builds only Vars/Constraints/Params, nothing to init."""
+        """No-op: FlexCosting builds only Vars/Constraints/Params, nothing to init.
+        Required override from IDAES `FlowsheetCostingBlockData`."""
 
     # -- build (construction time; no aggregation, no EECO call) ----------
 
