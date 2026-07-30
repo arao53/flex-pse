@@ -6,7 +6,7 @@
 Complete the flexops composition layer and the config-driven build path, then
 freeze the public API. Deliver:
 - **`PlantBlock`** (collection of units) and the new **`NetworkBlock`**
-  (composition of plants with inter-plant arcs) — both thin `dynamic=False`
+  (composition of plants with inter-plant constraints) — both thin `dynamic=False`
   flowsheets with recursive aggregation (§3.3, R7).
 - The **IO-topology base classes** `SIDOBlock` (1→2) and `DIDOBlock` (2→2)
   (`SISOBlock` already exists from M04), and the **physical zoo** built on them:
@@ -94,6 +94,8 @@ no compat layer), declared with `declare_process_block_class("PlantBlock", ...)`
   are added (implementer's choice — document which; the api_freeze script adds
   units after both plant and costing exist, so whatever you pick must survive that
   ordering — FlexCosting's `cost_process()` deferral from M07 is the precedent).
+- Users should be able to register products on a `PlantBlock` that are registered 
+  and then aggregated across the network (see `NetworkBlock`). 
 - **`PlantBlock` composes units, NOT plants** (R7): a plant containing plants is
   now a `NetworkBlock`. Do not overload `PlantBlock` to nest into itself.
 - **In-place parameterization, not block replacement** (R10/R11, §5): the M03
@@ -112,15 +114,22 @@ The **composition of plants** — a portfolio / campus / multi-facility system
 (§3.3, R7). Same thin `FlowsheetBlockData` / `dynamic=False` / injected
 `time_set` construction as `PlantBlock`:
 - CONFIG: `time_block` (explicit; `description=` set), same primary API.
-- Holds **child `PlantBlock`s** and **inter-plant arcs** between them.
-- Recursive aggregation: `total_electrical_power[t]` / `total_thermal_power[t]` are
-  Expressions summing each child **plant's** own totals (which in turn sum their
-  units), so `NetworkBlock` total = Σ child `PlantBlock` totals = Σ their units'
+- Holds **child `PlantBlock`s** and builds constraints between them.
+- `NetworkBlock` is responsible for aggregating energy and product flows among
+  plants. Expressions summing each child **plant's** own totals (which in turn sum 
+  their units), so `NetworkBlock` total = Σ child `PlantBlock` totals = Σ their units'
   `power_electrical`/`power_thermal` (the composition invariant, §3.3). Use the same
   lazy/idempotent aggregation pattern as `PlantBlock`.
+- When aggregating product flows, there should be an option to register/aggregate both
+  the amount and some quality indicator associated with the resource. For example, 
+  if aggregating product flow from a plant, the plant block is responsible for tracking
+  and registering the quality. The network block is responsible for aggregating by either 
+  only requiring mixing between 
 - Unit/plant discovery must **not double-count**: recurse into child plants OR
   their units, never both (Pitfall 7). A `NetworkBlock` sums plant totals; it does
   not re-walk each plant's units directly.
+- `NetworkBlock` does not use arcs directly. However, it will form custom constraints
+  and aggregation across properties in the plant block. 
 
 ### IO-topology base classes (`src/flexops/unit_models/base/`)
 Extend the M04 topology-base pattern (`base/siso.py` — `SISOBlock` — already
