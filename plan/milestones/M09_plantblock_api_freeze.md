@@ -121,7 +121,7 @@ The **composition of plants** — a portfolio / campus / multi-facility system
   `power_electrical`/`power_thermal` (the composition invariant, §3.3). Use the same
   lazy/idempotent aggregation pattern as `PlantBlock`.
 - When aggregating product flows, there should be an option to register/aggregate both
-  the amount and some quality indicator associated with the resource. For example, 
+  the amount and a quality indicator associated with the resource. For example, 
   if aggregating product flow from a plant, the plant block is responsible for tracking
   and registering the quality. The network block is responsible for aggregating by either 
   only requiring mixing between 
@@ -237,7 +237,7 @@ through `load_model_config`/pydantic first — never a raw dict, conventions §4
    `PlantConfig` (§2.3): a `NetworkBlock` of `PlantBlock`s, or a single
    `PlantBlock`, each populated with units via `OpsBlock.build_from_config` on their
    `UnitConfig`s;
-4. construct the arcs (intra-plant and inter-plant) declared in the config;
+4. construct the arcs (intra-plant) and network constraints declared in the config;
 5. apply any per-unit `unit_commitment` (§3.5) and `external_dispatch` (§3.2)
    declared in the config;
 6. finalize costing (`cost_process()` deferral, M07) and return the
@@ -303,6 +303,10 @@ explicitly. Explicit argument is the primary, tested-first path (architecture §
 10. **Config vs. imperative drift.** `api_freeze_config.json` must describe the
     *same* model; the equal-objective test is the contract. Keep the config
     minimal and hand-readable; validate it against the checked-in JSON Schema.
+11. **Using arcs at the network level.** Since the `NetworkBlock` does not explicitly
+    touch units, it won't use arcs in the same way (copying state properties). 
+    Instead, configure a way to build constraints between any two objects within a plant 
+    but at the network level (e.g. heat in vs. heating load, product out vs. feed in). 
 
 ## Tests
 `src/flexops/tests/core/test_plant_block.py`
