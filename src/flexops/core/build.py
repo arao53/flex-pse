@@ -81,19 +81,24 @@ def parse_units(text: str):
     return result
 
 
-def parse_quantity(value):
+def parse_quantity(value, *, strict: bool = True):
     """Turn a persisted units-carrying value into a Pyomo expression.
 
     Args:
         value: Either a ``{"value": ..., "units": ...}`` mapping, a
             ``"<number> <units>"`` string (the form ``TimeConfig.time_step``
             uses), or any other value, which is returned unchanged.
+        strict: Whether a string with no numeric magnitude is an error. Pass
+            ``False`` where a plain string is itself a legal value — a
+            construction option naming an enum member (``"polarization"``) is
+            not a botched quantity — and it is returned unchanged instead.
 
     Returns:
         A units-carrying Pyomo expression, or ``value`` itself.
 
     Raises:
-        FlexConfigError: If a quantity string has no numeric magnitude.
+        FlexConfigError: If ``strict`` and a quantity string has no numeric
+            magnitude.
     """
     if isinstance(value, dict) and set(value) == _QUANTITY_KEYS:
         return value["value"] * parse_units(value["units"])
@@ -102,6 +107,8 @@ def parse_quantity(value):
         try:
             return float(magnitude) * parse_units(units)
         except ValueError as exc:
+            if not strict:
+                return value
             raise FlexConfigError(
                 f"Could not read {value!r} as a quantity; write it as a number "
                 "and its units, e.g. '15 min'.",

@@ -1,12 +1,15 @@
-"""Separator and its derived units: harness subclasses (§3.4, R6)."""
+"""Separator and its derived units: harness subclasses (§3.4, R6).
+
+``ElectrolysisSeparator`` has its own module-mirroring test file,
+``test_electrolysis.py``.
+"""
 
 import pyomo.environ as pyo
 import pytest
 from pyomo.environ import units as pyunits
 
-from flexcore import nomenclature as nm
 from flexops.testing import UnitModelTestHarness, dummy_time_block
-from flexops.unit_models import ElectrolysisSeparator, ReverseOsmosisSkid, Separator
+from flexops.unit_models import ReverseOsmosisSkid, Separator
 
 
 class TestSeparator(UnitModelTestHarness):
@@ -33,25 +36,6 @@ class TestReverseOsmosisSkid(UnitModelTestHarness):
         m = dummy_time_block(3)
         m.unit = ReverseOsmosisSkid(property_package=m.properties)
         return m, m.unit
-
-
-class TestElectrolysisSeparator(UnitModelTestHarness):
-    """Electrolysis as a separation: exercises power_thermal as well (§3.4)."""
-
-    expected_dof = 0
-
-    def configure(self):
-        m = dummy_time_block(3)
-        m.unit = ElectrolysisSeparator(property_package=m.properties)
-        return m, m.unit
-
-    @pytest.mark.unit
-    def test_registers_electrical_and_thermal_power(self):
-        """Both power kinds are registered -- the power_thermal exerciser."""
-        _, unit = self.configure()
-        kinds = {record.kind for record in unit._io_registry.power}
-        assert kinds == {nm.PowerKind.ELECTRICAL, nm.PowerKind.THERMAL}
-        assert unit.find_component("power_thermal_relation") is not None
 
 
 @pytest.mark.unit

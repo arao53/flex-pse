@@ -104,12 +104,44 @@ Physical units
 
 .. currentmodule:: flexops.unit_models.electrolysis
 
+``ElectrolysisSeparator`` is the one unit with two levels of detail, selected by
+its ``detail`` option. The default, ``ElectrolysisDetail.CONSTANT_INTENSITY``,
+is the plain separator relationship — one electrical intensity times the feed
+flow, no heat duty. ``ElectrolysisDetail.STACK`` instead builds an
+**equation-oriented** stack model: a fixed set of variables and residuals with
+no assumed causal direction, whose electrochemistry is carried entirely by one
+fitted five-coefficient voltage correlation. Fidelity is raised by *estimating
+more of those coefficients* — a coarser model is the same equation with
+coefficients fitted at zero — rather than by adding equations, so there is no
+library of electrochemical constants to source. Because the residuals carry no
+direction, the renewables-coupled dispatch case needs no model rewrite: fix
+``power_electrical``, unfix ``flow_in``, and the same system solves backward.
+Every quantity is a ``Var`` with a defining residual — the unit builds no
+``Expression``\ s — so the model is one flat variable/equation set, and only
+three of its residuals are nonlinear. ``power_stack`` is the stack's DC draw and
+``power_electrical`` the facility's AC draw, separated by the fitted
+``rectifier_efficiency``; the rectifier is the **only** balance-of-plant item
+modeled, with fluid-side auxiliaries deliberately out of scope. The electrical
+draw is the Constraint ``power_electrical_relation`` at either detail level, so
+the swap contract holds. ``thermal``
+(:class:`ThermalModel`) selects whether the stack has no heat duty, a registered
+waste-heat duty, or a steady-state coolant balance that solves its temperature.
+An option belonging to a switched-off effect raises ``FlexConfigError`` rather
+than being silently ignored.
+
 .. autosummary::
    :toctree: generated
    :template: unit_model.rst
    :nosignatures:
 
    ElectrolysisSeparator
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   ElectrolysisDetail
+   ThermalModel
 
 Generic surrogate
 -----------------

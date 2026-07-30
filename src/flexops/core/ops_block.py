@@ -904,7 +904,9 @@ class OpsBlockData(UnitModelBlockData):
         resolved against ``flexops.unit_models``. Persisted construction
         options carry their units as data: a value written
         ``{"value": 0.5, "units": "kWh/m^3"}`` becomes a units-carrying Pyomo
-        expression, anything else passes through unchanged. Runtime-only
+        expression, anything else passes through unchanged -- including a plain
+        string naming an enum member (``"detail": "polarization"``), which the
+        receiving ``ConfigValue``'s own domain then validates. Runtime-only
         options that cannot be serialized (``property_package``,
         ``costing_package``) are supplied by the caller through ``kwargs``,
         which wins over the config on a key collision.
@@ -939,7 +941,7 @@ class OpsBlockData(UnitModelBlockData):
                 value=cfg.unit_model_class,
             )
         options = {
-            name: parse_quantity(value)
+            name: parse_quantity(value, strict=False)
             for name, value in cfg.construction_options.items()
         }
         return block_class(
