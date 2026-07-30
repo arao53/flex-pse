@@ -270,16 +270,36 @@ def test_battery_forces_nothing_and_status_defaults_true():
 
 
 @pytest.mark.unit
-def test_status_requires_both_power_maxima():
-    """Enabling status without both power maxima raises FlexConfigError."""
-    with pytest.raises(FlexConfigError):
-        _battery(4, unit_commitment=UnitCommitmentConfig(status=True))
+def test_status_requires_the_two_power_maxima_together():
+    """With status on, one power maximum without the other raises FlexConfigError."""
     with pytest.raises(FlexConfigError):
         _battery(
             4,
             unit_commitment=UnitCommitmentConfig(status=True),
             power_charge_max=5 * pyunits.kW,
         )
+    with pytest.raises(FlexConfigError):
+        _battery(
+            4,
+            unit_commitment=UnitCommitmentConfig(status=True),
+            power_discharge_max=5 * pyunits.kW,
+        )
+
+
+@pytest.mark.unit
+def test_status_without_power_maxima_falls_back_to_a_1c_rate():
+    """Neither maximum given: the status link bounds both at capacity per hour.
+
+    M09 requirement -- the frozen api-freeze script builds
+    ``BatteryModel(capacity=1 * pyunits.kWh, costing_package=...)`` with no
+    power rating at all, and the semicontinuous status link still needs a
+    finite bound.
+    """
+    _, unit = _battery(
+        4, capacity=8 * pyunits.kWh, unit_commitment=UnitCommitmentConfig(status=True)
+    )
+    assert unit.power_charge[0].ub == pytest.approx(8.0)
+    assert unit.power_discharge[0].ub == pytest.approx(8.0)
 
 
 @pytest.mark.unit

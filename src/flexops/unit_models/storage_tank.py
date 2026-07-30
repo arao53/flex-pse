@@ -57,8 +57,11 @@ class StorageTankData(SISOBlockData):
 
     Config:
         Inherits the SISO/OpsBlock config; adds ``min_volume`` (default
-        0 m^3), ``max_volume`` (required), ``initial_volume`` (required),
+        0 m^3), ``max_volume`` (default 1000 m^3), ``initial_volume``
+        (default 500 m^3, half of the default ``max_volume``),
         ``level_min`` (default 0.0), and ``level_max`` (default 1.0).
+        Both volumes have defaults only so an unsized ``Tank(...)`` builds;
+        a real tank is always given its own.
 
     Example:
         >>> from flexops.testing import dummy_time_block
@@ -84,18 +87,22 @@ class StorageTankData(SISOBlockData):
     CONFIG.declare(
         "max_volume",
         ConfigValue(
+            default=1000 * pyunits.m**3,
             description="Maximum POSSIBLE tank volume -- fixed by prior "
             "investment in an existing tank or by space constraints on a "
             "potential build. The upper bound on capacity (the chosen "
             "volume) and the default value of the fixable capacity design "
-            "variable. Required."
+            "variable.",
         ),
     )
     CONFIG.declare(
         "initial_volume",
         ConfigValue(
+            default=500 * pyunits.m**3,
             description="Initial tank volume, volume[0]: a mutable Param "
-            "and a rolling-horizon initial-state hook. Required."
+            "and a rolling-horizon initial-state hook. Defaults to half of "
+            "the default max_volume, so a tank built with no sizing at all "
+            "starts half full; give it explicitly whenever max_volume is.",
         ),
     )
     CONFIG.declare(

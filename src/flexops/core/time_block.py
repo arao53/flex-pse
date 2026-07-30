@@ -405,3 +405,34 @@ class TimeBlockData(ProcessBlockData):
             start_time=start_time,
             end_time=end_time,
         )
+
+
+def find_time_block(model) -> TimeBlockData:
+    """Return the unique ``TimeBlock`` on ``model``.
+
+    The auto-discovery convenience behind every block that takes an optional
+    ``time_block=``: an explicit argument is the primary path, and this is what
+    resolves the omitted one (architecture §3.3).
+
+    Args:
+        model: The Pyomo model (or block) to search, sub-blocks included.
+
+    Returns:
+        The model's single ``TimeBlockData``.
+
+    Raises:
+        FlexConfigError: If the model carries zero or several TimeBlocks, in
+            which case the caller must say which one to use.
+    """
+    found = [
+        block
+        for block in model.component_data_objects(pyo.Block, descend_into=True)
+        if isinstance(block, TimeBlockData)
+    ]
+    if len(found) != 1:
+        raise FlexConfigError(
+            f"Expected exactly one TimeBlock on model {model.name!r}, found "
+            f"{len(found)}. Build a TimeBlock on the model first, or pass the "
+            "one to use explicitly as time_block=.",
+        )
+    return found[0]

@@ -5,6 +5,7 @@ from pathlib import Path
 import pyomo.environ as pyo
 import pytest
 from pyomo.environ import units as pyunits
+from pyomo.network import Arc
 from pyomo.opt import assert_optimal_termination
 
 from flexcore.config.io import load_model_config
@@ -49,9 +50,7 @@ def _hand_built() -> pyo.ConcreteModel:
     m.demo.battery = BatteryModel(
         capacity=10.0 * pyunits.kWh, costing_package=m.costing
     )
-    m.demo.arc_0 = pyo.Arc(
-        source=m.demo.tank.outlet, destination=m.demo.surrogate.inlet
-    )
+    m.demo.arc_0 = Arc(source=m.demo.tank.outlet, destination=m.demo.surrogate.inlet)
     m.costing.cost_process()
     m.objective = pyo.Objective(expr=m.costing.aggregate_operating_cost)
     return m
@@ -60,7 +59,7 @@ def _hand_built() -> pyo.ConcreteModel:
 def _solve(model) -> float:
     """Expand arcs, solve, and return the objective value."""
     pyo.TransformationFactory("network.expand_arcs").apply_to(model)
-    results = get_solver(model=model).solve(model)
+    results = get_solver(model=model, prefer="highs").solve(model)
     assert_optimal_termination(results)
     return pyo.value(model.objective)
 

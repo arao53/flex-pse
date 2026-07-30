@@ -76,6 +76,7 @@ and guarded by a component test; any change that breaks it is a breaking change.
 ```python
 import pyomo.environ as pyo
 from pyomo.environ import units as pyunits
+from pyomo.network import Arc
 import flexops as fo
 
 m = pyo.ConcreteModel()
@@ -95,7 +96,7 @@ m.svcw.plant = fo.ConstantEnergyIntensityModel(
     energy_intensity=0.5 * pyunits.kWh / pyunits.m**3,
     costing_package=m.costing,
 )
-m.svcw.tank_to_plant = pyo.Arc(
+m.svcw.tank_to_plant = Arc(
     source=m.svcw.tank.outlet, destination=m.svcw.plant.inlet
 )
 m.svcw.battery = fo.BatteryModel(
@@ -107,7 +108,10 @@ m.objective = pyo.Objective(expr=m.costing.aggregate_operating_cost)
 
 (Names differ slightly from the original slide pseudo-code: ISO-8601 dates,
 keyword configuration arguments, and an explicit `time_block=` on `PlantBlock`.
-The reasons are recorded as decisions R2 in `plan/01_architecture.md`.)
+The reasons are recorded as decisions R2 in `plan/01_architecture.md`. The `Arc`
+import is a second such correction, made in M09: `Arc` lives in `pyomo.network`
+and has never been re-exported as `pyo.Arc`, so the earlier spelling could not
+run.)
 
 ### Design constraints (why the architecture looks the way it does)
 

@@ -44,6 +44,9 @@ nitpick_ignore = [
     # milestone); TimeBlock's and get_solver's Raises: entries point at it.
     ("py:exc", "FlexConfigError"),
     ("py:exc", "FlexSolverError"),
+    # pydantic documents its validation error under pydantic_core, so the name
+    # config-facing Raises: entries use has no intersphinx target.
+    ("py:exc", "pydantic.ValidationError"),
 ]
 
 # autodoc renders the subscripted generics in a pydantic model's constructor

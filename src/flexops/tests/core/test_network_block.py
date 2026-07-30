@@ -3,6 +3,7 @@
 import pyomo.environ as pyo
 import pytest
 from pyomo.environ import units as pyunits
+from pyomo.network import Arc
 from pyomo.repn import generate_standard_repn
 
 from flexops import NetworkBlock, PlantBlock
@@ -21,7 +22,7 @@ def _network(n: int = 3):
         plant = m.network.find_component(name)
         plant.surrogate = ConstantEnergyIntensityModel(property_package=m.properties)
     # An inter-plant connection between the two plants' unit ports.
-    m.network.plant_a_to_b = pyo.Arc(
+    m.network.plant_a_to_b = Arc(
         source=m.network.plant_a.surrogate.outlet,
         destination=m.network.plant_b.surrogate.inlet,
     )
@@ -60,6 +61,10 @@ def test_no_double_count_units():
         m.network.find_component(name).surrogate.power_electrical[0]
         for name in _POWER_KW
     ]
+    # A fixed Var folds into the linear repn's constant, hiding the very terms
+    # this test counts, so read the total with the draws free.
+    for var in unit_power:
+        var.unfix()
     repn = generate_standard_repn(
         m.network.total_electrical_power[0].expr, compute_values=True
     )

@@ -1,5 +1,6 @@
 """Separator and its derived units: harness subclasses (§3.4, R6)."""
 
+import pyomo.environ as pyo
 import pytest
 from pyomo.environ import units as pyunits
 
@@ -65,11 +66,16 @@ def test_no_electrolyzer_class():
 
 @pytest.mark.unit
 def test_ro_skid_outlet_semantics():
-    """The skid's split fraction is its permeate recovery."""
+    """The skid's split fraction is its permeate (outlet_a) recovery."""
     m = dummy_time_block(3)
     m.unit = ReverseOsmosisSkid(property_package=m.properties, split_fraction=0.75)
     for t in m.time_block.time_index:
         m.unit.flow_in[t].fix(4.0)
         m.unit.flow_out_a[t].fix(3.0)
         m.unit.flow_out_b[t].fix(1.0)
-        assert pyunits.get_units(m.unit.flow_out_a[t]) == pyunits.m**3 / pyunits.hr
+        assert pyo.value(m.unit.split_definition[t].body) == pytest.approx(
+            3.0 - 0.75 * 4.0, abs=1e-9
+        )
+        assert pyo.value(m.unit.split_mass_balance[t].body) == pytest.approx(
+            0.0, abs=1e-9
+        )

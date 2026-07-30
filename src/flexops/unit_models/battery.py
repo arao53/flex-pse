@@ -108,6 +108,22 @@ def _efficiency_domain(value):
     )
 
 
+def _power_max_kw(configured, fallback_kw: float | None) -> float | None:
+    """Resolve a configured power limit to kW, or fall back.
+
+    Args:
+        configured: The units-carrying configured limit, or ``None``.
+        fallback_kw: The kW value to use when none was configured (``None``
+            leaves the actuator unbounded above).
+
+    Returns:
+        The limit in kW, or ``None`` for unbounded.
+    """
+    if configured is None:
+        return fallback_kw
+    return pyo.value(pyunits.convert(abs(configured), pyunits.kW))
+
+
 @declare_process_block_class("BatteryModel")
 class BatteryModelData(OpsBlockData):
     """A battery: SOC dynamics, fixable capacity, DERMS dispatch (module docstring)."""
@@ -125,17 +141,18 @@ class BatteryModelData(OpsBlockData):
         ConfigValue(
             default=None,
             description="Maximum charging power, kW. None (default) leaves "
-            "power_charge unbounded above; required (along with "
-            "power_discharge_max) when unit_commitment.status is enabled, "
-            "since the semicontinuous link needs a finite bound.",
+            "power_charge unbounded above -- except with unit_commitment.status "
+            "enabled, whose semicontinuous link needs a finite bound and so "
+            "falls back to a 1C rate (the whole capacity in one hour). Give it "
+            "and power_discharge_max together or not at all.",
         ),
     )
     CONFIG.declare(
         "power_discharge_max",
         ConfigValue(
             default=None,
-            description="Maximum discharging power, kW. Same requirement as "
-            "power_charge_max.",
+            description="Maximum discharging power, kW. Same rule as "
+            "power_charge_max, including the 1C fallback.",
         ),
     )
     CONFIG.declare(
@@ -204,18 +221,20 @@ class BatteryModelData(OpsBlockData):
         super().build()
         tb = self._find_time_block()
 
-        if self.config.unit_commitment.status and (
-            self.config.power_charge_max is None
-            or self.config.power_discharge_max is None
-        ):
+        given = (
+            self.config.power_charge_max is not None,
+            self.config.power_discharge_max is not None,
+        )
+        if self.config.unit_commitment.status and any(given) and not all(given):
             raise FlexConfigError(
-                "BatteryModel requires both power_charge_max and "
-                "power_discharge_max when unit_commitment.status is enabled "
-                "(the default): the mutually-exclusive charge/discharge link "
-                "needs a finite bound. Pass both, or disable status via "
+                "BatteryModel needs power_charge_max and power_discharge_max "
+                "together when unit_commitment.status is enabled (the default): "
+                "the mutually-exclusive charge/discharge link needs a finite "
+                "bound on each side. Pass both, pass neither (both then default "
+                "to a 1C rate, capacity per hour), or disable status via "
                 "unit_commitment=UnitCommitmentConfig(status=False).",
-                field="unit_commitment.status",
-                value=True,
+                field="power_discharge_max" if given[0] else "power_charge_max",
+                value=None,
             )
 
         capacity_val = pyo.value(pyunits.convert(self.config.capacity, pyunits.kWh))
@@ -245,16 +264,12 @@ class BatteryModelData(OpsBlockData):
         self.soh.fix(soh_val)
         self.register_process_parameter(self.soh, regressable=True)
 
-        charge_max_val = (
-            pyo.value(pyunits.convert(abs(self.config.power_charge_max), pyunits.kW))
-            if self.config.power_charge_max is not None
-            else None
-        )
-        discharge_max_val = (
-            pyo.value(pyunits.convert(abs(self.config.power_discharge_max), pyunits.kW))
-            if self.config.power_discharge_max is not None
-            else None
-        )
+        # With status enabled the semicontinuous link needs a finite bound, so
+        # an unbounded battery falls back to a 1C rate -- its whole capacity in
+        # one hour, the textbook default for a battery given no power rating.
+        one_c = capacity_val if self.config.unit_commitment.status else None
+        charge_max_val = _power_max_kw(self.config.power_charge_max, one_c)
+        discharge_max_val = _power_max_kw(self.config.power_discharge_max, one_c)
 
         self.power_charge = pyo.Var(
             tb.time_index,

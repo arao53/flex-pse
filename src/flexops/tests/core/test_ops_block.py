@@ -175,10 +175,16 @@ def test_no_time_block_raises():
 
 
 @pytest.mark.unit
-def test_build_from_config_not_implemented():
-    """Config-driven construction is deferred"""
+def test_build_from_config_rejects_a_class_outside_the_library():
+    """Only a flexops unit-model class can be named; the error lists the options.
+
+    ``DummyOps`` is this test module's own OpsBlock subclass, not part of
+    ``flexops.unit_models`` -- config-driven construction resolves the class
+    name against the shipped library (see
+    ``src/flexops/tests/core/test_build_from_config.py`` for the built path).
+    """
     cfg = UnitConfig(unit_model_class="DummyOps")
-    with pytest.raises(NotImplementedError, match="build_from_config"):
+    with pytest.raises(FlexConfigError, match="Unknown unit_model_class"):
         OpsBlockData.build_from_config(cfg)
 
 

@@ -42,7 +42,7 @@ def _solve(model) -> float:
     ``network.expand_arcs`` transformation implicitly.
     """
     pyo.TransformationFactory("network.expand_arcs").apply_to(model)
-    results = get_solver(model=model).solve(model)
+    results = get_solver(model=model, prefer="highs").solve(model)
     assert_optimal_termination(results)
     return pyo.value(model.objective)
 
