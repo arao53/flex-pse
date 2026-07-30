@@ -21,11 +21,11 @@ the flex-pse exception hierarchy. A flex-pse tariff object is simply an EECO
 cost functions consume that frame directly).
 
 .. note:: **EECO is only needed for tariffs.** The ``eeco`` import is soft, so
-   every carrier priced with a flat :ref:`energy price <flat-energy-prices>`
+   every carrier given a native :ref:`energy price <native-energy-prices>`
    builds, solves, and reports without EECO installed — including
    ``report_cost``. Reaching a tariff path without ``eeco`` raises
    :class:`~flexcore.exceptions.FlexConfigError` naming both remedies (install
-   it, or price the carrier flat).
+   it, or price the carrier natively).
 
 Loaders and CSV conversion
 ---------------------------
@@ -268,13 +268,13 @@ Every cost lives in one of two sub-blocks built by
    ``quantity`` that does not convert to the declared ``quantity_units`` raises,
    forcing unit consistency.
 
-.. _flat-energy-prices:
+.. _native-energy-prices:
 
-.. note:: **Flat energy prices — no tariff, no EECO.**
+.. note:: **Native energy prices — no tariff, no EECO.**
 
-   A carrier does not need a tariff at all: give ``energy_prices`` a
-   units-carrying price per carrier or fuel and that carrier is billed natively
-   as ``price × Σ_t quantity[t] × dt``, exactly like a scalar cost::
+   A carrier does not need a tariff at all: give ``energy_prices`` a price per
+   carrier or fuel and that carrier is billed natively as
+   ``Σ_t price[t] × quantity[t] × dt``, exactly like a scalar cost::
 
        m.costing = fo.FlexCosting(
            time_block=m.time_block,
@@ -284,13 +284,40 @@ Every cost lives in one of two sub-blocks built by
            },
        )
 
-   Keys are ``"electrical"`` or a registered fuel name. A flat price **wins over
-   a tariff** that also covers that carrier, so the two can be mixed freely —
-   tariff-priced electricity alongside a flat-priced fuel, say. Prices must carry
-   Pyomo units (a bare number is rejected) and must reconcile with the base
-   currency, or the existing unit-consistency check raises.
+   Keys are ``"electrical"`` or a registered fuel name. A native price **wins
+   over a tariff** that also covers that carrier, so the two can be mixed freely
+   — tariff-priced electricity alongside a natively priced fuel, say.
 
-   A carrier that has registered draws but is priced by *neither* a flat price
+   **A price may vary over the horizon.** Each entry is one of three things: a
+   single value (flat over the horizon), an array-like with one value per time
+   point, or a Pyomo component indexed over the horizon — so the price can be a
+   ``Param`` you update between solves, or even a ``Var``::
+
+       m.day_ahead = pyo.Param(
+           m.time_block.time_index, initialize=hourly_prices, mutable=True,
+           units=currency_units("USD") / pyunits.kWh,
+       )
+       m.costing = fo.FlexCosting(
+           time_block=m.time_block,
+           energy_prices={"electrical": m.day_ahead},
+       )
+
+   An array-like is read in order against the time index; an indexed component is
+   read in its own index-set order, so it does not have to live on the
+   TimeBlock's ``time_index`` — only to have exactly one value per time point.
+   Anything with the wrong number of values raises
+   :class:`~flexcore.exceptions.FlexConfigError` at construction, naming both
+   counts. A mapping is rejected outright, because iterating it would cost its
+   keys.
+
+   **Units are explicit or inferred.** A price may carry Pyomo units
+   (``0.12 * currency_units("USD") / pyunits.kWh``), which must reconcile with the
+   base currency or the unit-consistency check raises. A bare number is read in
+   the currency over the carrier's metered quantity: ``kWh`` for a power carrier,
+   ``m³`` for a fuel — so ``{"electrical": 0.12}`` means $0.12/kWh and
+   ``{"natural_gas": 0.50}`` means $0.50/m³.
+
+   A carrier that has registered draws but is priced by *neither* a native price
    nor a tariff covering its utility raises
    :class:`~flexcore.exceptions.FlexConfigError` naming the carrier, rather than
    contributing a silent ``$0`` to the bill.

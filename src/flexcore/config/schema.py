@@ -217,13 +217,25 @@ class DRConfig(_StrictModel):
 
 
 class PriceSpec(_StrictModel):
-    """A flat price for one energy carrier or fuel: a number and its units."""
+    """A native price for one energy carrier or fuel: a number and its units."""
 
-    value: float = Field(description="The numeric price, in the units below.")
+    value: float | list[float] = Field(
+        description="The numeric price, in the units below. One number is a flat "
+        "price over the whole horizon; a list is one price per time point and must "
+        "have exactly as many entries as the horizon has time points, which is "
+        "checked when the model is built."
+    )
     units: str = Field(
         description="Units of the price as a string, e.g. 'USD/kWh' for "
         "electricity or 'USD/m^3' for a fuel."
     )
+
+    @model_validator(mode="after")
+    def _series_is_not_empty(self) -> "PriceSpec":
+        """Reject an empty price list: it can never align with a horizon."""
+        if isinstance(self.value, list) and not self.value:
+            raise ValueError("a price list needs one entry per time point, not zero.")
+        return self
 
 
 class CostingConfig(_StrictModel):
@@ -238,10 +250,11 @@ class CostingConfig(_StrictModel):
     )
     energy_prices: dict[str, PriceSpec] | None = Field(
         default=None,
-        description="Optional flat prices keyed by carrier or fuel name "
+        description="Optional native prices keyed by carrier or fuel name "
         "('electrical', or a fuel such as 'natural_gas'). A carrier priced here is "
-        "billed at that flat price instead of through the tariff, so a run with "
-        "every carrier priced needs no tariff at all.",
+        "billed at that price instead of through the tariff, so a run with every "
+        "carrier priced needs no tariff at all. Each price is flat over the horizon "
+        "or given per time point.",
     )
     currency: str = Field(
         default="USD",

@@ -25,7 +25,11 @@ model variables.
 indexed kW series :attr:`aggregate_power` ``[t, carrier]``: ``"electrical"`` and
 one carrier per distinct **thermal** temperature (``"thermal@<T>K"`` — heat duties
 at different temperatures are never summed together). Electricity is billed
-through EECO via ``add_electricity_cost``.
+through EECO via ``add_electricity_cost``, unless ``energy_prices`` gives its
+carrier a price — a carrier priced there is billed natively as
+``Σ_t price[t] × quantity[t] × dt`` and never reaches EECO. That price may be one
+value for the whole horizon, one per time point, or a Pyomo component indexed
+over the horizon (so it can be a model Param or Var).
 
 **Fuel is a volume, not a power.** A combustible fuel is metered and billed on
 volume, so every fuel-usage flow a unit registered
@@ -44,7 +48,7 @@ from the model (via :func:`~flexops.core.registration.iter_io_registry`).
 
 import dataclasses
 import logging
-from collections.abc import Mapping, Sequence
+from collections.abc import Mapping, Sequence, Sized
 from typing import Any
 
 import numpy as np
@@ -53,7 +57,7 @@ from idaes.core import FlowsheetCostingBlockData, declare_process_block_class
 from pyomo.common.config import ConfigValue
 from pyomo.core.base.units_container import UnitsError
 from pyomo.environ import units as pyunits
-from pyomo.util.check_units import assert_units_consistent
+from pyomo.util.check_units import assert_units_consistent, assert_units_equivalent
 
 from flexcore import nomenclature as nm
 from flexcore.exceptions import FlexConfigError
@@ -101,7 +105,12 @@ def _is_multi_tariff_source(source) -> bool:
 
 
 def _energy_prices_domain(value):
-    """Validate the ``energy_prices`` mapping: carrier name -> units-carrying price.
+    """Validate the ``energy_prices`` mapping: carrier name -> price.
+
+    Checks only that the input is a mapping of string keys to a supported
+    price form. The length of a per-period price is checked against the
+    horizon in :meth:`FlexCostingData.build`, which is where the
+    ``time_block`` is available.
 
     Args:
         value: The configured mapping, or ``None``.
@@ -111,14 +120,14 @@ def _energy_prices_domain(value):
 
     Raises:
         FlexConfigError: If it is not a mapping, a key is not a string, or a price
-            carries no Pyomo units (a bare number is always ambiguous).
+            is itself a mapping (which would be costed over its keys).
     """
     if value is None:
         return {}
     if not isinstance(value, Mapping):
         raise FlexConfigError(
-            "energy_prices must be a mapping of carrier or fuel name to a "
-            f"units-carrying price; got {type(value).__name__}.",
+            "energy_prices must be a mapping of carrier or fuel name to a price; "
+            f"got {type(value).__name__}.",
             field="energy_prices",
             value=value,
         )
@@ -130,16 +139,85 @@ def _energy_prices_domain(value):
                 field="energy_prices",
                 value=name,
             )
-        if isinstance(price, int | float):
+        if isinstance(price, Mapping):
             raise FlexConfigError(
-                f"energy_prices[{name!r}]={price!r} has no units. Multiply it by a "
-                "currency over the metered quantity, e.g. "
-                "0.12 * currency_units('USD') / pyunits.kWh for electricity or "
-                "0.5 * currency_units('USD') / pyunits.m**3 for a fuel.",
+                f"energy_prices[{name!r}] is a mapping, which would be costed over "
+                "its keys. A price is a single value, an array-like with one value "
+                "per time point, or a Pyomo component indexed over the horizon.",
                 field="energy_prices",
                 value=price,
             )
     return dict(value)
+
+
+def _price_terms(name: str, value, n_points: int):
+    """Normalize one configured price to a scalar, or one value per time point.
+
+    Recognizes the three price forms, in the order they must be tested: a Pyomo
+    component (indexed over the horizon, or a scalar Param/expression), an
+    array-like of per-period values, or a plain number. A Pyomo scalar component
+    is ``Sized`` with length 1, so the component check has to come first.
+
+    Args:
+        name: The carrier or fuel name, for error messages.
+        value: The configured price.
+        n_points: The number of time points a per-period price must cover.
+
+    Returns:
+        The price itself when scalar, or a ``list`` of ``n_points`` per-period
+        prices (in index-set order for an indexed component).
+
+    Raises:
+        FlexConfigError: If a per-period price does not have exactly ``n_points``
+            values.
+    """
+    is_indexed = getattr(value, "is_indexed", None)
+    if callable(is_indexed):
+        if not is_indexed():
+            return value
+        index = value.index_set()
+        if len(index) != n_points:
+            raise FlexConfigError(
+                f"energy_prices[{name!r}] is indexed by {index.name!r}, which has "
+                f"{len(index)} members, but the horizon has {n_points} time points. "
+                "An indexed price needs exactly one value per time point.",
+                field="energy_prices",
+                value=name,
+            )
+        return [value[i] for i in index]
+    if isinstance(value, Sized):
+        if len(value) != n_points:
+            raise FlexConfigError(
+                f"energy_prices[{name!r}] has {len(value)} values, but the horizon "
+                f"has {n_points} time points. A price is either a single value or "
+                "an array-like with exactly one value per time point.",
+                field="energy_prices",
+                value=name,
+            )
+        return list(value)
+    return value
+
+
+def _price_in_units(price, per_quantity_units):
+    """Give a dimensionless price the units of the quantity it is billed on.
+
+    A price that already carries units is returned untouched, so a price whose
+    units do not reconcile with its carrier still fails the unit-consistency
+    check rather than being silently reinterpreted.
+
+    Args:
+        price: A price value, with or without Pyomo units.
+        per_quantity_units: The units to assume when it has none, as currency over
+            the metered quantity (e.g. ``USD/kWh`` for a power carrier).
+
+    Returns:
+        The units-carrying price.
+    """
+    try:
+        assert_units_equivalent(price, pyunits.dimensionless)
+    except UnitsError:
+        return price
+    return price * per_quantity_units
 
 
 def _optional_rate_domain(value):
@@ -307,12 +385,16 @@ class FlexCostingData(FlowsheetCostingBlockData):
         ConfigValue(
             default=None,
             domain=_energy_prices_domain,
-            description="Optional flat prices, as a mapping of carrier or fuel "
-            "name to a units-carrying price, e.g. {'electrical': 0.12 * "
-            "pyunits.USD / pyunits.kWh, 'natural_gas': 0.5 * pyunits.USD / "
-            "pyunits.m**3}. Keys are 'electrical' or a registered fuel name. A "
-            "carrier priced here is billed natively at that flat price and is NOT "
-            "sent to EECO, so it needs no tariff.",
+            description="Optional native prices, as a mapping of carrier or fuel "
+            "name to its price. Keys are 'electrical' or a registered fuel name. A "
+            "price is a single value (flat over the horizon), an array-like with "
+            "one value per time point, or a Pyomo component indexed over the "
+            "horizon (so the price may itself be a model Param or Var); anything "
+            "with the wrong number of values raises. A price may carry Pyomo units "
+            "(0.12 * currency_units('USD') / pyunits.kWh) or be a bare number, "
+            "which is read in the currency over the carrier's metered quantity — "
+            "kWh for a power carrier, m**3 for a fuel. A carrier priced here is "
+            "billed natively and is NOT sent to EECO, so it needs no tariff.",
         ),
     )
     CONFIG.declare(
@@ -413,7 +495,7 @@ class FlexCostingData(FlowsheetCostingBlockData):
         self.base_period = pyunits.year
 
     def _resolve_tariff(self):
-        """Load the tariff from config, or ``None`` when pricing is flat-only.
+        """Load the tariff from config, or ``None`` when pricing is all native.
 
         Accepts a single source, a sequence of sources to merge, or a mapping of
         EECO utility to source to merge *and* assign per utility — several files
@@ -442,7 +524,7 @@ class FlexCostingData(FlowsheetCostingBlockData):
             if not self.config.energy_prices:
                 raise FlexConfigError(
                     "Nothing prices this costing block: give a tariff "
-                    "(tariff_file= or tariff=) or a flat price per carrier "
+                    "(tariff_file= or tariff=) or a native price per carrier "
                     "(energy_prices={'electrical': 0.12 * currency_units('USD') / "
                     "pyunits.kWh}).",
                     field="tariff_file",
@@ -474,7 +556,8 @@ class FlexCostingData(FlowsheetCostingBlockData):
 
         Raises:
             FlexConfigError: If not exactly one of ``tariff_file``/``tariff`` is
-                given, or ``time_block`` is missing.
+                given, ``time_block`` is missing, or a per-period price in
+                ``energy_prices`` does not have one value per time point.
         """
         # super().build() runs build_global_params, which resolves the tariff
         # (exclusivity check) and sets self._tariff, self._currency, base_currency.
@@ -486,6 +569,17 @@ class FlexCostingData(FlowsheetCostingBlockData):
                 field="time_block",
                 value=None,
             )
+
+        # Normalize every configured price to a scalar or one value per time point.
+        # This is the earliest point the horizon length is known, so it is where a
+        # misaligned price array fails.
+        # Pyomo stores a ConfigValue default verbatim without running its domain,
+        # so an unset energy_prices is None rather than the domain's {}.
+        n_points = self.config.time_block.n_points
+        self._prices: dict[str, Any] = {
+            name: _price_terms(name, value, n_points)
+            for name, value in (self.config.energy_prices or {}).items()
+        }
 
         self.dr = DRConfig(program=load_dr_program(self.config.dr_event_file))
 
@@ -720,20 +814,35 @@ class FlexCostingData(FlowsheetCostingBlockData):
             tb.time_index, self._fuel_names, rule=_agg_rule
         )
 
-    def _price_for(self, carrier: str):
-        """Return the configured flat price for ``carrier``, or ``None``.
+    def _price_for(self, carrier: str, per_quantity_units):
+        """Return the configured native price for ``carrier``, or ``None``.
 
-        A carrier with a flat price is billed natively and never sent to EECO.
+        A carrier priced here is billed natively and never sent to EECO. The
+        normalized price is read from the registry ``build`` validated, and any
+        dimensionless value is given ``per_quantity_units`` — inference happens
+        here, at the leg being billed, because only the caller knows what quantity
+        the carrier is metered on.
 
         Args:
             carrier: A power carrier key (``"electrical"``) or a fuel name.
+            per_quantity_units: Units to assume for a bare price, as currency over
+                the metered quantity (e.g. ``USD/kWh``).
 
         Returns:
-            The units-carrying price expression, or ``None`` if not priced.
+            ``None`` if not priced, a units-carrying price for a flat price, or a
+            ``{time point: units-carrying price}`` dict for a per-period price.
         """
-        # Pyomo stores a ConfigValue default verbatim without running its domain,
-        # so an unset energy_prices is None rather than the domain's {}.
-        return (self.config.energy_prices or {}).get(carrier)
+        terms = self._prices.get(carrier)
+        if terms is None:
+            return None
+        if isinstance(terms, list):
+            return {
+                t: _price_in_units(price, per_quantity_units)
+                for t, price in zip(
+                    self.config.time_block.time_index, terms, strict=True
+                )
+            }
+        return _price_in_units(terms, per_quantity_units)
 
     def _require_priced(self, carrier: str, utility: str) -> None:
         """Fail if nothing prices ``carrier`` — neither a flat price nor a tariff.
@@ -746,10 +855,10 @@ class FlexCostingData(FlowsheetCostingBlockData):
             utility: The EECO utility that would have to price it.
 
         Raises:
-            FlexConfigError: If no flat price covers ``carrier`` and the tariff
+            FlexConfigError: If no native price covers ``carrier`` and the tariff
                 does not cover ``utility``.
         """
-        if self._price_for(carrier) is not None:
+        if carrier in self._prices:
             return
         if utility in self._tariff_utilities:
             return
@@ -766,8 +875,9 @@ class FlexCostingData(FlowsheetCostingBlockData):
     def _build_opex(self, tb, cur, dt_hours) -> None:
         """Build the ``opex`` block: electricity + fuel + fixed + scalar (Vars).
 
-        Each energy carrier is billed one of two ways: a **flat price** from
-        ``energy_prices`` is applied natively here, and anything else goes to the
+        Each energy carrier is billed one of two ways: a price from
+        ``energy_prices`` is applied natively here (flat, or per time point), and
+        anything else goes to the
         ``opex.py`` bridge so EECO owns the tariff cost math. Fuel legs are built
         on per-fuel sub-blocks so EECO's ``gas_*`` components never collide.
         Non-energy scalar costs are always native. A final unit-consistency check
@@ -779,12 +889,12 @@ class FlexCostingData(FlowsheetCostingBlockData):
         )
         opex = self.opex
 
-        # --- electricity: a flat price, or EECO against the tariff ----------
+        # --- electricity: a native price, or EECO against the tariff --------
         self._require_priced("electrical", "electric")
         opex.electricity_cost = pyo.Var(
             initialize=0.0, units=cur, doc="Electricity cost ($)."
         )
-        price = self._price_for("electrical")
+        price = self._price_for("electrical", cur / pyunits.kWh)
         if price is not None:
             opex.eq_electricity_cost = pyo.Constraint(
                 expr=opex.electricity_cost
@@ -887,13 +997,14 @@ class FlexCostingData(FlowsheetCostingBlockData):
         self._assert_cost_units_consistent(fuel_names, scalar_names)
 
     def _priced_integral(self, series, price, tb, dt_hours, *, convert_to=None):
-        """Return ``price × Σ_t series[t] × dt`` — the one flat-price cost formula.
+        """Return ``Σ_t price[t] × series[t] × dt`` — the one native cost formula.
 
-        Shared by every natively priced line item: a flat-priced energy carrier or
-        fuel, and any registered scalar cost. ``price`` carries Pyomo units, so
+        Shared by every natively priced line item: a natively priced energy carrier
+        or fuel, and any registered scalar cost. ``price`` carries Pyomo units, so
         the resulting constraint is dimensionally checked and a price whose units
         do not reconcile with the metered quantity raises rather than producing a
-        silently wrong number.
+        silently wrong number. A flat price is factored out of the sum; a
+        per-period price (a ``{t: price}`` mapping) multiplies term by term.
 
         The integration domain is the *series'* own index set rather than an
         assumed one, and the timestep is passed in — so this stays correct if a
@@ -905,7 +1016,8 @@ class FlexCostingData(FlowsheetCostingBlockData):
 
         Args:
             series: A time-indexed rate (Var/Expression/Reference).
-            price: A units-carrying price per unit of the integrated quantity.
+            price: A units-carrying price per unit of the integrated quantity, or a
+                ``{time point: price}`` mapping of them.
             tb: The TimeBlock, whose ``time_index`` the series must be on.
             dt_hours: Timestep length in hours.
             convert_to: Optional units to convert each ``series[t]`` into first.
@@ -920,7 +1032,7 @@ class FlexCostingData(FlowsheetCostingBlockData):
         index = series.index_set()
         if index is not tb.time_index:
             raise FlexConfigError(
-                f"Cannot cost a series indexed by {index.name!r}: flat pricing "
+                f"Cannot cost a series indexed by {index.name!r}: native pricing "
                 f"integrates over the model's time index ({tb.time_index.name!r}). "
                 "Costing a series on its own time index (a batch or cyclic unit) "
                 "is not supported yet — the power/fuel aggregation and the EECO "
@@ -928,20 +1040,22 @@ class FlexCostingData(FlowsheetCostingBlockData):
                 field="energy_prices",
                 value=index.name,
             )
-        terms = sum(
-            (
-                pyunits.convert(series[t], convert_to)
-                if convert_to is not None
-                else series[t]
-            )
-            for t in index
-        )
-        return price * terms * dt_hours * pyunits.hr
+
+        def quantity(t):
+            if convert_to is None:
+                return series[t]
+            return pyunits.convert(series[t], convert_to)
+
+        if isinstance(price, Mapping):
+            total = sum(price[t] * quantity(t) for t in index)
+        else:
+            total = price * sum(quantity(t) for t in index)
+        return total * dt_hours * pyunits.hr
 
     def _build_fuel_leg(self, tb, cur, dt_hours, name: str) -> None:
-        """Bill one fuel: a flat price natively, or EECO's gas leg on the tariff.
+        """Bill one fuel: natively on its own price, or EECO's gas leg on the tariff.
 
-        ``aggregate_fuel_usage`` is already in EECO's units, so the flat-price path
+        ``aggregate_fuel_usage`` is already in EECO's units, so the native path
         bills it directly through a ``Reference``. The tariff path normalizes it to
         a bare number first, as EECO bills magnitudes, not units-carrying
         expressions. No heating value is applied either way.
@@ -952,7 +1066,7 @@ class FlexCostingData(FlowsheetCostingBlockData):
         cost = pyo.Var(initialize=0.0, units=cur, doc=f"Cost of fuel {name} ($).")
         opex.add_component(f"fuel_cost_{name}", cost)
 
-        price = self._price_for(name)
+        price = self._price_for(name, cur / pyunits.m**3)
         if price is not None:
             opex.add_component(
                 f"eq_fuel_cost_{name}",
@@ -1198,27 +1312,42 @@ class FlexCostingData(FlowsheetCostingBlockData):
 
     # -- reported cost (post-solve; never the objective, §6) --------
 
-    def _flat_priced_cost(
-        self, realized, price, dt_hours: float, *, quantity_units=EECO_POWER_UNITS
+    def _natively_priced_cost(
+        self,
+        realized,
+        price,
+        dt_hours: float,
+        time_index,
+        *,
+        quantity_units=EECO_POWER_UNITS,
     ) -> float:
-        """Recompute a flat-priced carrier's realized cost, independent of the model.
+        """Recompute a natively priced carrier's realized cost, off the model.
 
         The reporting counterpart of :meth:`_priced_integral`: same
-        ``price × Σ quantity × dt``, evaluated on the realized array rather than
+        ``Σ price × quantity × dt``, evaluated on the realized array rather than
         built as a constraint, so the reported cost is a genuine recomputation and
         never a read of the objective. Needs no EECO.
 
         Args:
-            realized: The realized per-timestep rates.
-            price: The units-carrying flat price.
+            realized: The realized per-timestep rates, in ``time_index`` order.
+            price: The units-carrying price, or a ``{time point: price}`` mapping.
             dt_hours: Timestep length in hours.
+            time_index: The time points ``realized`` was sampled over, used to look
+                up a per-period price.
             quantity_units: The units ``realized`` is in.
 
         Returns:
             The horizon-total cost in the base currency, as a float.
         """
-        total = float(realized.sum()) * quantity_units * dt_hours * pyunits.hr
-        return float(pyo.value(pyunits.convert(price * total, self._currency)))
+        if isinstance(price, Mapping):
+            priced = sum(
+                price[t] * float(value)
+                for t, value in zip(time_index, realized, strict=True)
+            )
+        else:
+            priced = price * float(realized.sum())
+        total = priced * quantity_units * dt_hours * pyunits.hr
+        return float(pyo.value(pyunits.convert(total, self._currency)))
 
     def report_cost(self, model) -> CostReport:
         """Return the reported, categorized cost, evaluated **post-solve**.
@@ -1243,9 +1372,11 @@ class FlexCostingData(FlowsheetCostingBlockData):
         realized_power = np.array(
             [pyo.value(self.aggregate_electrical_power[t]) for t in tb.time_index]
         )
-        price = self._price_for("electrical")
+        price = self._price_for("electrical", self._currency / pyunits.kWh)
         if price is not None:
-            electricity = self._flat_priced_cost(realized_power, price, dt_hours)
+            electricity = self._natively_priced_cost(
+                realized_power, price, dt_hours, tb.time_index
+            )
         else:
             electricity = evaluate_cost(
                 realized_power,
@@ -1261,10 +1392,14 @@ class FlexCostingData(FlowsheetCostingBlockData):
             realized_usage = np.array(
                 [pyo.value(self.aggregate_fuel_usage[t, name]) for t in tb.time_index]
             )
-            price = self._price_for(name)
+            price = self._price_for(name, self._currency / pyunits.m**3)
             if price is not None:
-                fuel += self._flat_priced_cost(
-                    realized_usage, price, dt_hours, quantity_units=EECO_GAS_USAGE_UNITS
+                fuel += self._natively_priced_cost(
+                    realized_usage,
+                    price,
+                    dt_hours,
+                    tb.time_index,
+                    quantity_units=EECO_GAS_USAGE_UNITS,
                 )
             else:
                 fuel += evaluate_fuel_cost(

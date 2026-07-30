@@ -110,7 +110,9 @@ def _pump_tank_costing(
     are built with ``costing_package=None`` (aggregation pulls from the model, so
     the association is not required). ``tariff`` overrides the default electric
     demo tariff with a pre-loaded rate_data object; ``no_tariff=True`` passes no
-    tariff at all (pricing then comes from ``energy_prices``). Extra
+    tariff at all (pricing then comes from ``energy_prices``). ``energy_prices``
+    may be the mapping itself, or a callable taking the model and returning it, so
+    a price that is a Pyomo component can be attached to this model first. Extra
     ``costing_kwargs`` go straight to the FlexCosting constructor.
     """
     m = _time_model()
@@ -123,7 +125,9 @@ def _pump_tank_costing(
             **costing_kwargs,
         )
         if energy_prices is not None:
-            kwargs["energy_prices"] = energy_prices
+            kwargs["energy_prices"] = (
+                energy_prices(m) if callable(energy_prices) else energy_prices
+            )
         if tariff is not None:
             kwargs["tariff"] = tariff
         elif not no_tariff:
@@ -457,13 +461,13 @@ def test_fuel_usage_units_normalized():
     # 1000 L/min = 60 m^3/hr.
     _add_fuel_usage(
         m,
-        "biogas",
+        "gas",
         {t: 1000.0 for t in range(24)},
         units=pyunits.L / pyunits.min,
     )
     m.costing.cost_process()
     _propagate(m.costing)
-    assert pyo.value(m.costing.aggregate_fuel_usage[0, "biogas"]) == pytest.approx(60.0)
+    assert pyo.value(m.costing.aggregate_fuel_usage[0, "gas"]) == pytest.approx(60.0)
 
     # A fuel usage var that is not a volumetric rate must raise at aggregation.
     m2 = _pump_tank_costing(tariff=_two_utility_tariff(), run_cost_process=False)
@@ -500,7 +504,7 @@ def test_fuel_usage_aggregated_and_billed():
 def _tariff_and_fuel_model():
     """A tariff-priced model with one EECO electric leg and one EECO fuel leg."""
     m = _pump_tank_costing(tariff=_two_utility_tariff(), run_cost_process=False)
-    _add_fuel_usage(m, "biogas", {t: 10.0 for t in range(24)})
+    _add_fuel_usage(m, "gas", {t: 10.0 for t in range(24)})
     m.costing.cost_process()
     return m
 
@@ -514,7 +518,7 @@ def test_eeco_normalization_vars_are_dimensionless():
         opex.eeco_aggregate_electrical_power[0], pyunits.dimensionless
     )
     assert_units_equivalent(
-        opex.fuel_biogas.eeco_aggregate_fuel_usage[0], pyunits.dimensionless
+        opex.fuel_gas.eeco_aggregate_fuel_usage[0], pyunits.dimensionless
     )
 
 
@@ -829,19 +833,19 @@ def test_flat_fuel_price_with_tariff_electricity():
     """A fuel priced flat and electricity priced by tariff bill on separate legs."""
     m = _pump_tank_costing(
         tariff=_two_utility_tariff(),
-        energy_prices={"biogas": 0.25 * _USD / pyunits.m**3},
+        energy_prices={"gas": 0.25 * _USD / pyunits.m**3},
         run_cost_process=False,
     )
-    _add_fuel_usage(m, "biogas", {t: 10.0 for t in range(24)})
+    _add_fuel_usage(m, "gas", {t: 10.0 for t in range(24)})
     m.costing.cost_process()
     _set_power(m, {t: 100.0 for t in range(24)})
     _propagate(m.costing)
 
     # The flat leg is a native constraint, so it propagates without a solver:
     # 24 h x 10 m3/hr x $0.25/m3 = $60.00 (not the tariff's $0.50/m3).
-    assert pyo.value(m.costing.opex.fuel_cost_biogas) == pytest.approx(60.0)
+    assert pyo.value(m.costing.opex.fuel_cost_gas) == pytest.approx(60.0)
     # A flat-priced fuel has no EECO sub-block, so no normalization Var either.
-    assert m.costing.opex.find_component("fuel_biogas") is None
+    assert m.costing.opex.find_component("fuel_gas") is None
     # The EECO leg's in-objective cost is built from EECO's own Vars, which have
     # no eq_ sibling to propagate through, so read the tariff leg post-hoc:
     # 24 h x 100 kW x $0.10/kWh = $240.00.
@@ -886,17 +890,30 @@ def test_flat_price_wrong_dimension_raises():
 
 
 @pytest.mark.unit
-def test_flat_price_must_carry_units():
-    """A bare float price is rejected — prices carry Pyomo units.
+def test_bare_electricity_price_infers_per_kwh():
+    """A bare number prices electricity in currency/kWh, the metered quantity."""
+    m = _pump_tank_costing(no_tariff=True, energy_prices={"electrical": 0.12})
+    _set_power(m, {t: 100.0 for t in range(24)})
+    _propagate(m.costing)
 
-    Pyomo wraps a ConfigValue domain's exception in ValueError (as for the other
-    declared domains), so the FlexConfigError message is asserted through it.
-    """
-    m = _time_model()
-    with pytest.raises(ValueError, match="has no units"):
-        m.costing = FlexCosting(
-            time_block=m.time_block, energy_prices={"electrical": 0.12}
-        )
+    # Same bill as the explicit 0.12 * USD/kWh: 24 h x 100 kW x $0.12/kWh = $288.
+    assert pyo.value(m.costing.opex.electricity_cost) == pytest.approx(288.0)
+
+
+@pytest.mark.unit
+def test_bare_fuel_price_infers_per_cubic_meter():
+    """A bare number prices a fuel in currency/m3, the metered quantity."""
+    m = _pump_tank_costing(
+        tariff=_two_utility_tariff(),
+        energy_prices={"gas": 0.25},
+        run_cost_process=False,
+    )
+    _add_fuel_usage(m, "gas", {t: 10.0 for t in range(24)})
+    m.costing.cost_process()
+    _propagate(m.costing)
+
+    # 24 h x 10 m3/hr x $0.25/m3 = $60.00.
+    assert pyo.value(m.costing.opex.fuel_cost_gas) == pytest.approx(60.0)
 
 
 @pytest.mark.unit
@@ -951,6 +968,215 @@ def test_priced_leg_rejects_foreign_time_index():
     )
     with pytest.raises(FlexConfigError, match="time"):
         m.costing.cost_process()
+
+
+# --------------------------------------------------------------------------- #
+# Time-varying flat prices: an array, or a Pyomo indexed component, of length T
+# --------------------------------------------------------------------------- #
+# A price of $0.10/kWh over the first half of the horizon and $0.20/kWh over the
+# second, against a constant 100 kW draw: 100 kW x (12 h x $0.10 + 12 h x $0.20).
+_HALVES = [0.10] * 12 + [0.20] * 12
+_HALVES_COST = 360.0
+
+
+def _add_price_param(m, *, units=_USD / pyunits.kWh, foreign=False, values=_HALVES):
+    """Attach an indexed price Param to ``m`` and return it.
+
+    ``foreign=True`` puts it on its own Set rather than the TimeBlock's
+    ``time_index``, which is what lets ``values`` be a length other than T.
+    """
+    if foreign:
+        m.price_index = pyo.Set(initialize=range(len(values)), ordered=True)
+        index = m.price_index
+    else:
+        index = m.time_block.time_index
+    m.price = pyo.Param(
+        index, initialize=dict(enumerate(values)), units=units, mutable=True
+    )
+    return m.price
+
+
+@pytest.mark.unit
+def test_time_varying_electricity_price_from_list():
+    """A length-T list of bare prices bills sum_t price[t] x power[t] x dt."""
+    m = _pump_tank_costing(no_tariff=True, energy_prices={"electrical": _HALVES})
+    _set_power(m, {t: 100.0 for t in range(24)})
+    _propagate(m.costing)
+
+    assert pyo.value(m.costing.opex.electricity_cost) == pytest.approx(_HALVES_COST)
+
+
+@pytest.mark.unit
+def test_time_varying_electricity_price_from_ndarray_with_units():
+    """A numpy array carrying units is billed per period, like a bare list."""
+    prices = np.array(_HALVES) * _USD / pyunits.kWh
+    m = _pump_tank_costing(no_tariff=True, energy_prices={"electrical": prices})
+    _set_power(m, {t: 100.0 for t in range(24)})
+    _propagate(m.costing)
+
+    assert pyo.value(m.costing.opex.electricity_cost) == pytest.approx(_HALVES_COST)
+
+
+@pytest.mark.unit
+def test_time_varying_price_from_param_on_time_index():
+    """An indexed Param on the TimeBlock's own time index is billed per period."""
+    m = _pump_tank_costing(
+        no_tariff=True,
+        energy_prices=lambda mdl: {"electrical": _add_price_param(mdl)},
+    )
+    _set_power(m, {t: 100.0 for t in range(24)})
+    _propagate(m.costing)
+
+    assert pyo.value(m.costing.opex.electricity_cost) == pytest.approx(_HALVES_COST)
+
+
+@pytest.mark.unit
+def test_time_varying_price_from_unitless_param_infers_units():
+    """A dimensionless indexed Param gets the carrier's per-quantity units."""
+    m = _pump_tank_costing(
+        no_tariff=True,
+        energy_prices=lambda mdl: {"electrical": _add_price_param(mdl, units=None)},
+    )
+    _set_power(m, {t: 100.0 for t in range(24)})
+    _propagate(m.costing)
+
+    assert pyo.value(m.costing.opex.electricity_cost) == pytest.approx(_HALVES_COST)
+
+
+@pytest.mark.unit
+def test_time_varying_price_from_param_on_foreign_index_of_same_length():
+    """A price Param on its own T-member index set is accepted, read in order.
+
+    Unlike the costed *series*, an exogenous price is not required to live on the
+    TimeBlock's index set — only to have one value per time point.
+    """
+    m = _pump_tank_costing(
+        no_tariff=True,
+        energy_prices=lambda mdl: {"electrical": _add_price_param(mdl, foreign=True)},
+    )
+    _set_power(m, {t: 100.0 for t in range(24)})
+    _propagate(m.costing)
+
+    assert pyo.value(m.costing.opex.electricity_cost) == pytest.approx(_HALVES_COST)
+
+
+@pytest.mark.unit
+def test_time_varying_price_from_indexed_var():
+    """A fixed indexed Var can serve as the price series."""
+
+    def prices(mdl):
+        mdl.price_var = pyo.Var(
+            mdl.time_block.time_index,
+            initialize=dict(enumerate(_HALVES)),
+            units=_USD / pyunits.kWh,
+        )
+        mdl.price_var.fix()
+        return {"electrical": mdl.price_var}
+
+    m = _pump_tank_costing(no_tariff=True, energy_prices=prices)
+    _set_power(m, {t: 100.0 for t in range(24)})
+    _propagate(m.costing)
+
+    assert pyo.value(m.costing.opex.electricity_cost) == pytest.approx(_HALVES_COST)
+
+
+@pytest.mark.unit
+def test_time_varying_fuel_price_from_list():
+    """A fuel priced by a length-T list bills per period in currency/m3."""
+    prices = [0.20] * 12 + [0.30] * 12
+    m = _pump_tank_costing(
+        tariff=_two_utility_tariff(),
+        energy_prices={"gas": prices},
+        run_cost_process=False,
+    )
+    _add_fuel_usage(m, "gas", {t: 10.0 for t in range(24)})
+    m.costing.cost_process()
+    _propagate(m.costing)
+
+    # 10 m3/hr x (12 h x $0.20 + 12 h x $0.30) = $60.00.
+    assert pyo.value(m.costing.opex.fuel_cost_gas) == pytest.approx(60.0)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("length", [23, 25])
+def test_time_varying_price_wrong_length_raises(length):
+    """A price array that is not length T raises at FlexCosting construction."""
+    with pytest.raises(FlexConfigError, match="24"):
+        _pump_tank_costing(no_tariff=True, energy_prices={"electrical": [0.1] * length})
+
+
+@pytest.mark.unit
+def test_time_varying_price_wrong_index_cardinality_raises():
+    """An indexed price whose index set has other than T members raises."""
+    with pytest.raises(FlexConfigError, match="24"):
+        _pump_tank_costing(
+            no_tariff=True,
+            energy_prices=lambda mdl: {
+                "electrical": _add_price_param(mdl, foreign=True, values=[0.1] * 25)
+            },
+        )
+
+
+@pytest.mark.unit
+def test_energy_prices_mapping_value_rejected():
+    """A mapping price is rejected: iterating it would silently cost its keys.
+
+    Pyomo wraps a ConfigValue domain's exception in ValueError (as for the other
+    declared domains), so the FlexConfigError message is asserted through it.
+    """
+    m = _time_model()
+    with pytest.raises(ValueError, match="mapping"):
+        m.costing = FlexCosting(
+            time_block=m.time_block,
+            energy_prices={"electrical": dict(enumerate(_HALVES))},
+        )
+
+
+@pytest.mark.unit
+def test_time_varying_price_report_cost_is_native():
+    """report_cost recomputes a per-period-priced carrier without EECO."""
+    m = _pump_tank_costing(no_tariff=True, energy_prices={"electrical": _HALVES})
+    _set_power(m, {t: 100.0 for t in range(24)})
+    _propagate(m.costing)
+
+    report = m.costing.report_cost(m)
+    assert report.operating.electricity == pytest.approx(_HALVES_COST)
+    assert report.operating.fuel == 0.0
+
+
+@pytest.mark.unit
+def test_time_varying_price_wrong_dimension_raises():
+    """A per-period price whose units do not reconcile with the carrier raises."""
+    prices = np.array(_HALVES) * _USD / pyunits.m**3  # not a $/energy
+    m = _pump_tank_costing(
+        no_tariff=True,
+        energy_prices={"electrical": prices},
+        run_cost_process=False,
+    )
+    with pytest.raises((FlexConfigError, InconsistentUnitsError)):
+        m.costing.cost_process()
+
+
+@pytest.mark.unit
+def test_time_varying_price_opex_constraints_are_unit_consistent():
+    """Every opex constraint stays unit-consistent under per-period prices."""
+    m = _pump_tank_costing(
+        no_tariff=True,
+        energy_prices={"electrical": _HALVES, "gas": [0.2] * 24},
+        run_cost_process=False,
+    )
+    _add_fuel_usage(m, "gas", {t: 10.0 for t in range(24)})
+    m.costing.cost_process()
+
+    inconsistent = []
+    for con in m.costing.opex.component_data_objects(
+        pyo.Constraint, active=True, descend_into=True
+    ):
+        try:
+            assert_units_consistent(con)
+        except UnitsError:
+            inconsistent.append(con.name)
+    assert inconsistent == []
 
 
 # --------------------------------------------------------------------------- #

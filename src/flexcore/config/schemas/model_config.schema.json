@@ -63,7 +63,7 @@
             }
           ],
           "default": null,
-          "description": "Optional flat prices keyed by carrier or fuel name ('electrical', or a fuel such as 'natural_gas'). A carrier priced here is billed at that flat price instead of through the tariff, so a run with every carrier priced needs no tariff at all.",
+          "description": "Optional native prices keyed by carrier or fuel name ('electrical', or a fuel such as 'natural_gas'). A carrier priced here is billed at that price instead of through the tariff, so a run with every carrier priced needs no tariff at all. Each price is flat over the horizon or given per time point.",
           "title": "Energy Prices"
         },
         "fixed_operating_cost": {
@@ -314,7 +314,7 @@
     },
     "PriceSpec": {
       "additionalProperties": false,
-      "description": "A flat price for one energy carrier or fuel: a number and its units.",
+      "description": "A native price for one energy carrier or fuel: a number and its units.",
       "properties": {
         "units": {
           "description": "Units of the price as a string, e.g. 'USD/kWh' for electricity or 'USD/m^3' for a fuel.",
@@ -322,9 +322,19 @@
           "type": "string"
         },
         "value": {
-          "description": "The numeric price, in the units below.",
-          "title": "Value",
-          "type": "number"
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            }
+          ],
+          "description": "The numeric price, in the units below. One number is a flat price over the whole horizon; a list is one price per time point and must have exactly as many entries as the horizon has time points, which is checked when the model is built.",
+          "title": "Value"
         }
       },
       "required": [
