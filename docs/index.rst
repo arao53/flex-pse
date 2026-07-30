@@ -13,6 +13,7 @@ design and operations optimization.
    explanation/relaxation_policies
    explanation/config_schema
    explanation/energy_nomenclature
+   explanation/pass_through_and_bypass
 
 .. toctree::
    :maxdepth: 2
