@@ -12,7 +12,6 @@ from flexops.unit_models import (
     BatteryModel,
     ConstantEnergyIntensityModel,
     DIDOBlock,
-    ElectrolysisSeparator,
     Exchanger,
     Pump,
     ReverseOsmosisSkid,
@@ -21,14 +20,11 @@ from flexops.unit_models import (
     SISOBlock,
     Tank,
 )
-from flexops.unit_models.electrolysis import ElectrolysisDetail, ThermalModel
 
 __all__ = [
     "BatteryModel",
     "ConstantEnergyIntensityModel",
     "DIDOBlock",
-    "ElectrolysisDetail",
-    "ElectrolysisSeparator",
     "Exchanger",
     "FlexCosting",
     "NetworkBlock",
@@ -42,7 +38,6 @@ __all__ = [
     "SimpleAqueousFlow",
     "SimpleGasFlow",
     "Tank",
-    "ThermalModel",
     "TimeBlock",
     "build_model",
 ]

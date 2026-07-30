@@ -72,15 +72,14 @@ class DIDOBlockData(OpsBlockData):
             state = self.find_component(f"{port}_state")
             self.add_component(flow, pyo.Reference(state.flow_vol_phase[:, "Liq"]))
 
-        self.transfer_fraction = pyo.Var(
-            initialize=self.config.transfer_fraction,
-            bounds=(0.0, 1.0),
-            units=pyunits.dimensionless,
-            doc="Fraction of stream a's inlet flow crossing into stream b. "
+        self.declare_process_parameter(
+            "transfer_fraction",
+            self.config.transfer_fraction,
+            pyunits.dimensionless,
+            "Fraction of stream a's inlet flow crossing into stream b. "
             "Fixed at the configured value; FlexParameterize may regress it.",
+            bounds=(0.0, 1.0),
         )
-        self.transfer_fraction.fix(self.config.transfer_fraction)
-        self.register_process_parameter(self.transfer_fraction, regressable=True)
 
         @self.Constraint(
             tb.time_index,

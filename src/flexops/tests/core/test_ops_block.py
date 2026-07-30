@@ -282,6 +282,68 @@ def test_register_process_parameter_not_regressable(dummy_model):
 
 
 @pytest.mark.unit
+def test_declare_process_parameter(dummy_model):
+    """declare_process_parameter builds a fixed scalar Var and registers it."""
+    unit = dummy_model.unit
+    var = unit.declare_process_parameter(
+        "efficiency",
+        0.75,
+        pyunits.dimensionless,
+        "Some efficiency.",
+        bounds=(0.0, 1.0),
+    )
+    assert var is unit.efficiency
+    assert var.fixed
+    assert var.value == pytest.approx(0.75)
+    assert var.bounds == (0.0, 1.0)
+    assert var.doc == "Some efficiency."
+    assert not var.is_indexed()
+    record = unit._io_registry.parameters[-1]
+    assert record.name == "efficiency"
+    assert record.regressable is True
+
+
+@pytest.mark.unit
+def test_declare_process_parameter_converts_units(dummy_model):
+    """A units-carrying value is converted into the Var's declared units."""
+    var = dummy_model.unit.declare_process_parameter(
+        "holdup", 1500 * pyunits.L, pyunits.m**3, "A holdup volume."
+    )
+    assert str(pyunits.get_units(var)) == "m**3"
+    assert var.value == pytest.approx(1.5)
+
+
+@pytest.mark.unit
+def test_declare_process_parameter_accepts_a_bare_number(dummy_model):
+    """A bare number is taken to be in the Var's declared units already."""
+    var = dummy_model.unit.declare_process_parameter(
+        "holdup", 1.5, pyunits.m**3, "A holdup volume."
+    )
+    assert var.value == pytest.approx(1.5)
+
+
+@pytest.mark.unit
+def test_declare_process_parameter_not_regressable(dummy_model):
+    """regressable=False is forwarded so FlexParameterize will not fit it."""
+    dummy_model.unit.declare_process_parameter(
+        "n_cells", 250.0, pyunits.dimensionless, "A count.", regressable=False
+    )
+    assert dummy_model.unit._io_registry.parameters[-1].regressable is False
+
+
+@pytest.mark.unit
+def test_declare_process_parameter_is_updatable_in_place(dummy_model):
+    """The declared Var is a registered parameter, so update_parameters reaches it."""
+    unit = dummy_model.unit
+    unit.declare_process_parameter(
+        "efficiency", 0.75, pyunits.dimensionless, "Some efficiency."
+    )
+    unit.update_parameters({"efficiency": 0.9})
+    assert unit.efficiency.value == pytest.approx(0.9)
+    assert unit.efficiency.fixed
+
+
+@pytest.mark.unit
 def test_register_power_rejects_string(dummy_model):
     """register_power requires a PowerKind; even a valid-value string raises."""
     unit = dummy_model.unit

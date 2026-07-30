@@ -411,6 +411,56 @@ class OpsBlockData(UnitModelBlockData):
         self.register_power(var, kind=kind, temperature=temperature)
         return var
 
+    def declare_process_parameter(
+        self,
+        name: str,
+        value,
+        units,
+        doc: str,
+        *,
+        bounds: tuple[float | None, float | None] | None = None,
+        regressable: bool = True,
+    ):
+        """Create, fix, register, and return a scalar process-parameter Var.
+
+        The parameter twin of :meth:`declare_power`, and the one way flex-pse
+        declares a design or fitted coefficient: a **scalar Var fixed at its
+        configured value** rather than a ``Param``, so a design mode or a
+        regression can unfix it in place without any component being replaced
+        (conventions §9). Because it is registered, the value is reachable
+        afterwards through :meth:`update_parameters`.
+
+        Args:
+            name: The component name to attach the Var under.
+            value: The initial value, either a units-carrying Pyomo expression
+                (converted into ``units``) or a bare number, taken to be in
+                ``units`` already.
+            units: The Var's Pyomo units.
+            doc: The Var's ``doc=`` string; required, since the generated docs
+                render it.
+            bounds: Optional ``(lower, upper)`` bounds, in ``units``. Give them
+                whenever unfixing the parameter would otherwise admit a
+                physically meaningless value (an efficiency above one, say);
+                ``None`` leaves it unbounded.
+            regressable: Whether FlexParameterize may fit this parameter.
+
+        Returns:
+            The created, fixed scalar ``Var``.
+        """
+        magnitude = (
+            float(value)
+            if isinstance(value, numbers.Real) and not isinstance(value, bool)
+            else float(pyo.value(pyunits.convert(value, units)))
+        )
+        self.add_component(
+            name,
+            pyo.Var(initialize=magnitude, bounds=bounds, units=units, doc=doc),
+        )
+        var = self.find_component(name)
+        var.fix(magnitude)
+        self.register_process_parameter(var, regressable=regressable)
+        return var
+
     def register_fuel_usage(self, var, fuel_name: str) -> None:
         """Register a fuel-usage variable — a volumetric flow — for costing.
 
@@ -661,19 +711,12 @@ class OpsBlockData(UnitModelBlockData):
         power = self.declare_power(kind, temperature=temperature)
         self.register_io_variable(power, role="output")
 
-        name = _INTENSITY_VARS[kind]
-        intensity_units = pyunits.kWh / pyunits.m**3
-        self.add_component(
-            name,
-            pyo.Var(
-                initialize=pyo.value(pyunits.convert(intensity, intensity_units)),
-                units=intensity_units,
-                doc=f"{kind.value.capitalize()} energy per unit volume processed.",
-            ),
+        intensity_var = self.declare_process_parameter(
+            _INTENSITY_VARS[kind],
+            intensity,
+            pyunits.kWh / pyunits.m**3,
+            f"{kind.value.capitalize()} energy per unit volume processed.",
         )
-        intensity_var = self.find_component(name)
-        intensity_var.fix()
-        self.register_process_parameter(intensity_var, regressable=True)
 
         relation = f"{_POWER_VARS[kind][0]}_relation"
         self.add_component(
@@ -682,7 +725,8 @@ class OpsBlockData(UnitModelBlockData):
                 tb.time_index,
                 rule=lambda b, t: power[t]
                 == pyunits.convert(intensity_var * flow[t], pyunits.kW),
-                doc=f"{relation}: power == {name} * flow. kWh/m^3 * m^3/hr = kW "
+                doc=f"{relation}: power == {_INTENSITY_VARS[kind]} * flow. "
+                "kWh/m^3 * m^3/hr = kW "
                 "exactly, no fudge factor. FlexParameterize swaps this "
                 "Constraint in place when it fits a richer relationship.",
             ),

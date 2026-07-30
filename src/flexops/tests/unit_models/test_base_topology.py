@@ -30,6 +30,25 @@ def test_sido_mass_balance_bodies():
 
 
 @pytest.mark.unit
+def test_sido_split_fraction_is_a_fixed_physical_fraction():
+    """The generic topology bounds the split only to a physical fraction."""
+    m = dummy_time_block(3)
+    m.unit = SIDOBlock(property_package=m.properties, split_fraction=0.4)
+
+    assert m.unit.split_fraction.bounds == (0.0, 1.0)
+    assert m.unit.split_fraction.fixed
+    assert pyo.value(m.unit.split_fraction) == pytest.approx(0.4)
+
+
+@pytest.mark.unit
+def test_sido_takes_no_split_window_options():
+    """A narrower window is a physical subclass's business, not the base's."""
+    m = dummy_time_block(3)
+    with pytest.raises(ValueError, match="split_fraction_min"):
+        m.unit = SIDOBlock(property_package=m.properties, split_fraction_min=0.3)
+
+
+@pytest.mark.unit
 def test_dido_mass_balance_bodies():
     """2 inlet / 2 outlet ports; both coupled per-stream balances check by hand."""
     m = dummy_time_block(3)

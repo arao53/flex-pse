@@ -30,7 +30,10 @@ class SIDOBlockData(OpsBlockData):
     """One inlet, two outlet ports with a split mass balance (module docstring).
 
     Config:
-        Inherits the OpsBlock config; adds ``split_fraction`` (default 0.5).
+        Inherits the OpsBlock config; adds ``split_fraction`` (default 0.5),
+        bounded here only to a physical fraction. A physical subclass may
+        rename the option and narrow that window (see
+        ``_split_parameter_name`` and :meth:`_split_parameter_bounds`).
 
     Example:
         >>> from flexops.testing import dummy_time_block
@@ -52,35 +55,54 @@ class SIDOBlockData(OpsBlockData):
         ),
     )
 
+    #: Name of both the config option and the Var carrying the split
+    #: parameter. A physical subclass renames the split into its own
+    #: vocabulary — a reverse-osmosis skid calls the same number its
+    #: ``recovery`` — by re-declaring the config option under the new name and
+    #: overriding this attribute to match.
+    _split_parameter_name = "split_fraction"
+
     def build(self) -> None:
         """Build the inlet/two-outlet ports and the split mass balance."""
         super().build()
         self.add_stream_ports(outlet_ports=("outlet_a", "outlet_b"))
         self._build_mass_balance()
 
+    def _split_parameter_bounds(self) -> tuple[float | None, float | None]:
+        """Return the bounds for the split-parameter Var.
+
+        The generic topology admits any physical fraction. A subclass that
+        exposes a configurable window overrides this to narrow it, and is the
+        right place to reject an unusable window before the Var is built.
+
+        Returns:
+            The ``(lower, upper)`` bounds of the split parameter.
+        """
+        return (0.0, 1.0)
+
     def _build_mass_balance(self) -> None:
-        """Build ``split_fraction``, the split definition, and conservation."""
+        """Build the split parameter, the split definition, and conservation."""
         tb = self._find_time_block()
         self.flow_in = pyo.Reference(self.inlet_state.flow_vol_phase[:, "Liq"])
         self.flow_out_a = pyo.Reference(self.outlet_a_state.flow_vol_phase[:, "Liq"])
         self.flow_out_b = pyo.Reference(self.outlet_b_state.flow_vol_phase[:, "Liq"])
 
-        self.split_fraction = pyo.Var(
-            initialize=self.config.split_fraction,
-            bounds=(0.0, 1.0),
-            units=pyunits.dimensionless,
-            doc="Fraction of the inlet flow leaving through outlet_a. Fixed at "
-            "the configured value; FlexParameterize may regress it.",
+        name = self._split_parameter_name
+        split = self.declare_process_parameter(
+            name,
+            self.config[name],
+            pyunits.dimensionless,
+            f"Fraction of the inlet flow leaving through outlet_a ({name}). "
+            "Fixed at the configured value; FlexParameterize may regress it.",
+            bounds=self._split_parameter_bounds(),
         )
-        self.split_fraction.fix(self.config.split_fraction)
-        self.register_process_parameter(self.split_fraction, regressable=True)
 
         @self.Constraint(
             tb.time_index,
-            doc="Split definition: outlet_a flow == split_fraction * inlet flow.",
+            doc=f"Split definition: outlet_a flow == {name} * inlet flow.",
         )
         def split_definition(b, t):
-            return b.flow_out_a[t] == b.split_fraction * b.flow_in[t]
+            return b.flow_out_a[t] == split * b.flow_in[t]
 
         @self.Constraint(
             tb.time_index,
