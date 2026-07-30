@@ -2,7 +2,14 @@
 
 from flexcore.nomenclature import PowerKind
 from flexops.core.time_block import TimeBlock
+from flexops.costing import FlexCosting
 from flexops.properties.simple_aqueous import SimpleAqueousFlow
 from flexops.properties.simple_gas import SimpleGasFlow
 
-__all__ = ["PowerKind", "SimpleAqueousFlow", "SimpleGasFlow", "TimeBlock"]
+__all__ = [
+    "FlexCosting",
+    "PowerKind",
+    "SimpleAqueousFlow",
+    "SimpleGasFlow",
+    "TimeBlock",
+]
