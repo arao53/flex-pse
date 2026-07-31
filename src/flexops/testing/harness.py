@@ -22,8 +22,27 @@ from pyomo.util.check_units import assert_units_consistent
 from flexcore import nomenclature as nm
 from flexops.core.time_block import TimeBlock
 from flexops.properties.simple_aqueous import SimpleAqueousFlow
+from flexops.properties.simple_gas import SimpleGasFlow
 
 _FORBIDDEN_POWER_NAMES = ("power", "energy", "work")
+
+
+def _dummy_time_block(n: int) -> pyo.ConcreteModel:
+    """Build a bare model carrying only an ``n``-point TimeBlock.
+
+    Args:
+        n: Number of 15-minute time points to span.
+
+    Returns:
+        A ``pyo.ConcreteModel`` with ``m.time_block`` and no property package.
+    """
+    m = pyo.ConcreteModel()
+    m.time_block = TimeBlock(
+        start_date="2025-01-01",
+        end_date=f"2025-01-01T{(n * 15) // 60:02d}:{(n * 15) % 60:02d}",
+        time_step=15 * pyunits.min,
+    )
+    return m
 
 
 def dummy_time_block(n: int = 3) -> pyo.ConcreteModel:
@@ -40,13 +59,31 @@ def dummy_time_block(n: int = 3) -> pyo.ConcreteModel:
         15-minute-resolution ``TimeBlock`` starting 2025-01-01) and
         ``m.properties`` (a ``SimpleAqueousFlow(fixed_density=True)``).
     """
-    m = pyo.ConcreteModel()
-    m.time_block = TimeBlock(
-        start_date="2025-01-01",
-        end_date=f"2025-01-01T{(n * 15) // 60:02d}:{(n * 15) % 60:02d}",
-        time_step=15 * pyunits.min,
-    )
+    m = _dummy_time_block(n)
     m.properties = SimpleAqueousFlow(fixed_density=True)
+    return m
+
+
+def dummy_gas_time_block(n: int = 3) -> pyo.ConcreteModel:
+    """Build a throwaway model with an ``n``-point TimeBlock + gas properties.
+
+    The gas twin of :func:`dummy_time_block`, for unit models built on
+    :class:`~flexops.properties.simple_gas.SimpleGasFlow`. Its state blocks
+    always carry four state variables (flow, density, pressure, temperature),
+    where the aqueous package's default carries one, so a gas unit's
+    degree-of-freedom accounting differs and needs this fixture rather than
+    the aqueous one.
+
+    Args:
+        n: Number of 15-minute time points to span.
+
+    Returns:
+        A ``pyo.ConcreteModel`` with ``m.time_block`` (an ``n``-point,
+        15-minute-resolution ``TimeBlock`` starting 2025-01-01) and
+        ``m.properties`` (a ``SimpleGasFlow()``).
+    """
+    m = _dummy_time_block(n)
+    m.properties = SimpleGasFlow()
     return m
 
 

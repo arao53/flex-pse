@@ -10,6 +10,7 @@ from flexops.properties.simple_aqueous import SimpleAqueousFlow
 from flexops.properties.simple_gas import SimpleGasFlow
 from flexops.unit_models import (
     BatteryModel,
+    Combustor,
     ConstantEnergyIntensityModel,
     DIDOBlock,
     Exchanger,
@@ -19,9 +20,12 @@ from flexops.unit_models import (
     SISOBlock,
     Tank,
 )
+from flexops.unit_models.combustor import CombustorPowerRelation
 
 __all__ = [
     "BatteryModel",
+    "Combustor",
+    "CombustorPowerRelation",
     "ConstantEnergyIntensityModel",
     "DIDOBlock",
     "Exchanger",

@@ -29,6 +29,10 @@ whether every port shares one ``property_package``.
   named property-package config slot per stream family and hand-write the
   ports and balance across them, rather than half-fitting a topology base
   built around a single shared package.
+- If the unit's **port count is itself a config option** (e.g. an arbitrary
+  number of gas inlets), no fixed-arity topology base fits either — subclass
+  :class:`~flexops.core.ops_block.OpsBlockData` directly and hand-write the
+  ports and balance, as :class:`~flexops.unit_models.combustor.Combustor` does.
 
 Topology bases
 --------------
@@ -107,6 +111,21 @@ Physical units
    :nosignatures:
 
    ReverseOsmosis
+
+.. currentmodule:: flexops.unit_models.combustor
+
+An arbitrary number of gas inlets mixed into one flue-gas outlet, exporting
+electrical power (``power_electrical`` upper-bounded at 0, the
+battery-discharge sign convention) under a heating-value or a
+constant-intensity relation, resolved automatically from whether every inlet
+was given a heating value.
+
+.. autosummary::
+   :toctree: generated
+   :template: unit_model.rst
+   :nosignatures:
+
+   Combustor
 
 Generic surrogate
 -----------------

@@ -310,7 +310,7 @@ physical subclasses add the flow↔energy relationship and any bounds.
 | `ElectrolysisSeparator` | `SIDOBlock` | electrolysis modeled as a separation; exercises `power_thermal` |
 | `ElectrolysisExchanger` | `Exchanger` | electrolysis with two coupled streams |
 | `ReverseOsmosis` | `SIDOBlock` | RO skid: feed → permeate + brine, split renamed to `recovery` |
-| `Combustor` | `SIDOBlock` | combustion as a separation of products |
+| `Combustor` | `OpsBlockData` (no fixed-arity base fits an arbitrary inlet count) | N gas inlets mixed into one flue-gas outlet; exports `power_electrical` (negative, upper-bounded at 0) under a heating-value or constant-intensity relation, resolved from whether every inlet has a heating value |
 | `BatteryModel` | `OpsBlockData` (no fluid ports) | SOC dynamics, charge/discharge power + efficiency, capacity as fixable design var; optional mutually-exclusive charge/discharge binary; first-class `external_dispatch` (DERMS, §3.6) |
 | `ConstantEnergyIntensityModel` | `SISOBlock` | generic "energy factor × flow" unit — the default building block for anything without a bespoke physical topology (e.g. a whole plant modeled as a single surrogate, as in the api-freeze script's `svcw.plant`) |
 
@@ -353,6 +353,13 @@ half-fits the topology contract and produces a mass balance that silently
 ignores the second stream's properties. Multi-package is an `OpsBlockData`
 decision made once, at the top of the class, not a topology base extended
 after the fact.
+
+- **The unit's port count is itself a config option** (e.g. `Combustor`'s
+  arbitrary number of gas inlets). No fixed-arity topology base fits — each of
+  `SISOBlock`/`SIDOBlock`/`DIDOBlock` has a fixed port count baked into its
+  `build()`. Subclass `OpsBlockData` directly and hand-write the ports (one
+  inlet per configured role name) and the mixing mass balance, the same way a
+  genuinely multi-package unit does.
 
 ### 3.5 logic layer (`flexops/logic/`) — customizable unit commitment
 

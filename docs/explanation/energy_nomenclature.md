@@ -28,6 +28,11 @@ Rules (`plan/00_conventions.md` §2, `plan/01_architecture.md` §4):
   positive, discharging is negative** (an export). This matches the general
   draw convention above -- charging is a draw, discharging offsets it -- and
   keeps plant aggregation a plain sum with no per-unit sign-flipping.
+- A unit that *generates* rather than stores follows the same export
+  convention: {class}`~flexops.unit_models.combustor.Combustor` signs
+  `POWER_ELECTRICAL` **negative** (upper-bounded at 0), so a combustor's
+  output nets against plant load exactly as a discharging battery does, with
+  no per-unit sign-flipping at the plant level either.
 
 ## Fuel is a volume, not a power
 

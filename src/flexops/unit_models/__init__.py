@@ -7,6 +7,7 @@ vocabularies live on their own modules and on the top-level ``flexops``.
 
 from flexops.unit_models.base import DIDOBlock, SIDOBlock, SISOBlock
 from flexops.unit_models.battery import BatteryModel
+from flexops.unit_models.combustor import Combustor
 from flexops.unit_models.constant_intensity import ConstantEnergyIntensityModel
 from flexops.unit_models.exchanger import Exchanger
 from flexops.unit_models.pump import Pump
@@ -15,6 +16,7 @@ from flexops.unit_models.storage_tank import Tank
 
 __all__ = [
     "BatteryModel",
+    "Combustor",
     "ConstantEnergyIntensityModel",
     "DIDOBlock",
     "Exchanger",

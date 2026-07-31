@@ -16,6 +16,8 @@ build/units-consistency/registration/DoF/solve checks.
 
 .. autofunction:: dummy_time_block
 
+.. autofunction:: dummy_gas_time_block
+
 Testing your own unit model
 ----------------------------
 
