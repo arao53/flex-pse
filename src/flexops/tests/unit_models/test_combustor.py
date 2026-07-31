@@ -11,7 +11,7 @@ from flexcore.exceptions import FlexConfigError
 from flexops.properties.simple_gas import SimpleGasFlowData
 from flexops.testing import UnitModelTestHarness, dummy_gas_time_block
 from flexops.unit_models import Combustor
-from flexops.unit_models.combustor import CombustorPowerRelation
+from flexops.unit_models.powergeneration.combustor import CombustorPowerRelation
 
 _DIGESTER_HV = 6.0 * pyunits.kWh / pyunits.m**3
 _NATURAL_GAS_HV = 10.5 * pyunits.kWh / pyunits.m**3

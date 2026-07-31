@@ -32,7 +32,7 @@ whether every port shares one ``property_package``.
 - If the unit's **port count is itself a config option** (e.g. an arbitrary
   number of gas inlets), no fixed-arity topology base fits either — subclass
   :class:`~flexops.core.ops_block.OpsBlockData` directly and hand-write the
-  ports and balance, as :class:`~flexops.unit_models.combustor.Combustor` does.
+  ports and balance, as :class:`~flexops.unit_models.powergeneration.combustor.Combustor` does.
 
 Topology bases
 --------------
@@ -76,7 +76,7 @@ Physical units
 
    Pump
 
-.. currentmodule:: flexops.unit_models.storage_tank
+.. currentmodule:: flexops.unit_models.storage.storage_tank
 
 .. autosummary::
    :toctree: generated
@@ -85,7 +85,7 @@ Physical units
 
    Tank
 
-.. currentmodule:: flexops.unit_models.battery
+.. currentmodule:: flexops.unit_models.storage.battery
 
 .. autosummary::
    :toctree: generated
@@ -112,7 +112,7 @@ Physical units
 
    ReverseOsmosis
 
-.. currentmodule:: flexops.unit_models.combustor
+.. currentmodule:: flexops.unit_models.powergeneration.combustor
 
 An arbitrary number of gas inlets mixed into one flue-gas outlet, exporting
 electrical power (``power_electrical`` upper-bounded at 0, the

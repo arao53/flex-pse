@@ -81,7 +81,7 @@ ships two, both structurally modeled on WaterTAP's zero-order package:
   single `Vap` phase and time, plus `dens_mass`/`pressure`/`temperature`) because
   gas density varies with pressure and temperature (no equation of state is
   imposed; a unit adds any relation it needs as its own constraint). Its first
-  consumer is {py:class}`~flexops.unit_models.combustor.Combustor`, so the
+  consumer is {py:class}`~flexops.unit_models.powergeneration.combustor.Combustor`, so the
   extensive/intensive table below is live rather than hypothetical.
 
 Ports built from state blocks carry a stream between units via standard

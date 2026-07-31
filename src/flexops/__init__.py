@@ -20,7 +20,7 @@ from flexops.unit_models import (
     SISOBlock,
     Tank,
 )
-from flexops.unit_models.combustor import CombustorPowerRelation
+from flexops.unit_models.powergeneration.combustor import CombustorPowerRelation
 
 __all__ = [
     "BatteryModel",

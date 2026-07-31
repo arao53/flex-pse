@@ -8,7 +8,7 @@ mixed into one flue-gas outlet, so no fixed-arity topology base fits (its port
 count is a config option, §3.4's "choosing a base class" question). It
 subclasses :class:`~flexops.core.ops_block.OpsBlockData` directly instead,
 hand-writing its ports and balances, the way
-:class:`~flexops.unit_models.battery.BatteryModel` does.
+:class:`~flexops.unit_models.storage.battery.BatteryModel` does.
 
 Two flow-to-power relations, selected automatically (never configured
 directly) from whether every inlet was given a heating value:
@@ -51,7 +51,7 @@ constant intensity, ``energy_intensity`` under heating value) is rejected too.
    ``efficiency * heating_value_i`` and ``dens_mass * flue_gas_temperature``
    are products of fixed scalar Vars: linear while both factors stay fixed,
    **NLP** once a design mode or regression unfixes one -- the same caveat
-   :class:`~flexops.unit_models.storage_tank.Tank` documents for
+   :class:`~flexops.unit_models.storage.storage_tank.Tank` documents for
    ``capacity * level``.
 """
 
