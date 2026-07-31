@@ -59,4 +59,5 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **`import flexops.testing` no longer fails on a standard install.** `flexops.testing` imports `pytest` at module level (`UnitModelTestHarness` uses `pytest.mark`/`pytest.skip`/`pytest.approx`), but `pytest` was listed only in the `dev` extra, so `pip install flex-pse` followed by `import flexops.testing` raised `ModuleNotFoundError: No module named 'pytest'`. New `testing` optional dependency: users subclassing the harness in their own test suites install `pip install "flex-pse[testing]"` (contributors already get it from `dev`). Installing without it still works — `flexops.testing` is the only module that needs it. The CI `standard-install` job's bare-install smoke-import list drops `flexops.testing` accordingly and gains a second step that installs `flex-pse[testing]` and imports it, so both paths are covered.
 - `OpsBlock` now coerces an explicit `unit_commitment=None` to an all-defaults `UnitCommitmentConfig` in `build()` (Pyomo skips `ConfigValue` domains for `None`, so the domain-level coercion never ran).
