@@ -1,31 +1,15 @@
-"""Separator and its derived units: harness subclasses (§3.4, R6)."""
+"""ReverseOsmosisSkid: feed -> permeate + brine (§3.4, R6)."""
 
 import pyomo.environ as pyo
 import pytest
-from pyomo.environ import units as pyunits
 
 from flexcore.exceptions import FlexConfigError
 from flexops.testing import UnitModelTestHarness, dummy_time_block
-from flexops.unit_models import ReverseOsmosisSkid, Separator
-
-
-class TestSeparator(UnitModelTestHarness):
-    """One feed split into two product streams, with an electrical draw."""
-
-    expected_dof = 0
-
-    def configure(self):
-        m = dummy_time_block(3)
-        m.unit = Separator(
-            property_package=m.properties,
-            split_fraction=0.6,
-            energy_intensity=0.4 * pyunits.kWh / pyunits.m**3,
-        )
-        return m, m.unit
+from flexops.unit_models import ReverseOsmosisSkid
 
 
 class TestReverseOsmosisSkid(UnitModelTestHarness):
-    """RO skid: feed -> permeate (outlet_a) + concentrate (outlet_b)."""
+    """RO skid: feed -> permeate (outlet_a) + brine (outlet_b)."""
 
     expected_dof = 0
 
@@ -36,24 +20,14 @@ class TestReverseOsmosisSkid(UnitModelTestHarness):
 
 
 @pytest.mark.unit
-def test_no_electrolyzer_class():
-    """There is no ``Electrolyzer``: it is ``Separator`` (R6)."""
-    import flexops
-    import flexops.unit_models
-
-    assert not hasattr(flexops, "Electrolyzer")
-    assert not hasattr(flexops.unit_models, "Electrolyzer")
-
-
-@pytest.mark.unit
 def test_ro_skid_outlet_semantics():
-    """The skid's ``recovery`` is its permeate (outlet_a) fraction of the feed."""
+    """The skid's ``recovery`` is its permeate fraction of the feed."""
     m = dummy_time_block(3)
     m.unit = ReverseOsmosisSkid(property_package=m.properties, recovery=0.45)
     for t in m.time_block.time_index:
-        m.unit.flow_in[t].fix(4.0)
-        m.unit.flow_out_a[t].fix(1.8)
-        m.unit.flow_out_b[t].fix(2.2)
+        m.unit.feed[t].fix(4.0)
+        m.unit.permeate[t].fix(1.8)
+        m.unit.brine[t].fix(2.2)
         assert pyo.value(m.unit.split_definition[t].body) == pytest.approx(
             1.8 - 0.45 * 4.0, abs=1e-9
         )
@@ -74,6 +48,23 @@ def test_ro_skid_renames_the_split_fraction_to_recovery():
         m.rejected = ReverseOsmosisSkid(
             property_package=m.properties, split_fraction=0.45
         )
+
+
+@pytest.mark.unit
+def test_ro_skid_renames_the_flows_to_feed_permeate_brine():
+    """``feed``/``permeate``/``brine`` replace ``flow_in``/``flow_out_a``/``_b``."""
+    m = dummy_time_block(3)
+    m.unit = ReverseOsmosisSkid(property_package=m.properties)
+
+    assert m.unit.find_component("flow_in") is None
+    assert m.unit.find_component("flow_out_a") is None
+    assert m.unit.find_component("flow_out_b") is None
+    for name in ("feed", "permeate", "brine"):
+        assert m.unit.find_component(name) is not None
+
+    # Ports are unaffected by the flow rename.
+    for port in ("inlet", "outlet_a", "outlet_b"):
+        assert m.unit.find_component(port) is not None
 
 
 @pytest.mark.unit

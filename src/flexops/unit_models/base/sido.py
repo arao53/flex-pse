@@ -2,9 +2,8 @@
 
 The second IO-topology base class: owns port construction (via the inherited
 :meth:`~flexops.core.ops_block.OpsBlockData.add_stream_ports`) and the split
-mass balance, so physical subclasses
-(:class:`~flexops.unit_models.separator.Separator` and the units derived from
-it) only add the flow-to-energy relationship. Registers no power itself.
+mass balance, so a physical subclass only adds the flow-to-energy
+relationship. Registers no power itself.
 
 **The mass balance is two constraints.** Conservation
 ``flow_in[t] == flow_out_a[t] + flow_out_b[t]`` alone leaves the split
@@ -32,8 +31,8 @@ class SIDOBlockData(OpsBlockData):
     Config:
         Inherits the OpsBlock config; adds ``split_fraction`` (default 0.5),
         bounded here only to a physical fraction. A physical subclass may
-        rename the option and narrow that window (see
-        ``_split_parameter_name`` and :meth:`_split_parameter_bounds`).
+        rename the option and narrow that window (see ``_component_names``
+        and :meth:`_split_parameter_bounds`).
 
     Example:
         >>> from flexops.testing import dummy_time_block
@@ -55,12 +54,16 @@ class SIDOBlockData(OpsBlockData):
         ),
     )
 
-    #: Name of both the config option and the Var carrying the split
-    #: parameter. A physical subclass renames the split into its own
-    #: vocabulary — a reverse-osmosis skid calls the same number its
-    #: ``recovery`` — by re-declaring the config option under the new name and
-    #: overriding this attribute to match.
-    _split_parameter_name = "split_fraction"
+    #: Role -> Pyomo/config component name. A physical subclass renames any
+    #: subset of these into its own vocabulary (e.g. a membrane skid exposing
+    #: ``split_fraction`` as ``recovery``) by overriding this dict; ports
+    #: (``inlet``/``outlet_a``/``outlet_b``) are never renamed.
+    _component_names = {
+        "flow_in": "flow_in",
+        "flow_out_a": "flow_out_a",
+        "flow_out_b": "flow_out_b",
+        "split_fraction": "split_fraction",
+    }
 
     def build(self) -> None:
         """Build the inlet/two-outlet ports and the split mass balance."""
@@ -83,11 +86,23 @@ class SIDOBlockData(OpsBlockData):
     def _build_mass_balance(self) -> None:
         """Build the split parameter, the split definition, and conservation."""
         tb = self._find_time_block()
-        self.flow_in = pyo.Reference(self.inlet_state.flow_vol_phase[:, "Liq"])
-        self.flow_out_a = pyo.Reference(self.outlet_a_state.flow_vol_phase[:, "Liq"])
-        self.flow_out_b = pyo.Reference(self.outlet_b_state.flow_vol_phase[:, "Liq"])
+        self.add_component(
+            self._named("flow_in"),
+            pyo.Reference(self.inlet_state.flow_vol_phase[:, "Liq"]),
+        )
+        self.add_component(
+            self._named("flow_out_a"),
+            pyo.Reference(self.outlet_a_state.flow_vol_phase[:, "Liq"]),
+        )
+        self.add_component(
+            self._named("flow_out_b"),
+            pyo.Reference(self.outlet_b_state.flow_vol_phase[:, "Liq"]),
+        )
+        flow_in = getattr(self, self._named("flow_in"))
+        flow_out_a = getattr(self, self._named("flow_out_a"))
+        flow_out_b = getattr(self, self._named("flow_out_b"))
 
-        name = self._split_parameter_name
+        name = self._named("split_fraction")
         split = self.declare_process_parameter(
             name,
             self.config[name],
@@ -102,14 +117,14 @@ class SIDOBlockData(OpsBlockData):
             doc=f"Split definition: outlet_a flow == {name} * inlet flow.",
         )
         def split_definition(b, t):
-            return b.flow_out_a[t] == split * b.flow_in[t]
+            return flow_out_a[t] == split * flow_in[t]
 
         @self.Constraint(
             tb.time_index,
             doc="Conservation: inlet flow == outlet_a flow + outlet_b flow.",
         )
         def split_mass_balance(b, t):
-            return b.flow_in[t] == b.flow_out_a[t] + b.flow_out_b[t]
+            return flow_in[t] == flow_out_a[t] + flow_out_b[t]
 
         # Flow is governed above; everything else the streams carry passes
         # through to BOTH outlets (a distinct name_prefix per outlet, or the

@@ -209,6 +209,25 @@ class OpsBlockData(UnitModelBlockData):
         ),
     )
 
+    #: Role -> Pyomo component name. A topology base (SISO/SIDO/DIDO) declares
+    #: its own default vocabulary here (e.g. ``{"flow_in": "flow_in", ...}``);
+    #: a physical subclass renames any subset into its own vocabulary by
+    #: overriding the dict, e.g.
+    #: ``{**SIDOBlockData._component_names, "flow_in": "feed"}``.
+    _component_names: dict[str, str] = {}
+
+    def _named(self, role: str) -> str:
+        """Return the Pyomo component name a topology base assigned to `role`.
+
+        Args:
+            role: A logical role declared in ``_component_names`` (e.g.
+                ``"flow_in"``, ``"split_fraction"``).
+
+        Returns:
+            The Pyomo component name to build/look up for that role.
+        """
+        return self._component_names[role]
+
     def build(self) -> None:
         """Set up dynamics defaults and the empty IO registry (no constraints)."""
         super().build()

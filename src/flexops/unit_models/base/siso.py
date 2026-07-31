@@ -19,6 +19,7 @@ through. ``SISOBlock`` overrides the base ``allow_pass_through`` default to
 custom relationship instead.
 """
 
+import pyomo.environ as pyo
 from idaes.core import declare_process_block_class
 
 from flexops.core.ops_block import OpsBlockData
@@ -39,6 +40,8 @@ class SISOBlockData(OpsBlockData):
     CONFIG = OpsBlockData.CONFIG()
     CONFIG.get("allow_pass_through").set_default_value(True)
 
+    _component_names = {"flow_in": "flow_in", "flow_out": "flow_out"}
+
     def build(self) -> None:
         """Build the inlet/outlet ports and the per-stream mass balance."""
         super().build()
@@ -55,5 +58,18 @@ class SISOBlockData(OpsBlockData):
         holdup) override this instead of building a second, conflicting
         balance alongside the inherited ports (never re-declare the ports or
         the balance in a subclass).
+
+        Also builds ``flow_in``/``flow_out`` (or a subclass's renamed
+        equivalents) as named references into the inlet/outlet flow, purely
+        for named access -- the pass-through constraint below is what ties
+        them together.
         """
+        self.add_component(
+            self._named("flow_in"),
+            pyo.Reference(self.inlet_state.flow_vol_phase[:, "Liq"]),
+        )
+        self.add_component(
+            self._named("flow_out"),
+            pyo.Reference(self.outlet_state.flow_vol_phase[:, "Liq"]),
+        )
         self.add_pass_through_constraints(self.inlet, self.outlet, exclude_vars=())

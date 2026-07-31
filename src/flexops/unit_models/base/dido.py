@@ -52,6 +52,17 @@ class DIDOBlockData(OpsBlockData):
         ),
     )
 
+    #: Role -> Pyomo/config component name. A physical subclass renames any
+    #: subset of these into its own vocabulary by overriding this dict; ports
+    #: (``inlet_a``/``inlet_b``/``outlet_a``/``outlet_b``) are never renamed.
+    _component_names = {
+        "flow_in_a": "flow_in_a",
+        "flow_in_b": "flow_in_b",
+        "flow_out_a": "flow_out_a",
+        "flow_out_b": "flow_out_b",
+        "transfer_fraction": "transfer_fraction",
+    }
+
     def build(self) -> None:
         """Build the two-inlet/two-outlet ports and the coupled mass balances."""
         super().build()
@@ -63,17 +74,23 @@ class DIDOBlockData(OpsBlockData):
     def _build_mass_balance(self) -> None:
         """Build ``transfer_fraction`` and the two coupled per-stream balances."""
         tb = self._find_time_block()
-        for port, flow in (
+        for port, role in (
             ("inlet_a", "flow_in_a"),
             ("inlet_b", "flow_in_b"),
             ("outlet_a", "flow_out_a"),
             ("outlet_b", "flow_out_b"),
         ):
             state = self.find_component(f"{port}_state")
-            self.add_component(flow, pyo.Reference(state.flow_vol_phase[:, "Liq"]))
+            self.add_component(
+                self._named(role), pyo.Reference(state.flow_vol_phase[:, "Liq"])
+            )
+        flow_in_a = getattr(self, self._named("flow_in_a"))
+        flow_in_b = getattr(self, self._named("flow_in_b"))
+        flow_out_a = getattr(self, self._named("flow_out_a"))
+        flow_out_b = getattr(self, self._named("flow_out_b"))
 
-        self.declare_process_parameter(
-            "transfer_fraction",
+        transfer = self.declare_process_parameter(
+            self._named("transfer_fraction"),
             self.config.transfer_fraction,
             pyunits.dimensionless,
             "Fraction of stream a's inlet flow crossing into stream b. "
@@ -86,16 +103,14 @@ class DIDOBlockData(OpsBlockData):
             doc="Stream a balance: outlet_a == (1 - transfer_fraction) * inlet_a.",
         )
         def mass_balance_a(b, t):
-            return b.flow_out_a[t] == (1 - b.transfer_fraction) * b.flow_in_a[t]
+            return flow_out_a[t] == (1 - transfer) * flow_in_a[t]
 
         @self.Constraint(
             tb.time_index,
             doc="Stream b balance: outlet_b == inlet_b + transfer_fraction * inlet_a.",
         )
         def mass_balance_b(b, t):
-            return (
-                b.flow_out_b[t] == b.flow_in_b[t] + b.transfer_fraction * b.flow_in_a[t]
-            )
+            return flow_out_b[t] == flow_in_b[t] + transfer * flow_in_a[t]
 
         # Flow is governed above; each stream passes everything else through.
         flow_name = self.config.property_package.get_flow_basis_var_name()

@@ -1,28 +1,28 @@
-"""ReverseOsmosisSkid(Separator): feed -> permeate + concentrate (§3.4).
+r"""ReverseOsmosisSkid(SIDOBlock): feed -> permeate + brine (§3.4).
 
-A thin physical subclass of :class:`~flexops.unit_models.separator.SeparatorData`
-that only renames the split into RO vocabulary, bounds it, and re-defaults the
-energy intensity: no new Pyomo components, so the whole model is the separator's.
+A direct physical subclass of
+:class:`~flexops.unit_models.base.sido.SIDOBlockData` that renames the split
+into RO vocabulary (``recovery``, ``feed``, ``permeate``, ``brine``), bounds
+the recovery, and adds a constant electrical intensity.
 """
 
 from idaes.core import declare_process_block_class
 from pyomo.common.config import ConfigValue
 from pyomo.environ import units as pyunits
 
+from flexcore import nomenclature as nm
 from flexcore.exceptions import FlexConfigError
-from flexops.unit_models.separator import SeparatorData
+from flexops.unit_models.base.sido import SIDOBlockData
 
 
 @declare_process_block_class("ReverseOsmosisSkid")
-class ReverseOsmosisSkidData(SeparatorData):
-    r"""A reverse-osmosis skid: a separator read as recovery + brine.
+class ReverseOsmosisSkidData(SIDOBlockData):
+    r"""A reverse-osmosis skid: feed split into permeate and brine.
 
-    ``outlet_a`` is the **permeate** and ``outlet_b`` the **concentrate**
-    (brine), so the inherited split *is* the skid's water recovery and is
-    exposed under that name: both the config option and the Var are
-    ``recovery``, and ``split_fraction`` does not exist on this unit. The
-    inherited ``energy_intensity`` is its specific energy consumption per unit
-    of feed:
+    ``feed`` is the SIDO inlet, ``permeate`` the outlet_a stream, and
+    ``brine`` the outlet_b (concentrate) stream -- both the config option and
+    the Var carrying the split are named ``recovery`` (not ``split_fraction``,
+    which does not exist on this unit):
 
     .. math::
 
@@ -38,10 +38,10 @@ class ReverseOsmosisSkidData(SeparatorData):
     than producing a Var whose bounds contradict its value.
 
     Config:
-        Inherits the Separator config with ``split_fraction`` renamed to
-        ``recovery`` (default 0.45); adds ``recovery_min`` (0.3) and
-        ``recovery_max`` (0.6); re-defaults ``energy_intensity`` to
-        3.0 kWh/m^3 of feed.
+        Inherits the SIDO/OpsBlock config with ``split_fraction`` renamed to
+        ``recovery`` (default 0.45); adds ``recovery_min`` (0.3),
+        ``recovery_max`` (0.6), and ``energy_intensity`` (default
+        3.0 kWh/m^3 of feed).
 
     Example:
         >>> from flexops.testing import dummy_time_block
@@ -50,16 +50,16 @@ class ReverseOsmosisSkidData(SeparatorData):
         >>> m.ro = ReverseOsmosisSkid(property_package=m.properties)  # doctest: +SKIP
     """
 
-    CONFIG = SeparatorData.CONFIG()
+    CONFIG = SIDOBlockData.CONFIG()
     del CONFIG["split_fraction"]  # renamed to "recovery", declared just below
     CONFIG.declare(
         "recovery",
         ConfigValue(
             default=0.45,
             domain=float,
-            description="Water recovery: the permeate (outlet_a) fraction of "
-            "the feed (a fixed, regressable Var once built); the remainder "
-            "leaves as concentrate through outlet_b.",
+            description="Water recovery: the permeate fraction of the feed "
+            "(a fixed, regressable Var once built); the remainder leaves as "
+            "brine.",
         ),
     )
     CONFIG.declare(
@@ -80,9 +80,31 @@ class ReverseOsmosisSkidData(SeparatorData):
             "the membrane train can be operated or fitted at.",
         ),
     )
-    CONFIG.get("energy_intensity").set_default_value(3.0 * pyunits.kWh / pyunits.m**3)
+    CONFIG.declare(
+        "energy_intensity",
+        ConfigValue(
+            default=3.0 * pyunits.kWh / pyunits.m**3,
+            description="Electrical energy per unit volume of feed processed "
+            "(a fixed, regressable Var once built), kWh/m^3.",
+        ),
+    )
 
-    _split_parameter_name = "recovery"
+    _component_names = {
+        **SIDOBlockData._component_names,
+        "flow_in": "feed",
+        "flow_out_a": "permeate",
+        "flow_out_b": "brine",
+        "split_fraction": "recovery",
+    }
+
+    def build(self) -> None:
+        """Build the SIDO base, then the constant-intensity electrical relation."""
+        super().build()
+        self.add_constant_intensity_relation(
+            self.feed,
+            kind=nm.PowerKind.ELECTRICAL,
+            intensity=self.config.energy_intensity,
+        )
 
     def _split_parameter_bounds(self) -> tuple[float, float]:
         """Return the configured recovery window, rejecting an unusable one.

@@ -15,6 +15,21 @@ relationship by deactivating exactly that Constraint and attaching a fitted
 replacement, reusing the same registered IO variables — so there is no separate
 regression unit class (R11).
 
+**Picking a base when adding a new unit model** (architecture §3.4): ask
+whether every port shares one ``property_package``.
+
+- If so, subclass the topology base matching the port count
+  (``SISOBlock``/``SIDOBlock``/``DIDOBlock``). It already owns port
+  construction and the per-stream mass balance; the new class only renames the
+  topology's generic roles into its own nomenclature (``_component_names``)
+  and adds the flow-to-energy relationship in ``build()``.
+- If the unit needs more than one property package (e.g. a fuel stream and an
+  air stream on different flow bases), subclass
+  :class:`~flexops.core.ops_block.OpsBlockData` directly instead — declare one
+  named property-package config slot per stream family and hand-write the
+  ports and balance across them, rather than half-fitting a topology base
+  built around a single shared package.
+
 Topology bases
 --------------
 
@@ -74,15 +89,6 @@ Physical units
    :nosignatures:
 
    BatteryModel
-
-.. currentmodule:: flexops.unit_models.separator
-
-.. autosummary::
-   :toctree: generated
-   :template: unit_model.rst
-   :nosignatures:
-
-   Separator
 
 .. currentmodule:: flexops.unit_models.exchanger
 
