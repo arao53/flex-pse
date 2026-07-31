@@ -48,7 +48,10 @@ jobs:
       - run: pip install -e ".[dev,solvers]"
       - uses: ./.github/actions/setup-ipopt
       - run: pytest -m "unit or component" --cov --cov-report=xml
-
+      - uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          flags: fast-tests
   # TODO: uncomment this job once the repo is public. It installs from the
   # remote git ref (git+https://…), which only works unauthenticated on a public
   # repo; until then it would fail on every PR. When re-enabling, verify the

@@ -1,5 +1,8 @@
 # flex-pse
 
+[![CI](https://github.com/flex-pse/flex-pse/actions/workflows/ci.yml/badge.svg)](https://github.com/flex-pse/flex-pse/actions/workflows/ci.yml)
+[![codecov](https://codecov.io/gh/flex-pse/flex-pse/graph/badge.svg)](https://codecov.io/gh/flex-pse/flex-pse)
+
 An open-source Pyomo/IDAES platform for industrial energy-flexibility
 optimization — model a facility as a time-discretized optimization problem,
 parameterize it from plant data, and solve rolling-horizon scheduling problems
