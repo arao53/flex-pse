@@ -33,3 +33,12 @@ layer, since a tank has no unit-commitment status (R6).
    :nosignatures:
 
    Tank
+
+.. currentmodule:: flexops.unit_models.battery
+
+.. autosummary::
+   :toctree: generated
+   :template: unit_model.rst
+   :nosignatures:
+
+   BatteryModel
