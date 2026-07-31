@@ -4,6 +4,8 @@ Inherits its two inlet/two outlet ports, ``transfer_fraction``, and the coupled
 per-stream mass balances from
 :class:`~flexops.unit_models.base.dido.DIDOBlockData`; adds only the electrical
 draw (auxiliaries — pumps, fans, controls — scaling with the primary stream).
+This could eventually become a template for heat exchanger or flow-through
+electrolyzer.
 """
 
 from idaes.core import declare_process_block_class

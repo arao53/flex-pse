@@ -26,7 +26,7 @@ flex-pse/
 │   │   ├── unit_models/
 │   │   │   ├── base/               # siso.py, sido.py, dido.py (IO-topology base blocks)
 │   │   │   └──                     # pump.py, storage_tank.py, battery.py, exchanger.py,
-│   │   │                           # electrolysis.py, ro_skid.py, combustor.py,
+│   │   │                           # electrolysis.py, reverseosmosis.py, combustor.py,
 │   │   │                           # constant_intensity.py
 │   │   ├── logic/                  # status.py, startup_shutdown.py, dwell.py, delays.py,
 │   │   │                           # conditional.py, degeneracy.py (model-level), bypass.py

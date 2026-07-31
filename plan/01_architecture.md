@@ -309,7 +309,7 @@ physical subclasses add the flow↔energy relationship and any bounds.
 | `Exchanger` | `DIDOBlock` | two inlet / two outlet streams exchanging mass/energy |
 | `ElectrolysisSeparator` | `SIDOBlock` | electrolysis modeled as a separation; exercises `power_thermal` |
 | `ElectrolysisExchanger` | `Exchanger` | electrolysis with two coupled streams |
-| `ReverseOsmosisSkid` | `SIDOBlock` | RO skid: feed → permeate + brine, split renamed to `recovery` |
+| `ReverseOsmosis` | `SIDOBlock` | RO skid: feed → permeate + brine, split renamed to `recovery` |
 | `Combustor` | `SIDOBlock` | combustion as a separation of products |
 | `BatteryModel` | `OpsBlockData` (no fluid ports) | SOC dynamics, charge/discharge power + efficiency, capacity as fixable design var; optional mutually-exclusive charge/discharge binary; first-class `external_dispatch` (DERMS, §3.6) |
 | `ConstantEnergyIntensityModel` | `SISOBlock` | generic "energy factor × flow" unit — the default building block for anything without a bespoke physical topology (e.g. a whole plant modeled as a single surrogate, as in the api-freeze script's `svcw.plant`) |
@@ -326,7 +326,7 @@ The deciding question is: **does every port on this unit share one
   whichever topology base matches the port count (`SISOBlock`/`SIDOBlock`/
   `DIDOBlock`). These bases already own port construction, the per-stream mass
   balance, and pass-through wiring against that single `property_package`. A
-  physical subclass (`Pump`, `ReverseOsmosisSkid`, ...) does not rebuild any of
+  physical subclass (`Pump`, `ReverseOsmosis`, ...) does not rebuild any of
   that — it renames the topology's generic roles into its own nomenclature via
   `_component_names` (e.g. `{"flow_in": "feed", "flow_out_a": "permeate"}`,
   §2 naming), then adds its flow↔energy relationship

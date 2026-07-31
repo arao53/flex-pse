@@ -99,14 +99,14 @@ Physical units
 
    Exchanger
 
-.. currentmodule:: flexops.unit_models.ro_skid
+.. currentmodule:: flexops.unit_models.reverseosmosis
 
 .. autosummary::
    :toctree: generated
    :template: unit_model.rst
    :nosignatures:
 
-   ReverseOsmosisSkid
+   ReverseOsmosis
 
 Generic surrogate
 -----------------

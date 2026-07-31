@@ -157,7 +157,7 @@ Dependencies are strict unless marked ∥ (parallelizable with the previous one)
 | [M06](plan/milestones/M06_eeco_integration.md) | EECO integration (tariffs & costs) | 2 | M00 ∥ | `eeco` wired; tariff-signal helpers; in-objective cost + post-solve numpy evaluator; DR containers |
 | [M07](plan/milestones/M07_flexcosting.md) | FlexCosting | 3 | M04, M05, M06 | First end-to-end result: tank+pump shifts load off-peak; `report_cost` (EECO post-hoc) |
 | [M08](plan/milestones/M08_battery_logic.md) | Battery (DERMS) + customizable unit commitment | 3 | M07 | SOC + external dispatch; status/startup/shutdown/dwell/delays/conditional; model-level degeneracy detection |
-| [M09](plan/milestones/M09_plantblock_api_freeze.md) | Network/Plant + topology bases + surrogates + config build + API freeze | 3 | M08 | `NetworkBlock`/`PlantBlock`; SIDO/DIDO + ReverseOsmosisSkid/Exchanger; `build_model(config)`; `api_freeze.py` runs |
+| [M09](plan/milestones/M09_plantblock_api_freeze.md) | Network/Plant + topology bases + surrogates + config build + API freeze | 3 | M08 | `NetworkBlock`/`PlantBlock`; SIDO/DIDO + ReverseOsmosis/Exchanger; `build_model(config)`; `api_freeze.py` runs |
 | [M10](plan/milestones/M10_parameterize_core.md) | FlexParameterize core (2-way) | 3 | M09 | Tag aliasing; sufficiency; constant-EI round-trip; `apply_to_model` fixes params + replaces blocks in place |
 | [M11](plan/milestones/M11_regressor_protocol.md) | Regressor protocol + linear regression | 2 | M10 | Pluggable regressors; fit provenance in emitted configs |
 | [M12](plan/milestones/M12_rolling_horizon.md) | FlexSchedule: rolling horizon + solve sequences | 3 | M09 | 7-day windowed solve within 2 % of monolithic |

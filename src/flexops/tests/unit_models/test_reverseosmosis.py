@@ -1,29 +1,29 @@
-"""ReverseOsmosisSkid: feed -> permeate + brine (§3.4, R6)."""
+"""ReverseOsmosis: feed -> permeate + brine (§3.4, R6)."""
 
 import pyomo.environ as pyo
 import pytest
 
 from flexcore.exceptions import FlexConfigError
 from flexops.testing import UnitModelTestHarness, dummy_time_block
-from flexops.unit_models import ReverseOsmosisSkid
+from flexops.unit_models import ReverseOsmosis
 
 
-class TestReverseOsmosisSkid(UnitModelTestHarness):
+class TestReverseOsmosis(UnitModelTestHarness):
     """RO skid: feed -> permeate (outlet_a) + brine (outlet_b)."""
 
     expected_dof = 0
 
     def configure(self):
         m = dummy_time_block(3)
-        m.unit = ReverseOsmosisSkid(property_package=m.properties)
+        m.unit = ReverseOsmosis(property_package=m.properties)
         return m, m.unit
 
 
 @pytest.mark.unit
-def test_ro_skid_outlet_semantics():
+def test_reverseosmosis_outlet_semantics():
     """The skid's ``recovery`` is its permeate fraction of the feed."""
     m = dummy_time_block(3)
-    m.unit = ReverseOsmosisSkid(property_package=m.properties, recovery=0.45)
+    m.unit = ReverseOsmosis(property_package=m.properties, recovery=0.45)
     for t in m.time_block.time_index:
         m.unit.feed[t].fix(4.0)
         m.unit.permeate[t].fix(1.8)
@@ -37,24 +37,22 @@ def test_ro_skid_outlet_semantics():
 
 
 @pytest.mark.unit
-def test_ro_skid_renames_the_split_fraction_to_recovery():
+def test_reverseosmosis_renames_the_split_fraction_to_recovery():
     """``recovery`` replaces the inherited ``split_fraction`` — it is not an alias."""
     m = dummy_time_block(3)
-    m.unit = ReverseOsmosisSkid(property_package=m.properties)
+    m.unit = ReverseOsmosis(property_package=m.properties)
 
     assert pyo.value(m.unit.recovery) == pytest.approx(0.45)
     assert m.unit.find_component("split_fraction") is None
     with pytest.raises(ValueError, match="split_fraction"):
-        m.rejected = ReverseOsmosisSkid(
-            property_package=m.properties, split_fraction=0.45
-        )
+        m.rejected = ReverseOsmosis(property_package=m.properties, split_fraction=0.45)
 
 
 @pytest.mark.unit
-def test_ro_skid_renames_the_flows_to_feed_permeate_brine():
+def test_reverseosmosis_renames_the_flows_to_feed_permeate_brine():
     """``feed``/``permeate``/``brine`` replace ``flow_in``/``flow_out_a``/``_b``."""
     m = dummy_time_block(3)
-    m.unit = ReverseOsmosisSkid(property_package=m.properties)
+    m.unit = ReverseOsmosis(property_package=m.properties)
 
     assert m.unit.find_component("flow_in") is None
     assert m.unit.find_component("flow_out_a") is None
@@ -68,10 +66,10 @@ def test_ro_skid_renames_the_flows_to_feed_permeate_brine():
 
 
 @pytest.mark.unit
-def test_ro_skid_recovery_window_bounds_the_recovery():
+def test_reverseosmosis_recovery_window_bounds_the_recovery():
     """``recovery_min``/``_max`` override the default seawater window."""
     m = dummy_time_block(3)
-    m.unit = ReverseOsmosisSkid(
+    m.unit = ReverseOsmosis(
         property_package=m.properties,
         recovery=0.4,
         recovery_min=0.3,
@@ -91,9 +89,9 @@ def test_ro_skid_recovery_window_bounds_the_recovery():
         ({"recovery_min": 0.7, "recovery_max": 0.6}, "recovery_min"),
     ],
 )
-def test_ro_skid_rejects_an_unusable_recovery_window(options, field):
+def test_reverseosmosis_rejects_an_unusable_recovery_window(options, field):
     """An inverted window, or a setpoint outside it, is rejected by name."""
     m = dummy_time_block(3)
     with pytest.raises(FlexConfigError) as excinfo:
-        m.unit = ReverseOsmosisSkid(property_package=m.properties, **options)
+        m.unit = ReverseOsmosis(property_package=m.properties, **options)
     assert excinfo.value.field == field

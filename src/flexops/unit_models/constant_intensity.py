@@ -1,4 +1,4 @@
-r"""ConstantEnergyIntensityModel(SISOBlock): the generic surrogate unit (§3.4, R11).
+r"""ConstantEnergyIntensityModel(SISOBlock): the generic surrogate unit.
 
 FlexOps' one generic building block for anything without a bespoke physical
 topology — a whole treatment plant modeled as a single surrogate, as in the
@@ -8,7 +8,6 @@ FlexParameterize later upgrades that relationship by swapping this unit's
 ``power_electrical_relation`` Constraint in place.
 """
 
-import pyomo.environ as pyo
 from idaes.core import declare_process_block_class
 from pyomo.common.config import ConfigValue
 from pyomo.environ import units as pyunits
@@ -65,8 +64,6 @@ class ConstantEnergyIntensityModelData(SISOBlockData):
     def build(self) -> None:
         """Build the SISO base, then the constant-intensity energy relation."""
         super().build()
-        self.flow_in = pyo.Reference(self.inlet_state.flow_vol_phase[:, "Liq"])
-        self.flow_out = pyo.Reference(self.outlet_state.flow_vol_phase[:, "Liq"])
         self.add_constant_intensity_relation(
             self.flow_in,
             kind=nm.PowerKind.ELECTRICAL,

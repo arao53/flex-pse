@@ -37,7 +37,7 @@ a breaking change.
   aggregation; auto-discovery as convenience)
 - `plan/01_architecture.md` §3.4 (R6: IO-topology bases `SISOBlock`/`SIDOBlock`/
   `DIDOBlock`; physical zoo `Separator`/`Exchanger`/`ElectrolysisSeparator`/
-  `ElectrolysisExchanger`/`ReverseOsmosisSkid`/`Combustor`;
+  `ElectrolysisExchanger`/`ReverseOsmosis`/`Combustor`;
   `ConstantEnergyIntensityModel`; the "helper functions attach the
   flow↔energy relationship" paragraph; `Electrolyzer`→`Separator`)
 - `plan/01_architecture.md` §2.3 (R3: config-driven-everything;
@@ -61,7 +61,7 @@ a breaking change.
 - `src/flexops/unit_models/separator.py` — `Separator(SIDOBlock)` (replaces the old `Electrolyzer`).
 - `src/flexops/unit_models/exchanger.py` — `Exchanger(DIDOBlock)`.
 - `src/flexops/unit_models/electrolysis.py` — `ElectrolysisSeparator(Separator)` (v0) and `ElectrolysisExchanger(Exchanger)` (stretch).
-- `src/flexops/unit_models/ro_skid.py` — `ReverseOsmosisSkid(Separator)` (v0).
+- `src/flexops/unit_models/reverseosmosis.py` — `ReverseOsmosis(Separator)` (v0).
 - `src/flexops/unit_models/combustor.py` — `Combustor(Separator)` (stretch).
 - `src/flexops/unit_models/constant_intensity.py` — `ConstantEnergyIntensityModel`.
 - `src/flexops/core/ops_block.py` — implement `build_from_config` for real (stub since M03); optional TimeBlock auto-discovery.
@@ -152,12 +152,12 @@ relationship** (constant intensity in v0). Same base topology, controllable
 functional form.
 
 **v0 (must build this session):** the bases + `Separator` + `Exchanger` + at
-least `ReverseOsmosisSkid` + one electrolysis variant:
+least `ReverseOsmosis` + one electrolysis variant:
 - `Separator(SIDOBlock)` — one feed split into two product streams. **This
   replaces the old `Electrolyzer` name** (R6). Constant-intensity energy relation
   wiring `power_electrical[t]`.
 - `Exchanger(DIDOBlock)` — two inlet / two outlet streams exchanging mass/energy.
-- `ReverseOsmosisSkid(Separator)` — RO skid: feed → permeate + concentrate; thin
+- `ReverseOsmosis(Separator)` — RO skid: feed → permeate + concentrate; thin
   subclass fixing the split semantics + energy relation.
 - `ElectrolysisSeparator(Separator)` — electrolysis modeled as a separation;
   exercises **`power_thermal`** in addition to `power_electrical` (register both
@@ -337,7 +337,7 @@ explicitly. Explicit argument is the primary, tested-first path (architecture §
 `src/flexops/tests/unit_models/test_separator.py`
 - `TestSeparator(UnitModelTestHarness)` — harness subclass (build/units/
   registration/DoF `unit`; solve `component`).
-- `TestReverseOsmosisSkid(UnitModelTestHarness)` and
+- `TestReverseOsmosis(UnitModelTestHarness)` and
   `TestElectrolysisSeparator(UnitModelTestHarness)` — harness subclasses; the
   electrolysis one asserts **both** `power_electrical` and `power_thermal` are
   registered (the `power_thermal` exerciser, §3.4).
@@ -390,7 +390,7 @@ explicitly. Explicit argument is the primary, tested-first path (architecture §
   short section on the config-driven twin (`build_model(load_model_config(...))`)
   and where `NetworkBlock` fits for multi-plant systems.
 - Reference pages (autosummary + `.. flexops-unit-tables::`) for the new units:
-  `Separator`, `Exchanger`, `ReverseOsmosisSkid`, `ElectrolysisSeparator` (and the
+  `Separator`, `Exchanger`, `ReverseOsmosis`, `ElectrolysisSeparator` (and the
   stretch units if built), `ConstantEnergyIntensityModel`; document the
   `SIDOBlock`/`DIDOBlock` topology bases; add `PlantBlock`, `NetworkBlock`, and
   `build_model` to `docs/reference/flexops/core.rst`.
@@ -409,7 +409,7 @@ explicitly. Explicit argument is the primary, tested-first path (architecture §
 - [ ] `PlantBlock` aggregates its units correctly (constraint-body test).
 - [ ] `NetworkBlock` composes plants with inter-plant arcs; network total == Σ plant totals == Σ unit works; no double-counting.
 - [ ] `SIDOBlock` and `DIDOBlock` topology bases build with correct ports and mass balances; harness-tested physical units on top.
-- [ ] v0 zoo present: `Separator`, `Exchanger`, `ReverseOsmosisSkid`, and one electrolysis variant (`ElectrolysisSeparator`, exercising `power_thermal`); stretch units built or deferral noted in the PR.
+- [ ] v0 zoo present: `Separator`, `Exchanger`, `ReverseOsmosis`, and one electrolysis variant (`ElectrolysisSeparator`, exercising `power_thermal`); stretch units built or deferral noted in the PR.
 - [ ] No `Electrolyzer` class exists — it is `Separator`/`ElectrolysisSeparator` (R6).
 - [ ] `build_from_config` builds a real unit; bad config → `ValidationError` naming the field path.
 - [ ] `build_model(config)` constructs TimeBlock + properties + costing + tree + arcs from one config; equals the hand-built model; bad config → `ValidationError` naming the field path.

@@ -1,4 +1,4 @@
-r"""ReverseOsmosisSkid(SIDOBlock): feed -> permeate + brine (§3.4).
+r"""ReverseOsmosis(SIDOBlock): feed -> permeate + brine (§3.4).
 
 A direct physical subclass of
 :class:`~flexops.unit_models.base.sido.SIDOBlockData` that renames the split
@@ -15,8 +15,8 @@ from flexcore.exceptions import FlexConfigError
 from flexops.unit_models.base.sido import SIDOBlockData
 
 
-@declare_process_block_class("ReverseOsmosisSkid")
-class ReverseOsmosisSkidData(SIDOBlockData):
+@declare_process_block_class("ReverseOsmosis")
+class ReverseOsmosisData(SIDOBlockData):
     r"""A reverse-osmosis skid: feed split into permeate and brine.
 
     ``feed`` is the SIDO inlet, ``permeate`` the outlet_a stream, and
@@ -45,9 +45,9 @@ class ReverseOsmosisSkidData(SIDOBlockData):
 
     Example:
         >>> from flexops.testing import dummy_time_block
-        >>> from flexops.unit_models import ReverseOsmosisSkid
+        >>> from flexops.unit_models import ReverseOsmosis
         >>> m = dummy_time_block(3)
-        >>> m.ro = ReverseOsmosisSkid(property_package=m.properties)  # doctest: +SKIP
+        >>> m.ro = ReverseOsmosis(property_package=m.properties)  # doctest: +SKIP
     """
 
     CONFIG = SIDOBlockData.CONFIG()
