@@ -257,8 +257,12 @@ def test_capacity_fix_unfix():
 
 
 @pytest.mark.unit
-def test_battery_forces_nothing_and_status_defaults_true():
-    """Unlike Tank, a battery does not force unit_commitment.status off."""
+def test_battery_does_not_force_status_off_when_explicitly_enabled():
+    """Unlike Tank, a battery does not force unit_commitment.status off.
+
+    Passing an explicit, bare ``UnitCommitmentConfig()`` (whose own default is
+    ``status=True``) is respected as-is, not clamped back to ``False``.
+    """
     _, unit = _battery(
         4,
         unit_commitment=UnitCommitmentConfig(),
@@ -267,6 +271,28 @@ def test_battery_forces_nothing_and_status_defaults_true():
     )
     assert unit.config.unit_commitment.status is True
     assert hasattr(unit, "status")
+
+
+@pytest.mark.unit
+def test_battery_unit_commitment_status_defaults_false():
+    """With no unit_commitment kwarg at all, BatteryModel defaults status False."""
+    m = dummy_time_block(4)
+    m.unit = BatteryModel(capacity=10 * pyunits.kWh)
+    assert m.unit.config.unit_commitment.status is False
+    assert not hasattr(m.unit, "status")
+
+
+@pytest.mark.unit
+def test_1c_fallback_applies_even_with_status_off():
+    """No power maxima and status off: power still falls back to a 1C bound.
+
+    The 1C fallback used to be tied to unit_commitment.status, so a non-UC
+    battery with no explicit power rating was silently unbounded above.
+    """
+    m = dummy_time_block(4)
+    m.unit = BatteryModel(capacity=8 * pyunits.kWh)
+    assert m.unit.power_charge[0].ub == pytest.approx(8.0)
+    assert m.unit.power_discharge[0].ub == pytest.approx(8.0)
 
 
 @pytest.mark.unit
