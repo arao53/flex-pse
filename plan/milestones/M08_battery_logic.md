@@ -19,7 +19,7 @@ identical parallel trains — no solver required for the logic proofs.
 
 ## Read first
 - `plan/01_architecture.md` §3.2 (OpsBlock registration API; inherited config
-  flags `relaxation` / `unit_commitment` / `allow_bypass` / `external_dispatch`;
+  flags `relaxation` / `unit_commitment` / `allow_pass_through` / `external_dispatch`;
   the `set_external_dispatch(var, series, *, fix=True)` base method — DERMS)
 - `plan/01_architecture.md` §3.4 (unit model library table — `BatteryModel` row;
   first-class `external_dispatch`; note the electrolysis/separator units move to M09)
@@ -80,7 +80,7 @@ CONFIG entries (Pyomo `ConfigDict`, each with `description=`):
 - `soc_min`, `soc_max` — SOC bounds as fraction of capacity, defaults 0.0 / 1.0.
 - `initial_soc` — initial SOC as fraction of capacity, default 0.5 (implementer's choice).
 - Inherited flags from OpsBlock (§3.2): `relaxation`, the `unit_commitment`
-  sub-config (§3.5), `allow_bypass`, and the optional `external_dispatch` source.
+  sub-config (§3.5), `allow_pass_through`, and the optional `external_dispatch` source.
 
 Components (all Vars/Constraints carry `doc=` — the docs generator renders them):
 - `capacity` — **Var**, kWh, non-negative. Initialized to the config value **and

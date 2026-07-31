@@ -1,4 +1,4 @@
-"""SISOBlock: the single-inlet/single-outlet IO-topology base (architecture §3.4, R6).
+"""SISOBlock: the single-inlet/single-outlet IO-topology base (architecture §3.4).
 
 The first of the IO-topology base classes: owns port construction (via the
 inherited :meth:`~flexops.core.ops_block.OpsBlockData.add_stream_ports`) and
@@ -11,11 +11,11 @@ no power itself; a bare ``SISOBlock`` declares neither ``power_electrical``
 nor ``power_thermal``.
 
 The pass-through balance is built via the inherited
-:meth:`~flexops.core.ops_block.OpsBlockData.add_bypass_constraints`: every
+:meth:`~flexops.core.ops_block.OpsBlockData.add_pass_through_constraints`: every
 state variable the inlet/outlet ports expose (flow included) flows straight
-through. ``SISOBlock`` overrides the base ``allow_bypass`` default to
+through. ``SISOBlock`` overrides the base ``allow_pass_through`` default to
 ``True`` so the topology is well-posed (DoF == 0) out of the box; pass
-``allow_bypass=False`` to leave the state variables unlinked and wire a
+``allow_pass_through=False`` to leave the state variables unlinked and wire a
 custom relationship instead.
 """
 
@@ -37,7 +37,7 @@ class SISOBlockData(OpsBlockData):
     """
 
     CONFIG = OpsBlockData.CONFIG()
-    CONFIG.get("allow_bypass").set_default_value(True)
+    CONFIG.get("allow_pass_through").set_default_value(True)
 
     def build(self) -> None:
         """Build the inlet/outlet ports and the per-stream mass balance."""
@@ -48,11 +48,12 @@ class SISOBlockData(OpsBlockData):
     def _build_mass_balance(self) -> None:
         """Per-stream pass-through balance: every inlet state var equals outlet.
 
-        Delegates to :meth:`~flexops.core.ops_block.OpsBlockData.add_bypass_constraints`
-        with no exclusions -- flow's pass-through *is* a bypass equality here.
+        Delegates with no exclusions to
+        :meth:`~flexops.core.ops_block.OpsBlockData.add_pass_through_constraints`
+        -- flow's pass-through *is* a pass-through equality here.
         Subclasses whose flow genuinely differs (e.g. ``Tank``'s
         holdup) override this instead of building a second, conflicting
         balance alongside the inherited ports (never re-declare the ports or
         the balance in a subclass).
         """
-        self.add_bypass_constraints(self.inlet, self.outlet, exclude_vars=())
+        self.add_pass_through_constraints(self.inlet, self.outlet, exclude_vars=())

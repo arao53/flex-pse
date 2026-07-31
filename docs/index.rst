@@ -13,6 +13,13 @@ design and operations optimization.
    explanation/relaxation_policies
    explanation/config_schema
    explanation/energy_nomenclature
+   explanation/pass_through_and_bypass
+
+.. toctree::
+   :maxdepth: 2
+   :caption: How-to
+
+   how_to/build_a_plant
 
 .. toctree::
    :maxdepth: 2

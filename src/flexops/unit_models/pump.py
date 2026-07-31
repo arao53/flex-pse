@@ -76,7 +76,7 @@ class PumpData(SISOBlockData):
       inlet_state.pressure[t]``) -- so this relation requires a
       ``property_package`` built with ``has_pressure=True``, and excludes
       ``pressure`` from the inherited
-      inlet-to-outlet bypass (a pump raises pressure between its ports; it
+      inlet-to-outlet pass-through (a pump raises pressure between its ports; it
       does not pass it through unchanged). Both ``inlet_state.pressure`` and
       ``outlet_state.pressure`` are registered as IO inputs -- boundary
       conditions the caller fixes, like a fixed dispatch flow. ``efficiency``
@@ -149,14 +149,14 @@ class PumpData(SISOBlockData):
             self._build_constant_intensity_relation(tb, power)
 
     def _build_mass_balance(self) -> None:
-        """Bypass every state var, except pressure under the hydraulic relation.
+        """Pass through every state var, except pressure under the hydraulic relation.
 
         A pump raises pressure between its ports rather than passing it
         through unchanged, so ``pressure`` is excluded from the generic
-        bypass and instead governed by :meth:`_build_hydraulic_relation`.
+        pass-through and instead governed by :meth:`_build_hydraulic_relation`.
         """
         if self.config.power_relation == PumpPowerRelation.HYDRAULIC:
-            self.add_bypass_constraints(
+            self.add_pass_through_constraints(
                 self.inlet, self.outlet, exclude_vars=("pressure",)
             )
         else:

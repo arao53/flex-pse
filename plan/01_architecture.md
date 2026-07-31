@@ -242,7 +242,7 @@ The base class of every flex-pse unit model.
 - Base-class-provided `power_electrical[t]` / `power_thermal[t]` Vars (kW),
   created when the unit declares it consumes that energy kind.
 - Config flags every unit inherits: `relaxation` policy for its discrete
-  structure, a `unit_commitment` sub-config (§3.5), `allow_bypass`, and an
+  structure, a `unit_commitment` sub-config (§3.5), `allow_pass_through`, and an
   optional **`external_dispatch`** source (below).
 - **External dispatch (DERMS).** Every unit exposes a hook to fix its
   controllable actuator variable(s) to an externally supplied, time-indexed

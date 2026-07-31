@@ -1,0 +1,49 @@
+{
+  "schema_version": "0.0.1",
+  "time": {
+    "start_date": "2025-07-01",
+    "end_date": "2025-08-01",
+    "time_step": "1 hr"
+  },
+  "tariff": {
+    "path": "tariff_tou_demo.json",
+    "include_demand_charges": true
+  },
+  "facility": {
+    "draw": "100 m**3/hr"
+  },
+  "pump": {
+    "max_flow": "300 m**3/hr",
+    "energy_intensity": "0.5 kWh/m**3",
+    "unit_commitment": {
+      "status": false,
+      "startup_shutdown": false,
+      "dwell": false,
+      "min_up": 3,
+      "min_down": 3,
+      "delays": null,
+      "conditional": null
+    },
+    "relax": true
+  },
+  "tank": {
+    "max_volume": "1000 m**3",
+    "initial_volume": "200 m**3"
+  },
+  "battery": {
+    "enabled": true,
+    "capacity": "2000 kWh",
+    "power_charge_max": "500 kW",
+    "power_discharge_max": "500 kW",
+    "eta_charge": 0.95,
+    "eta_discharge": 0.95,
+    "soc_min": 0.1,
+    "soc_max": 0.9
+  },
+  "arcs": [
+    {
+      "source": "pump.outlet",
+      "destination": "tank.inlet"
+    }
+  ]
+}
