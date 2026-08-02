@@ -23,8 +23,8 @@ jobs:
       - run: black --check .
       - run: lint-imports
 
-  fast-tests:
-    name: fast-tests (${{ matrix.os }}, py${{ matrix.python-version }})
+  unit-tests:
+    name: unit-tests (${{ matrix.os }}, py${{ matrix.python-version }})
     needs: lint
     runs-on: ${{ matrix.os }}
     strategy:
@@ -51,7 +51,7 @@ jobs:
       - uses: codecov/codecov-action@v4
         with:
           token: ${{ secrets.CODECOV_TOKEN }}
-          flags: fast-tests
+          flags: unit
   standard-install:
     name: standard-install (py${{ matrix.python-version }})
     needs: lint
@@ -98,7 +98,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # See fast-tests: full Python matrix on Linux, one version elsewhere.
+        # See unit-tests: full Python matrix on Linux, one version elsewhere.
         include:
           - { os: ubuntu-latest, python-version: "3.11" }
           - { os: ubuntu-latest, python-version: "3.12" }
@@ -127,3 +127,7 @@ jobs:
             exit 0
           fi
           exit "$exit_code"
+      - uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          flags: integration

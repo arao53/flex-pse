@@ -9,7 +9,11 @@ coverage:
         target: 80%
 
 flags:
-  fast-tests:
+  unit:
+    paths:
+      - src
+    carryforward: false
+  integration:
     paths:
       - src
     carryforward: false
