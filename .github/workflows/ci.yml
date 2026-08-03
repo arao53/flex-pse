@@ -23,8 +23,8 @@ jobs:
       - run: black --check .
       - run: lint-imports
 
-  fast-tests:
-    name: fast-tests (${{ matrix.os }}, py${{ matrix.python-version }})
+  unit-tests:
+    name: unit-tests (${{ matrix.os }}, py${{ matrix.python-version }})
     needs: lint
     runs-on: ${{ matrix.os }}
     strategy:
@@ -48,51 +48,48 @@ jobs:
       - run: pip install -e ".[dev,solvers]"
       - uses: ./.github/actions/setup-ipopt
       - run: pytest -m "unit or component" --cov --cov-report=xml
-
-  # TODO: uncomment this job once the repo is public. It installs from the
-  # remote git ref (git+https://…), which only works unauthenticated on a public
-  # repo; until then it would fail on every PR. When re-enabling, verify the
-  # git+@refs/pull/<n>/merge fetch resolves on a real PR (untested to date).
-  # standard-install:
-  #   name: standard-install (py${{ matrix.python-version }})
-  #   needs: lint
-  #   runs-on: ubuntu-latest
-  #   strategy:
-  #     matrix:
-  #       python-version: ["3.11", "3.12", "3.13","3.14"]
-  #   steps:
-  #     # No checkout: install from the remote git ref exactly as an end user
-  #     # would (pip install "git+<repo>@<ref>"), unlike the editable `-e` used by
-  #     # the dev/test jobs. This builds and installs over the network, so a
-  #     # subpackage missing from setuptools package discovery (a dropped
-  #     # __init__.py, M00 Pitfall #1) or a needed file left uncommitted is
-  #     # silently absent from the distribution and fails here rather than in a
-  #     # later milestone. On pull_request, github.ref is the PR merge ref
-  #     # (refs/pull/<n>/merge), which pip fetches directly.
-  #     - uses: actions/setup-python@v5
-  #       with:
-  #         python-version: ${{ matrix.python-version }}
-  #     - run: pip install "git+${{ format('{0}/{1}@{2}', github.server_url, github.repository, github.ref) }}"
-  #     # Run from a scratch dir (no repo checkout exists) so the *installed*
-  #     # package is exercised.
-  #     - working-directory: ${{ runner.temp }}
-  #       run: |
-  #         python - <<'PY'
-  #         import importlib
-  #
-  #         modules = [
-  #             "flexcore", "flexcore.config", "flexcore.solvers",
-  #             "flexops", "flexops.core", "flexops.unit_models",
-  #             "flexops.unit_models.base", "flexops.logic", "flexops.costing",
-  #             "flexops.costing.unit_models", "flexops.design",
-  #             "flexops.properties", "flexops.testing",
-  #             "flexparameterize", "flexparameterize.regression",
-  #             "flexschedule",
-  #         ]
-  #         for name in modules:
-  #             importlib.import_module(name)
-  #         print(f"OK: imported {len(modules)} modules from the installed wheel")
-  #         PY
+      - uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          flags: unit
+  standard-install:
+    name: standard-install (py${{ matrix.python-version }})
+    needs: lint
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: ["3.11", "3.12", "3.13","3.14"]
+    steps:
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: pip install "git+${{ format('{0}/{1}@{2}', github.server_url, github.repository, github.ref) }}"
+      # Run from a scratch dir (no repo checkout exists) so the *installed*
+      # package is exercised.
+      - working-directory: ${{ runner.temp }}
+        run: |
+          python - <<'PY'
+          import importlib
+  
+          modules = [
+              "flexcore", "flexcore.config", "flexcore.solvers",
+              "flexops", "flexops.core", "flexops.unit_models",
+              "flexops.unit_models.base", "flexops.logic", "flexops.costing",
+              "flexops.costing.unit_models", "flexops.design",
+              "flexops.properties",
+              "flexparameterize", "flexparameterize.regression",
+              "flexschedule",
+          ]
+          for name in modules:
+              importlib.import_module(name)
+          print(f"OK: imported {len(modules)} modules from the installed wheel")
+          PY
+      # flexops.testing imports pytest, so it needs the `testing` extra; the
+      # bare install above deliberately does not carry it.
+      - run: pip install "flex-pse[testing] @ git+${{ format('{0}/{1}@{2}', github.server_url, github.repository, github.ref) }}"
+      - working-directory: ${{ runner.temp }}
+        run: |
+          python -c "import flexops.testing; print('OK: flexops.testing with the [testing] extra')"
 
   integration:
     name: integration (${{ matrix.os }}, py${{ matrix.python-version }})
@@ -101,7 +98,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        # See fast-tests: full Python matrix on Linux, one version elsewhere.
+        # See unit-tests: full Python matrix on Linux, one version elsewhere.
         include:
           - { os: ubuntu-latest, python-version: "3.11" }
           - { os: ubuntu-latest, python-version: "3.12" }
@@ -130,3 +127,7 @@ jobs:
             exit 0
           fi
           exit "$exit_code"
+      - uses: codecov/codecov-action@v4
+        with:
+          token: ${{ secrets.CODECOV_TOKEN }}
+          flags: integration

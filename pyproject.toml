@@ -28,6 +28,9 @@ parameterize = ["pandas>=2.0"]
 # HiGHS ships as a self-contained wheel; IPOPT does not (see
 # .github/actions/setup-ipopt and docs installation notes).
 solvers = ["highspy"]
+# `flexops.testing` (UnitModelTestHarness) imports pytest at runtime, so users
+# subclassing the harness in their own test suites need this extra.
+testing = ["pytest"]
 dev = ["pytest", "pytest-cov", "import-linter", "ruff", "black", "pre-commit", "diff-cover", "marimo", "matplotlib"]
 docs = ["sphinx", "myst-nb", "furo"]
 
