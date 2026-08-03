@@ -5,6 +5,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Fixed
+
+- `jsonschema` was missing from the `dev` extra, so `test_api_freeze_config_is_schema_valid` (`src/flexops/tests/test_api_freeze.py`) failed with `ModuleNotFoundError` on a clean `pip install -e .[dev]`. Added to `pyproject.toml`'s `dev` list.
+
 ### Added
 
 - **`Combustor`: the first `SimpleGasFlow` unit model — an arbitrary number of gas inlets mixed into one flue-gas outlet, exporting electrical power.** Every unit model shipped until now moved water, built on a single-`property_package` IO-topology base (`SISOBlock`/`SIDOBlock`/`DIDOBlock`). A combustor's inlet count is a config option (`inlet_names`), so no fixed-arity base fits — `Combustor` subclasses `flexops.core.ops_block.OpsBlockData` directly and hand-writes its own ports, mixing mass balance, and energy relation, the way `BatteryModel` does. Deviates from the earlier `Combustor(SIDOBlock)` sketch in architecture §3.4/the M09 plan; that table is updated. Delivered:
