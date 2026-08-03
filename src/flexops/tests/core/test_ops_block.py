@@ -10,12 +10,18 @@ import pytest
 from idaes.core import declare_process_block_class
 from idaes.core.util.model_statistics import degrees_of_freedom
 from pyomo.environ import units as pyunits
+from pyomo.network import Port
 from pyomo.util.check_units import assert_units_consistent
 
 from flexcore import nomenclature as nm
-from flexcore.config.schema import UnitConfig
+from flexcore.config.schema import ExternalDispatchSpec, SurrogateSpec, UnitConfig
 from flexcore.exceptions import FlexConfigError
-from flexops.core.ops_block import OpsBlockData, RelaxationPolicy
+from flexops.core.ops_block import (
+    OpsBlock,
+    OpsBlockData,
+    RelaxationPolicy,
+    _costing_package_domain,
+)
 from flexops.core.registration import (
     FuelUsageRecord,
     IOVariableRecord,
@@ -519,3 +525,182 @@ def test_set_external_dispatch_out_of_range_index_raises(dummy_model):
     power = getattr(dummy_model.unit, nm.POWER_ELECTRICAL)
     with pytest.raises(FlexConfigError, match="out of range"):
         dummy_model.unit.set_external_dispatch(power, {99: 1.0})
+
+
+@pytest.mark.unit
+def test_add_stream_ports_requires_property_package():
+    """add_stream_ports on a unit with no property_package is a config error."""
+    m = _model(4)
+    m.unit = OpsBlock()
+    with pytest.raises(FlexConfigError, match="property_package"):
+        m.unit.add_stream_ports()
+
+
+@pytest.mark.unit
+def test_check_power_metadata_electrical_rejects_temperature(dummy_model):
+    """A non-thermal power draw takes no temperature."""
+    with pytest.raises(FlexConfigError, match="takes no temperature"):
+        dummy_model.unit.declare_power(
+            nm.PowerKind.ELECTRICAL, temperature=350 * pyunits.K
+        )
+
+
+@pytest.mark.unit
+def test_costing_package_domain_accepts_duck_typed_package_and_forwards():
+    """A costing_package exposing register_unit_power is accepted and used."""
+
+    class _StubCosting:
+        def __init__(self):
+            self.calls = []
+
+        def register_unit_power(self, unit, var, kind):
+            self.calls.append((unit, var, kind))
+
+    m = _model(4)
+    costing = _StubCosting()
+    m.unit = DummyOps(property_package=m.props, costing_package=costing)
+    assert m.unit.config.costing_package is costing
+    power = getattr(m.unit, nm.POWER_ELECTRICAL)
+    assert (m.unit, power, nm.PowerKind.ELECTRICAL) in costing.calls
+
+
+@pytest.mark.unit
+def test_external_dispatch_slot_accepts_valid_spec():
+    """A validated ExternalDispatchSpec is stored on the config as-is."""
+    m = _model(4)
+    spec = ExternalDispatchSpec(variable="power_electrical", source="x.json")
+    m.unit = DummyOps(property_package=m.props, external_dispatch=spec)
+    assert m.unit.config.external_dispatch is spec
+
+
+@pytest.mark.unit
+def test_costing_package_domain_rejects_non_duck_typed_value():
+    """A costing_package with no register_unit_power is a config error."""
+    with pytest.raises(FlexConfigError, match="register_unit_power"):
+        _costing_package_domain("not-a-costing-package")
+
+
+@pytest.mark.unit
+def test_pass_through_noop_when_not_allowed():
+    """allow_pass_through=False (the default) builds no constraints."""
+    m = _model(4)
+    m.unit = OpsBlock(property_package=m.props)
+    m.unit.add_stream_ports()
+    before = list(m.unit.component_objects(pyo.Constraint))
+    m.unit.add_pass_through_constraints(m.unit.inlet, m.unit.outlet)
+    assert list(m.unit.component_objects(pyo.Constraint)) == before
+
+
+@pytest.mark.unit
+def test_pass_through_builds_equality_constraints():
+    """allow_pass_through=True links every non-fixed inlet state var to the outlet.
+
+    ``dens_mass`` is fixed by SimpleAqueousFlow at every index, so only
+    ``flow_vol_phase`` gets a pass-through constraint (the fully-fixed-var
+    skip branch).
+    """
+    m = _model(4)
+    m.unit = OpsBlock(property_package=m.props, allow_pass_through=True)
+    m.unit.add_stream_ports()
+    m.unit.add_pass_through_constraints(m.unit.inlet, m.unit.outlet)
+    constraint = m.unit.pass_through_flow_vol_phase_eq
+    assert m.unit.find_component("pass_through_dens_mass_eq") is None
+    for t in m.time_block.time_index:
+        m.unit.inlet_state.flow_vol_phase[t, "Liq"].fix(2.0)
+        m.unit.outlet_state.flow_vol_phase[t, "Liq"].set_value(2.0)
+        assert pyo.value(constraint[t, "Liq"].body) == pytest.approx(0.0)
+
+
+@pytest.mark.unit
+def test_pass_through_requires_stream_port_state_blocks():
+    """A port not built by add_stream_ports has no sibling state block."""
+    m = _model(4)
+    m.unit = OpsBlock(property_package=m.props, allow_pass_through=True)
+    m.unit.bare_port = Port(initialize={})
+    with pytest.raises(FlexConfigError, match="add_stream_ports"):
+        m.unit.add_pass_through_constraints(m.unit.bare_port, m.unit.bare_port)
+
+
+@pytest.mark.unit
+def test_pass_through_unknown_exclude_var_raises():
+    """An exclude_vars name that is not a state variable is a config error."""
+    m = _model(4)
+    m.unit = OpsBlock(property_package=m.props, allow_pass_through=True)
+    m.unit.add_stream_ports()
+    with pytest.raises(FlexConfigError, match="not state variables"):
+        m.unit.add_pass_through_constraints(
+            m.unit.inlet, m.unit.outlet, exclude_vars=("not_a_state_var",)
+        )
+
+
+@pytest.mark.unit
+def test_swap_energy_relation_no_relation_raises():
+    """Swapping a relationship that was never built is a config error."""
+    m = _model(4)
+    m.unit = OpsBlock(property_package=m.props)
+    with pytest.raises(FlexConfigError, match="no power_electrical_relation"):
+        m.unit.swap_energy_relation(SurrogateSpec(functional_form="linear"))
+
+
+@pytest.mark.unit
+def test_swap_energy_relation_unknown_input_variable_raises():
+    """A fitted input variable not found on the unit is a config error."""
+    m = _model(4)
+    m.unit = OpsBlock(property_package=m.props)
+    m.unit.add_stream_ports()
+    flow = pyo.Reference(m.unit.outlet_state.flow_vol_phase[:, "Liq"])
+    m.unit.add_constant_intensity_relation(
+        flow, intensity=0.5 * pyunits.kWh / pyunits.m**3
+    )
+    with pytest.raises(FlexConfigError, match="not a variable"):
+        m.unit.swap_energy_relation(
+            SurrogateSpec(functional_form="linear", input_variables=["nope"])
+        )
+
+
+@pytest.mark.unit
+def test_swap_energy_relation_builds_linear_fit():
+    """A linear surrogate deactivates the old relation and adds the fitted one."""
+    m = _model(4)
+    m.unit = OpsBlock(property_package=m.props)
+    m.unit.add_stream_ports()
+    flow = pyo.Reference(m.unit.outlet_state.flow_vol_phase[:, "Liq"])
+    m.unit.add_constant_intensity_relation(
+        flow, intensity=0.5 * pyunits.kWh / pyunits.m**3
+    )
+    old_relation = m.unit.power_electrical_relation
+
+    m.unit.swap_energy_relation(
+        SurrogateSpec(
+            functional_form="linear",
+            input_variables=["power_electrical"],
+            coefficients={"power_electrical": 2.0, "intercept": 1.0},
+        )
+    )
+
+    assert m.unit.power_electrical_relation is old_relation
+    assert old_relation[0].active is False
+    fitted = m.unit.power_electrical_relation_fitted
+    m.unit.power_electrical[0].fix(3.0)
+    # power - (intercept + 2*power) = 3.0 - (1.0 + 6.0) == -4.0
+    assert pyo.value(fitted[0].body) == pytest.approx(-4.0)
+
+
+@pytest.mark.unit
+def test_add_constant_intensity_relation_auto_swaps_from_surrogate():
+    """A non-constant-intensity SurrogateSpec triggers the fit at construction."""
+    m = _model(4)
+    cfg = UnitConfig(
+        unit_model_class="OpsBlock",
+        surrogate=SurrogateSpec(
+            functional_form="linear", input_variables=["power_electrical"]
+        ),
+    )
+    m.unit = OpsBlock(property_package=m.props, flexops_config=cfg)
+    m.unit.add_stream_ports()
+    flow = pyo.Reference(m.unit.outlet_state.flow_vol_phase[:, "Liq"])
+    m.unit.add_constant_intensity_relation(
+        flow, intensity=0.5 * pyunits.kWh / pyunits.m**3
+    )
+    assert m.unit.power_electrical_relation[0].active is False
+    assert m.unit.find_component("power_electrical_relation_fitted") is not None
