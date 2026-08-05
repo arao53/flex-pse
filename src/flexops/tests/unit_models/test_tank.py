@@ -9,7 +9,7 @@ from flexops.testing import UnitModelTestHarness, dummy_time_block
 from flexops.unit_models import Pump, Tank
 
 
-class TestStorageTank(UnitModelTestHarness):
+class TestTank(UnitModelTestHarness):
     """Fixing both flows and the initial volume determines the holdup trajectory."""
 
     expected_dof = 0

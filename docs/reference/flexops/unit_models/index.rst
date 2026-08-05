@@ -76,7 +76,7 @@ Physical units
 
    Pump
 
-.. currentmodule:: flexops.unit_models.storage.storage_tank
+.. currentmodule:: flexops.unit_models.storage.tank
 
 .. autosummary::
    :toctree: generated

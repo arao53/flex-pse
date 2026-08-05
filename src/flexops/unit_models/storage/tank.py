@@ -14,7 +14,7 @@ from flexops.unit_models.base.siso import SISOBlockData
 
 
 @declare_process_block_class("Tank")
-class StorageTankData(SISOBlockData):
+class TankData(SISOBlockData):
     r"""A storage tank: holdup difference equation, no on/off status.
 
     Inherits inlet/outlet ports from

@@ -13,7 +13,7 @@ from flexops.unit_models.powergeneration.generic_renewables import GenericRenewa
 from flexops.unit_models.pump import Pump
 from flexops.unit_models.reverseosmosis import ReverseOsmosis
 from flexops.unit_models.storage.battery import BatteryModel
-from flexops.unit_models.storage.storage_tank import Tank
+from flexops.unit_models.storage.tank import Tank
 
 __all__ = [
     "BatteryModel",

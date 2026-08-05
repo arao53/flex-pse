@@ -51,7 +51,7 @@ constant intensity, ``energy_intensity`` under heating value) is rejected too.
    ``efficiency * heating_value_i`` and ``dens_mass * flue_gas_temperature``
    are products of fixed scalar Vars: linear while both factors stay fixed,
    **NLP** once a design mode or regression unfixes one -- the same caveat
-   :class:`~flexops.unit_models.storage.storage_tank.Tank` documents for
+   :class:`~flexops.unit_models.storage.tank.Tank` documents for
    ``capacity * level``.
 """
 

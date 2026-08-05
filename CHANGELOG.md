@@ -5,6 +5,10 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Changed
+
+- Renamed the `Tank` unit model's internal module and implementation class from `storage_tank`/`StorageTankData` to `tank`/`TankData`, matching the public `Tank` name. No public API change.
+
 ### Fixed
 
 - `jsonschema` was missing from the `dev` extra, so `test_api_freeze_config_is_schema_valid` (`src/flexops/tests/test_api_freeze.py`) failed with `ModuleNotFoundError` on a clean `pip install -e .[dev]`. Added to `pyproject.toml`'s `dev` list.
