@@ -47,16 +47,6 @@ from flexops.core.registration import (
 )
 from flexops.core.time_block import TimeBlockData, find_time_block
 
-_POWER_VARS = {
-    nm.PowerKind.ELECTRICAL: (nm.POWER_ELECTRICAL, "Electrical draw of the unit"),
-    nm.PowerKind.THERMAL: (nm.POWER_THERMAL, "Thermal/gas-driven duty of the unit"),
-}
-
-_INTENSITY_VARS = {
-    nm.PowerKind.ELECTRICAL: "energy_intensity",
-    nm.PowerKind.THERMAL: "thermal_intensity",
-}
-
 
 class RelaxationPolicy(enum.StrEnum):
     """How a unit's discrete structure is relaxed."""
@@ -420,7 +410,7 @@ class OpsBlockData(UnitModelBlockData):
         """
         self._check_power_kind(kind)
         self._check_power_metadata(kind, temperature)
-        name, doc = _POWER_VARS[kind]
+        name, doc = nm.POWER_VARS[kind]
         tb = self._find_time_block()
         self.add_component(
             name,
@@ -731,20 +721,20 @@ class OpsBlockData(UnitModelBlockData):
         self.register_io_variable(power, role="output")
 
         intensity_var = self.declare_process_parameter(
-            _INTENSITY_VARS[kind],
+            nm.INTENSITY_VARS[kind],
             intensity,
             pyunits.kWh / pyunits.m**3,
             f"{kind.value.capitalize()} energy per unit volume processed.",
         )
 
-        relation = f"{_POWER_VARS[kind][0]}_relation"
+        relation = f"{nm.POWER_VARS[kind][0]}_relation"
         self.add_component(
             relation,
             pyo.Constraint(
                 tb.time_index,
                 rule=lambda b, t: power[t]
                 == pyunits.convert(intensity_var * flow[t], pyunits.kW),
-                doc=f"{relation}: power == {_INTENSITY_VARS[kind]} * flow. "
+                doc=f"{relation}: power == {nm.INTENSITY_VARS[kind]} * flow. "
                 "kWh/m^3 * m^3/hr = kW "
                 "exactly, no fudge factor. FlexParameterize swaps this "
                 "Constraint in place when it fits a richer relationship.",
@@ -782,7 +772,7 @@ class OpsBlockData(UnitModelBlockData):
                 input variable is not found on the unit, or the functional form
                 is one of the reserved post-v0 values.
         """
-        power_name = _POWER_VARS[kind][0]
+        power_name = nm.POWER_VARS[kind][0]
         relation = self.find_component(f"{power_name}_relation")
         if relation is None:
             raise FlexConfigError(

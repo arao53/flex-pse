@@ -19,12 +19,7 @@ import pyomo.environ as pyo
 from idaes.core import declare_process_block_class
 
 from flexcore import nomenclature as nm
-from flexops.core.plant_block import (
-    _TOTAL_POWER,
-    TOTAL_PRODUCT,
-    PlantBlockData,
-    _AggregatingFlowsheet,
-)
+from flexops.core.plant_block import PlantBlockData, _AggregatingFlowsheet
 
 EQ_PRODUCT_QUALITY = "eq_product_quality"
 """str: name of the like-quality mixing Constraint, indexed (product, plant, t)."""
@@ -89,7 +84,24 @@ class NetworkBlockData(_AggregatingFlowsheet):
         Returns:
             One term per child plant — the plant's own total.
         """
-        return [plant.component(_TOTAL_POWER[kind][0]) for plant in self.plants]
+        return [plant.component(nm.TOTAL_POWER_VARS[kind][0]) for plant in self.plants]
+
+    def _fuel_terms(self) -> dict[str, list]:
+        """Return each fuel's child-plant totals (never its units' own flows).
+
+        Returns:
+            ``{fuel name: [one total per contributing plant]}``.
+        """
+        terms: dict[str, list] = {}
+        for plant in self.plants:
+            total = plant.component(nm.TOTAL_FUEL_USAGE)
+            if total is None:
+                continue
+            for fuel in plant._fuel_terms():
+                terms.setdefault(fuel, []).append(
+                    lambda t, _total=total, _fuel=fuel: _total[_fuel, t]
+                )
+        return terms
 
     def _product_terms(self) -> dict[str, list]:
         """Return each product's child-plant totals, plus this network's own.
@@ -99,7 +111,7 @@ class NetworkBlockData(_AggregatingFlowsheet):
         """
         terms = super()._product_terms()
         for plant in self.plants:
-            total = plant.component(TOTAL_PRODUCT)
+            total = plant.component(nm.TOTAL_PRODUCT)
             if total is None:
                 continue
             for product in plant.products:

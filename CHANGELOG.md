@@ -5,9 +5,14 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ## [Unreleased]
 
+### Added
+
+- **`PlantBlock`/`NetworkBlock` now aggregate registered fuel usage into `total_fuel_usage[fuel_name, t]`** (m³/hr), alongside the existing `total_electrical_power`/`total_thermal_power`/`total_product`. Follows the `total_product` pattern: keyed by fuel name (there is no `FuelKind` enum), deferred and re-entrant like the other aggregates, and a network sums each contributing plant's own total rather than re-walking its units (no double-counting).
+
 ### Changed
 
 - Renamed the `Tank` unit model's internal module and implementation class from `storage_tank`/`StorageTankData` to `tank`/`TankData`, matching the public `Tank` name. No public API change.
+- Moved the private per-`PowerKind` name registries (`_POWER_VARS`/`_INTENSITY_VARS` in `ops_block.py`, `_TOTAL_POWER`/`TOTAL_PRODUCT` in `plant_block.py`) into `flexcore.nomenclature` as public constants (`POWER_VARS`, `INTENSITY_VARS`, `TOTAL_POWER_VARS`, `TOTAL_PRODUCT`, plus the new `TOTAL_FUEL_USAGE`), consistent with nomenclature already being the single source of canonical component names. Pure relocation, no behavior change.
 
 ### Fixed
 

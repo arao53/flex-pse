@@ -2,15 +2,48 @@
 
 import pyomo.environ as pyo
 import pytest
+from idaes.core import declare_process_block_class
+from pyomo.common.config import ConfigValue
 from pyomo.environ import units as pyunits
 from pyomo.network import Arc
 from pyomo.repn import generate_standard_repn
 
+from flexcore import nomenclature as nm
 from flexops import NetworkBlock, PlantBlock
+from flexops.core.ops_block import OpsBlockData
 from flexops.testing import dummy_time_block
 from flexops.unit_models import ConstantEnergyIntensityModel
 
 _POWER_KW = {"plant_a": 3.0, "plant_b": 7.0}
+
+
+@declare_process_block_class("DummyFuelUnit")
+class DummyFuelUnitData(OpsBlockData):
+    """A minimal unit that registers one named fuel-usage flow."""
+
+    CONFIG = OpsBlockData.CONFIG()
+    CONFIG.declare(
+        "fuel_name",
+        ConfigValue(default="natural_gas", domain=str, description="Fuel name."),
+    )
+
+    def build(self) -> None:
+        super().build()
+        tb = self._find_time_block()
+        usage = pyo.Var(
+            tb.time_index,
+            initialize=0.0,
+            units=pyunits.m**3 / pyunits.hr,
+            doc="Fuel usage flow.",
+        )
+        self.add_component(f"{nm.FUEL_USAGE}_{self.config.fuel_name}", usage)
+        self.register_fuel_usage(usage, fuel_name=self.config.fuel_name)
+
+
+# ``declare_process_block_class`` injects the constructible ``DummyFuelUnit``
+# wrapper into this module's namespace at runtime; bind the name explicitly so
+# static tools (ruff) resolve it.
+DummyFuelUnit = globals()["DummyFuelUnit"]
 
 
 def _network(n: int = 3):
@@ -71,6 +104,52 @@ def test_no_double_count_units():
     contributors = [id(v) for v in repn.linear_vars]
     assert sorted(contributors) == sorted(id(v) for v in unit_power)
     assert list(repn.linear_coefs) == [pytest.approx(1.0)] * len(unit_power)
+
+
+@pytest.mark.unit
+def test_network_aggregates_fuel_usage_over_plants():
+    """Network total_fuel_usage == sum of each plant's own fuel total."""
+    m = _network()
+    for name in _POWER_KW:
+        plant = m.network.find_component(name)
+        plant.gen = DummyFuelUnit(fuel_name="natural_gas")
+    m.network._build_aggregates()
+
+    for name in _POWER_KW:
+        plant = m.network.find_component(name)
+        for t in m.time_block.time_index:
+            plant.gen.fuel_usage_natural_gas[t].fix(2.0)
+
+    for t in m.time_block.time_index:
+        plant_totals = sum(
+            pyo.value(m.network.find_component(name).total_fuel_usage["natural_gas", t])
+            for name in _POWER_KW
+        )
+        assert pyo.value(m.network.total_fuel_usage["natural_gas", t]) == pytest.approx(
+            4.0, rel=1e-6
+        )
+        assert plant_totals == pytest.approx(4.0, rel=1e-6)
+
+
+@pytest.mark.unit
+def test_no_double_count_fuel_usage():
+    """Each unit's fuel flow appears exactly once, with coefficient 1, in the total."""
+    m = _network()
+    for name in _POWER_KW:
+        plant = m.network.find_component(name)
+        plant.gen = DummyFuelUnit(fuel_name="natural_gas")
+    m.network._build_aggregates()
+
+    unit_fuel = [
+        m.network.find_component(name).gen.fuel_usage_natural_gas[0]
+        for name in _POWER_KW
+    ]
+    repn = generate_standard_repn(
+        m.network.total_fuel_usage["natural_gas", 0].expr, compute_values=True
+    )
+    contributors = [id(v) for v in repn.linear_vars]
+    assert sorted(contributors) == sorted(id(v) for v in unit_fuel)
+    assert list(repn.linear_coefs) == [pytest.approx(1.0)] * len(unit_fuel)
 
 
 @pytest.mark.unit

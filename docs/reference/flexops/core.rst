@@ -38,9 +38,10 @@ units — and a ``NetworkBlock`` is a composition of **plant** blocks. Both are
 thin ``dynamic=False`` flowsheets whose time domain is the ``TimeBlock``'s
 ordered integer set (see :doc:`../../explanation/time_and_dynamics`). Their
 aggregation ``Expression``\ s (``total_electrical_power``,
-``total_thermal_power``, ``total_product``) are deferred, because units are
-normally added after the plant exists; ``FlexCosting.cost_process()`` builds
-them for every plant and network on the model.
+``total_thermal_power``, ``total_product``, ``total_fuel_usage``) are
+deferred, because units are normally added after the plant exists;
+``FlexCosting.cost_process()`` builds them for every plant and network on the
+model.
 
 .. currentmodule:: flexops.core.plant_block
 

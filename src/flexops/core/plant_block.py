@@ -33,20 +33,6 @@ from flexcore.exceptions import FlexConfigError
 from flexops.core.registration import IORegistry
 from flexops.core.time_block import TimeBlockData, find_time_block
 
-_TOTAL_POWER = {
-    nm.PowerKind.ELECTRICAL: (
-        "total_electrical_power",
-        "Sum of the child units' power_electrical (kW).",
-    ),
-    nm.PowerKind.THERMAL: (
-        "total_thermal_power",
-        "Sum of the child units' power_thermal (kW).",
-    ),
-}
-
-TOTAL_PRODUCT = "total_product"
-"""str: name of the product-flow aggregation Expression, indexed (product, t)."""
-
 
 def _refresh_expression(block, name: str, index, doc: str, rule) -> None:
     """Create ``block.name`` indexed over ``index`` if absent, then set its body.
@@ -160,6 +146,14 @@ class _AggregatingFlowsheet(FlowsheetBlockData):
         """
         raise NotImplementedError
 
+    def _fuel_terms(self) -> dict[str, list]:
+        """Return the terms this block's fuel total sums, by fuel name. Override this.
+
+        Raises:
+            NotImplementedError: Always, on this shared base.
+        """
+        raise NotImplementedError
+
     def _product_terms(self) -> dict[str, list]:
         """Return ``{product name: [getters]}``, each ``getter(t) -> flow``.
 
@@ -183,7 +177,7 @@ class _AggregatingFlowsheet(FlowsheetBlockData):
         ``FlexCosting.cost_process()`` calls it on every plant and network.
         """
         time_index = self.time_block.time_index
-        for kind, (name, doc) in _TOTAL_POWER.items():
+        for kind, (name, doc) in nm.TOTAL_POWER_VARS.items():
             terms = self._power_terms(kind)
             _refresh_expression(
                 self,
@@ -196,11 +190,25 @@ class _AggregatingFlowsheet(FlowsheetBlockData):
                 + 0 * pyunits.kW,
             )
 
+        fuel_terms = self._fuel_terms()
+        if fuel_terms:
+            _refresh_expression(
+                self,
+                nm.TOTAL_FUEL_USAGE,
+                (sorted(fuel_terms), time_index),
+                "Sum of the registered fuel-usage flows, by fuel name (m^3/hr).",
+                lambda fuel, t, _f=fuel_terms: sum(
+                    pyunits.convert(get(t), pyunits.m**3 / pyunits.hr)
+                    for get in _f[fuel]
+                )
+                + 0 * pyunits.m**3 / pyunits.hr,
+            )
+
         products = self._product_terms()
         if products:
             _refresh_expression(
                 self,
-                TOTAL_PRODUCT,
+                nm.TOTAL_PRODUCT,
                 (sorted(products), time_index),
                 "Sum of the registered product flows, by product name.",
                 lambda product, t, _p=products: sum(get(t) for get in _p[product]),
@@ -243,4 +251,26 @@ class PlantBlockData(_AggregatingFlowsheet):
             registry = getattr(block, "_io_registry", None)
             if isinstance(registry, IORegistry):
                 terms.extend(rec.var for rec in registry.power if rec.kind is kind)
+        return terms
+
+    def _fuel_terms(self) -> dict[str, list]:
+        """Return every child unit's registered fuel-usage flows, by fuel name.
+
+        Getters rather than Vars, for the same reason as
+        :meth:`_product_terms`: a network's contributions come from a
+        two-dimensional ``total_fuel_usage[fuel, t]``, not from a
+        time-indexed component of its own.
+
+        Returns:
+            ``{fuel_name: [getters]}``, each ``getter(t) -> flow``, for this
+            plant's units.
+        """
+        terms: dict[str, list] = {}
+        for block in self.component_data_objects(pyo.Block, descend_into=True):
+            registry = getattr(block, "_io_registry", None)
+            if isinstance(registry, IORegistry):
+                for rec in registry.fuel:
+                    terms.setdefault(rec.fuel_name, []).append(
+                        lambda t, _var=rec.var: _var[t]
+                    )
         return terms
