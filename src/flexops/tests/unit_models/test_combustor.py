@@ -104,25 +104,27 @@ def test_combustor_builds_one_port_per_inlet_name():
 
 @pytest.mark.unit
 def test_combustor_mixing_mass_balance_body():
-    """``mixing_mass_balance`` body is 0 iff outlet flow equals the inlet sum."""
-    _, unit = _combustor(3, inlet_names=("a", "b", "c"))
+    """The flue-gas flow is the fuel sum scaled up by the entrained air."""
+    ratio = 9.5
+    _, unit = _combustor(3, inlet_names=("a", "b", "c"), air_to_gas_ratio=ratio)
+    fuel_sum = 1.0 + 2.0 + 3.0
     for t in range(3):
         _fix(unit, "flow_in_a", t, 1.0)
         _fix(unit, "flow_in_b", t, 2.0)
         _fix(unit, "flow_in_c", t, 3.0)
-        _fix(unit, "flow_out", t, 6.0)
+        _fix(unit, "flow_out", t, (1 + ratio) * fuel_sum)
         assert pyo.value(unit.mixing_mass_balance[t].body) == pytest.approx(
-            6.0 - (1.0 + 2.0 + 3.0), abs=1e-9
+            0.0, abs=1e-9
         )
-        unit.flow_out[t].fix(7.0)
+        unit.flow_out[t].fix(fuel_sum)
         assert pyo.value(unit.mixing_mass_balance[t].body) == pytest.approx(
-            7.0 - (1.0 + 2.0 + 3.0), abs=1e-9
+            fuel_sum - (1 + ratio) * fuel_sum, abs=1e-9
         )
 
 
 @pytest.mark.unit
 def test_combustor_equalizes_inlet_intensive_states():
-    """Non-reference inlets' pressure/temperature/density equal the reference's."""
+    """Non-reference inlets' pressure/temperature equal the reference's."""
     _, unit = _combustor(3, inlet_names=("digester_gas", "natural_gas"))
     for t in range(3):
         unit.inlet_digester_gas_state.pressure[t].fix(101325.0)
@@ -141,7 +143,7 @@ def test_combustor_equalizes_inlet_intensive_states():
 def test_combustor_single_inlet_builds_no_state_equalities():
     """With one inlet, no ``inlet_state_equality_*`` constraints are built."""
     _, unit = _combustor(3)
-    for state_var in ("pressure", "temperature", "dens_mass"):
+    for state_var in ("pressure", "temperature"):
         assert unit.find_component(f"inlet_state_equality_{state_var}") is None
 
 
@@ -164,7 +166,8 @@ def test_combustor_arbitrary_inlet_count():
     for t in range(3):
         for name, val in zip(("a", "b", "c", "d"), (1.0, 2.0, 3.0, 4.0), strict=True):
             _fix(unit, f"flow_in_{name}", t, val)
-        unit.flow_out[t].fix(10.0)
+        ratio = pyo.value(unit.air_to_gas_ratio)
+        unit.flow_out[t].fix((1 + ratio) * 10.0)
         assert pyo.value(unit.mixing_mass_balance[t].body) == pytest.approx(
             0.0, abs=1e-9
         )
@@ -181,7 +184,7 @@ def test_combustor_registers_only_the_reference_inlet_intensive_states():
     }
     assert "inlet_digester_gas_state.flow_vol_phase" in inputs
     assert "inlet_natural_gas_state.flow_vol_phase" in inputs
-    for state_var in ("pressure", "temperature", "dens_mass"):
+    for state_var in ("pressure", "temperature"):
         assert f"inlet_digester_gas_state.{state_var}" in inputs
         assert f"inlet_natural_gas_state.{state_var}" not in inputs
 
@@ -190,7 +193,7 @@ def test_combustor_registers_only_the_reference_inlet_intensive_states():
         for rec in unit._io_registry.io_variables
         if rec.role == "output"
     }
-    for state_var in ("pressure", "temperature", "dens_mass", "flow_vol_phase"):
+    for state_var in ("pressure", "temperature", "flow_vol_phase"):
         assert f"outlet_state.{state_var}" in outputs
 
 
@@ -217,15 +220,35 @@ def test_combustor_outlet_temperature_is_the_flue_gas_temperature():
 
 
 @pytest.mark.unit
-def test_combustor_outlet_density_follows_ideal_gas():
-    """``outlet_density_eq``: outlet dens * T_flue == inlet dens * T_in."""
-    _, unit = _combustor(3, flue_gas_temperature=750 * pyunits.K)
+def test_combustor_air_to_gas_ratio_is_a_fixed_regressable_parameter():
+    """The ratio is a fixed, registered, non-negative scalar Var."""
+    _, unit = _combustor(3, air_to_gas_ratio=8.0)
+
+    assert unit.air_to_gas_ratio.fixed
+    assert pyo.value(unit.air_to_gas_ratio) == pytest.approx(8.0)
+    assert unit.air_to_gas_ratio.bounds == (0.0, None)
+    registered = {rec.name: rec.regressable for rec in unit._io_registry.parameters}
+    assert registered["air_to_gas_ratio"] is True
+
+
+@pytest.mark.unit
+def test_combustor_zero_air_to_gas_ratio_recovers_the_plain_inlet_sum():
+    """A zero ratio entrains no air, leaving flue volume == the fuel sum."""
+    _, unit = _combustor(3, inlet_names=("a", "b"), air_to_gas_ratio=0.0)
     for t in range(3):
-        unit.inlet_fuel_state.dens_mass[t].fix(1.2)
-        unit.inlet_fuel_state.temperature[t].fix(300.0)
-        expected_outlet_dens = 1.2 * 300.0 / 750.0
-        unit.outlet_state.dens_mass[t].fix(expected_outlet_dens)
-        assert pyo.value(unit.outlet_density_eq[t].body) == pytest.approx(0.0, rel=1e-6)
+        _fix(unit, "flow_in_a", t, 2.0)
+        _fix(unit, "flow_in_b", t, 3.0)
+        _fix(unit, "flow_out", t, 5.0)
+        assert pyo.value(unit.mixing_mass_balance[t].body) == pytest.approx(
+            0.0, abs=1e-9
+        )
+
+
+@pytest.mark.unit
+def test_combustor_rejects_a_negative_air_to_gas_ratio():
+    """A negative air-to-gas ratio is not a physical IC design."""
+    with pytest.raises(ValueError, match="air_to_gas_ratio"):
+        _combustor(3, air_to_gas_ratio=-1.0)
 
 
 @pytest.mark.unit
@@ -431,7 +454,7 @@ def test_combustor_exports_net_against_plant_load():
     from flexops.unit_models import ConstantEnergyIntensityModel
 
     m = dummy_gas_time_block(3)
-    m.aqueous_properties = SimpleAqueousFlow(fixed_density=True)
+    m.aqueous_properties = SimpleAqueousFlow()
     m.plant = PlantBlock(time_block=m.time_block)
     m.plant.combustor = Combustor(property_package=m.properties)
     m.plant.load = ConstantEnergyIntensityModel(property_package=m.aqueous_properties)

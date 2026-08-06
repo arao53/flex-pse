@@ -21,8 +21,12 @@ whether every port shares one ``property_package``.
 - If so, subclass the topology base matching the port count
   (``SISOBlock``/``SIDOBlock``/``DIDOBlock``). It already owns port
   construction and the per-stream mass balance; the new class only renames the
-  topology's generic roles into its own nomenclature (``_component_names``)
-  and adds the flow-to-energy relationship in ``build()``.
+  topology's generic roles into its own nomenclature (by re-declaring the
+  ``component_names`` config option with its own default mapping, as
+  :class:`~flexops.unit_models.reverseosmosis.ReverseOsmosis` does) and adds
+  the flow-to-energy relationship in ``build()``. A caller can override any
+  subset of those names per unit at build time by passing
+  ``component_names={...}``; ports are never renamed.
 - If the unit needs more than one property package (e.g. a fuel stream and an
   air stream on different flow bases), subclass
   :class:`~flexops.core.ops_block.OpsBlockData` directly instead — declare one

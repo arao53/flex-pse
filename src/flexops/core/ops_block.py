@@ -23,7 +23,7 @@ constraints; FlexParameterize drives this.
 
 import enum
 import numbers
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 
 import pyomo.environ as pyo
 from idaes.core import UnitModelBlockData, declare_process_block_class
@@ -109,6 +109,38 @@ def _costing_package_domain(value):
         field="costing_package",
         value=value,
     )
+
+
+def component_names_domain(defaults: Mapping[str, str]):
+    """Build the ``component_names`` ConfigValue domain for one topology base.
+
+    Args:
+        defaults: The topology's role -> Pyomo component name mapping, which a
+            caller's value overrides key by key.
+
+    Returns:
+        A domain function merging a caller's partial mapping onto ``defaults``.
+    """
+
+    def domain(value):
+        if not isinstance(value, Mapping):
+            raise FlexConfigError(
+                "component_names must be a mapping of role to Pyomo component "
+                f"name, got {type(value).__name__}.",
+                field="component_names",
+                value=value,
+            )
+        unknown = sorted(set(value) - set(defaults))
+        if unknown:
+            raise FlexConfigError(
+                f"component_names names unknown role(s) {unknown}; this unit's "
+                f"roles are {sorted(defaults)}.",
+                field="component_names",
+                value=unknown,
+            )
+        return {**defaults, **value}
+
+    return domain
 
 
 def _relaxation_domain(value):
@@ -199,24 +231,17 @@ class OpsBlockData(UnitModelBlockData):
         ),
     )
 
-    #: Role -> Pyomo component name. A topology base (SISO/SIDO/DIDO) declares
-    #: its own default vocabulary here (e.g. ``{"flow_in": "flow_in", ...}``);
-    #: a physical subclass renames any subset into its own vocabulary by
-    #: overriding the dict, e.g.
-    #: ``{**SIDOBlockData._component_names, "flow_in": "feed"}``.
-    _component_names: dict[str, str] = {}
-
     def _named(self, role: str) -> str:
-        """Return the Pyomo component name a topology base assigned to `role`.
+        """Return the Pyomo component name configured for `role`.
 
         Args:
-            role: A logical role declared in ``_component_names`` (e.g.
-                ``"flow_in"``, ``"split_fraction"``).
+            role: A logical role declared in this unit's ``component_names``
+                config option (e.g. ``"flow_in"``, ``"split_fraction"``).
 
         Returns:
             The Pyomo component name to build/look up for that role.
         """
-        return self._component_names[role]
+        return self.config.component_names[role]
 
     def build(self) -> None:
         """Set up dynamics defaults and the empty IO registry (no constraints)."""
@@ -590,8 +615,8 @@ class OpsBlockData(UnitModelBlockData):
         For each state-variable name exposed by ``inlet`` and not in
         ``exclude_vars``, adds an equality Constraint ``outlet_var[idx] ==
         inlet_var[idx]`` over every index the variable carries -- unless every
-        entry of that variable is already ``fixed`` (e.g. ``dens_mass`` under
-        ``fixed_density=True``), in which case building a redundant constraint
+        entry of that variable is already ``fixed`` (e.g. an inlet held at a
+        known pressure), in which case building a redundant constraint
         is skipped. This is the generic "everything not otherwise governed
         flows straight through" wiring: ``SISOBlock`` calls it with no
         exclusions (the flow pass-through is itself a pass-through equality);

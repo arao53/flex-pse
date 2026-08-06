@@ -82,7 +82,7 @@ def _battery_with_costing(
         # the fixed flow (m^3/hr) numerically equals the power draw (kW). Fix its
         # operation at every timestep -- built before cost_process(), which pulls
         # power from the model at call time.
-        m.properties = SimpleAqueousFlow(fixed_density=True)
+        m.properties = SimpleAqueousFlow()
         m.baseload = Pump(
             property_package=m.properties,
             energy_intensity=1.0 * pyunits.kWh / pyunits.m**3,

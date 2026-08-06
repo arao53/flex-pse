@@ -80,9 +80,6 @@ def test_siso_passes_through_all_state_vars():
     assert hasattr(unit, "pass_through_flow_vol_phase_eq")
     assert hasattr(unit, "pass_through_pressure_eq")
     assert hasattr(unit, "pass_through_temperature_eq")
-    # dens_mass is fixed under fixed_density (the property default), so no
-    # redundant pass-through equality is built for it.
-    assert not hasattr(unit, "pass_through_dens_mass_eq")
 
     for t in m.time_block.time_index:
         unit.inlet_state.flow_vol_phase[t, "Liq"].set_value(5.0)

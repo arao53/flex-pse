@@ -12,6 +12,7 @@ from pyomo.environ import units as pyunits
 
 from flexcore import nomenclature as nm
 from flexcore.exceptions import FlexConfigError
+from flexops.core.ops_block import component_names_domain
 from flexops.unit_models.base.sido import SIDOBlockData
 
 
@@ -89,22 +90,43 @@ class ReverseOsmosisData(SIDOBlockData):
         ),
     )
 
-    _component_names = {
-        **SIDOBlockData._component_names,
-        "flow_in": "feed",
-        "flow_out_a": "permeate",
-        "flow_out_b": "brine",
-        "split_fraction": "recovery",
-    }
+    # Re-declared, not merely re-defaulted: the inherited option's domain closes
+    # over the SIDO vocabulary, so a caller's partial override would otherwise
+    # merge onto SIDO's names instead of RO's.
+    del CONFIG["component_names"]
+    CONFIG.declare(
+        "component_names",
+        ConfigValue(
+            default={},
+            domain=component_names_domain(
+                {
+                    "flow_in": "feed",
+                    "flow_out_a": "permeate",
+                    "flow_out_b": "brine",
+                    "split_fraction": "recovery",
+                }
+            ),
+            description="Role -> Pyomo component name mapping, defaulting to "
+            "RO vocabulary. Override any subset; ports are never renamed.",
+        ),
+    )
 
     def build(self) -> None:
         """Build the SIDO base, then the constant-intensity electrical relation."""
         super().build()
         self.add_constant_intensity_relation(
-            self.feed,
+            self.find_component(self._named("flow_in")),
             kind=nm.PowerKind.ELECTRICAL,
             intensity=self.config.energy_intensity,
         )
+
+    def _split_parameter_value(self) -> float:
+        """Return the configured recovery — RO's name for the split parameter.
+
+        Returns:
+            The configured water recovery.
+        """
+        return self.config.recovery
 
     def _split_parameter_bounds(self) -> tuple[float, float]:
         """Return the configured recovery window, rejecting an unusable one.

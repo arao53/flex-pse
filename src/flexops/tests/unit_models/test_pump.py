@@ -54,7 +54,7 @@ class TestPumpHydraulic(UnitModelTestHarness):
             end_date="2025-01-01T00:45",
             time_step=15 * pyunits.min,
         )
-        m.properties = SimpleAqueousFlow(fixed_density=True, has_pressure=True)
+        m.properties = SimpleAqueousFlow(has_pressure=True)
         m.unit = Pump(
             property_package=m.properties,
             power_relation="hydraulic",

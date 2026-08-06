@@ -3,8 +3,9 @@ r"""Combustor(OpsBlockData): N gas inlets mixed into one flue-gas outlet (§3.2,
 Every unit model shipped so far moves water: each is built on a
 single-``property_package`` IO-topology base (``SISOBlock``/``SIDOBlock``/
 ``DIDOBlock``) that hardcodes the liquid phase. A combustor takes an
-**arbitrary number** of gas inlets -- fuel, air, supplemental gas streams --
-mixed into one flue-gas outlet, so no fixed-arity topology base fits (its port
+**arbitrary number** of fuel-gas inlets -- natural gas, digester gas,
+supplemental gas streams -- burned into one flue-gas outlet, so no fixed-arity
+topology base fits (its port
 count is a config option, §3.4's "choosing a base class" question). It
 subclasses :class:`~flexops.core.ops_block.OpsBlockData` directly instead,
 hand-writing its ports and balances, the way
@@ -37,20 +38,30 @@ rejected rather than silently falling back to the constant-intensity relation,
 and an option the resolved relation would ignore (``efficiency`` under
 constant intensity, ``energy_intensity`` under heating value) is rejected too.
 
-.. note::
-   The outlet volumetric flow is the **sum of inlet volumetric flows**. Real
-   combustion changes moles and volume; this keeps the balance linear and
-   consistent with every other volumetric balance in the library.
+**Combustion air is not a modeled inlet.** Every configured inlet is a fuel-gas
+stream; an IC unit entrains atmospheric air at roughly its design air-to-fuel
+ratio, so the flue-gas volume is the fuel burned scaled up by the air that came
+with it:
+
+.. math::
+
+    \dot{V}_{flue}[t] = (1 + \text{air\_to\_gas\_ratio})
+                        \sum_i \dot{V}_i[t]
+
+``air_to_gas_ratio`` is an **IC-design property**, not something derived here:
+estimate it or model it externally, then supply it (or regress it). Keeping it a
+multiplier — rather than a fuel/air reciprocal — keeps the balance linear even
+once a design mode or regression unfixes it. Real combustion also changes moles,
+which this volumetric balance does not track.
 
 .. note::
    Under the constant-intensity relation, ``energy_intensity`` is per unit
-   **total inlet volume** -- with no heating values there is no way to tell a
-   fuel inlet from an air inlet.
+   **total inlet volume**.
 
 .. note::
-   ``efficiency * heating_value_i`` and ``dens_mass * flue_gas_temperature``
-   are products of fixed scalar Vars: linear while both factors stay fixed,
-   **NLP** once a design mode or regression unfixes one -- the same caveat
+   ``efficiency * heating_value_i`` is a product of fixed scalar Vars: linear
+   while both factors stay fixed, **NLP** once a design mode or regression
+   unfixes one -- the same caveat
    :class:`~flexops.unit_models.storage.tank.Tank` documents for
    ``capacity * level``.
 """
@@ -106,6 +117,17 @@ def _heating_values_domain(value):
     return dict(value)
 
 
+def _air_to_gas_ratio_domain(value):
+    """ConfigValue domain: the air-to-gas ratio must be a non-negative float."""
+    if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0:
+        return float(value)
+    raise FlexConfigError(
+        f"air_to_gas_ratio must be a non-negative float, got {value!r}.",
+        field="air_to_gas_ratio",
+        value=value,
+    )
+
+
 def _efficiency_domain(value):
     """ConfigValue domain: efficiency must be a fraction in (0, 1]."""
     if isinstance(value, (int, float)) and 0 < value <= 1:
@@ -119,7 +141,7 @@ def _efficiency_domain(value):
 
 @declare_process_block_class("Combustor")
 class CombustorData(OpsBlockData):
-    r"""N gas inlets mixed into one flue-gas outlet, exporting electrical power.
+    r"""N fuel-gas inlets burned into one flue-gas outlet, exporting power.
 
     See the module docstring for both flow-to-power relations and the
     documented simplifications. ``inlet_names`` sets the inlet count and their
@@ -137,8 +159,10 @@ class CombustorData(OpsBlockData):
         ``efficiency`` (default 0.35): electrical conversion efficiency,
         heating-value relation only. ``energy_intensity`` (default 2.0
         kWh/m^3): electrical output per unit total inlet volume, constant-
-        intensity relation only. ``flue_gas_temperature`` (default 750 K):
-        the outlet temperature.
+        intensity relation only. ``air_to_gas_ratio`` (default 9.5): volumes of
+        combustion air entrained per unit volume of fuel gas, which sets the
+        flue-gas volume. ``flue_gas_temperature`` (default 750 K): the outlet
+        temperature.
 
     Example:
         >>> from pyomo.environ import units as pyunits
@@ -196,6 +220,19 @@ class CombustorData(OpsBlockData):
             description="Electrical output per unit total inlet volume (a "
             "fixed, regressable Var once built), kWh/m^3. Used only under "
             "the constant-intensity power relation.",
+        ),
+    )
+    CONFIG.declare(
+        "air_to_gas_ratio",
+        ConfigValue(
+            default=9.5,
+            domain=_air_to_gas_ratio_domain,
+            description="Volumes of combustion air entrained per unit volume of "
+            "fuel gas (a fixed, regressable Var once built), dimensionless. "
+            "Sets the flue-gas volume, since combustion air is not a modeled "
+            "inlet. An IC-design property: estimate it or model it externally "
+            "rather than deriving it here. The default ~9.5 is roughly "
+            "stoichiometric for natural gas.",
         ),
     )
     CONFIG.declare(
@@ -371,11 +408,23 @@ class CombustorData(OpsBlockData):
         )
         flow_out = self.flow_out
 
+        air_to_gas_ratio = self.declare_process_parameter(
+            "air_to_gas_ratio",
+            self.config.air_to_gas_ratio,
+            pyunits.dimensionless,
+            "Volumes of combustion air entrained per unit volume of fuel gas.",
+            bounds=(0.0, None),
+        )
+
         @self.Constraint(
-            tb.time_index, doc="Mixing: outlet flow == sum of inlet flows."
+            tb.time_index,
+            doc="Flue gas: outlet flow == (1 + air_to_gas_ratio) * total fuel "
+            "flow — the fuel burned plus the combustion air it entrains.",
         )
         def mixing_mass_balance(b, t):
-            return flow_out[t] == sum(flows[name][t] for name in inlet_names)
+            return flow_out[t] == (1 + air_to_gas_ratio) * sum(
+                flows[name][t] for name in inlet_names
+            )
 
         other_names = inlet_names[1:]
         if not other_names:
@@ -401,17 +450,16 @@ class CombustorData(OpsBlockData):
             )
 
     def _build_outlet_state(self) -> None:
-        """Pass pressure through from the reference inlet; fix temperature/density."""
+        """Pass pressure through from the reference inlet; fix the temperature."""
         tb = self._find_time_block()
         flow_name = self.config.property_package.get_flow_basis_var_name()
         ref_name = self._reference_inlet_name()
-        ref_port = getattr(self, f"inlet_{ref_name}")
-        ref_state = self.find_component(f"inlet_{ref_name}_state")
+        ref_port = self.find_component(f"inlet_{ref_name}")
 
         self.add_pass_through_constraints(
             ref_port,
             self.outlet,
-            exclude_vars=[flow_name, "temperature", "dens_mass"],
+            exclude_vars=[flow_name, "temperature"],
         )
 
         flue_gas_temperature = self.declare_process_parameter(
@@ -427,17 +475,6 @@ class CombustorData(OpsBlockData):
         )
         def outlet_temperature_eq(b, t):
             return b.outlet_state.temperature[t] == flue_gas_temperature
-
-        @self.Constraint(
-            tb.time_index,
-            doc="Isobaric ideal-gas density correction: outlet dens_mass * "
-            "flue_gas_temperature == reference inlet's dens_mass * temperature.",
-        )
-        def outlet_density_eq(b, t):
-            return (
-                b.outlet_state.dens_mass[t] * flue_gas_temperature
-                == ref_state.dens_mass[t] * ref_state.temperature[t]
-            )
 
     # -- power relation -------------------------------------------------------
 

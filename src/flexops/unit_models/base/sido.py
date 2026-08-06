@@ -21,7 +21,7 @@ from idaes.core import declare_process_block_class
 from pyomo.common.config import ConfigValue
 from pyomo.environ import units as pyunits
 
-from flexops.core.ops_block import OpsBlockData
+from flexops.core.ops_block import OpsBlockData, component_names_domain
 
 
 @declare_process_block_class("SIDOBlock")
@@ -30,9 +30,11 @@ class SIDOBlockData(OpsBlockData):
 
     Config:
         Inherits the OpsBlock config; adds ``split_fraction`` (default 0.5),
-        bounded here only to a physical fraction. A physical subclass may
-        rename the option and narrow that window (see ``_component_names``
-        and :meth:`_split_parameter_bounds`).
+        bounded here only to a physical fraction, and ``component_names``
+        (the role -> component name mapping, overridable per unit). A physical
+        subclass may rename the components, rename the option itself, and
+        narrow that window (see :meth:`_split_parameter_value` and
+        :meth:`_split_parameter_bounds`).
 
     Example:
         >>> from flexops.testing import dummy_time_block
@@ -54,16 +56,24 @@ class SIDOBlockData(OpsBlockData):
         ),
     )
 
-    #: Role -> Pyomo/config component name. A physical subclass renames any
-    #: subset of these into its own vocabulary (e.g. a membrane skid exposing
-    #: ``split_fraction`` as ``recovery``) by overriding this dict; ports
-    #: (``inlet``/``outlet_a``/``outlet_b``) are never renamed.
-    _component_names = {
-        "flow_in": "flow_in",
-        "flow_out_a": "flow_out_a",
-        "flow_out_b": "flow_out_b",
-        "split_fraction": "split_fraction",
-    }
+    CONFIG.declare(
+        "component_names",
+        ConfigValue(
+            default={},
+            domain=component_names_domain(
+                {
+                    "flow_in": "flow_in",
+                    "flow_out_a": "flow_out_a",
+                    "flow_out_b": "flow_out_b",
+                    "split_fraction": "split_fraction",
+                }
+            ),
+            description="Role -> Pyomo component name mapping. Override any "
+            "subset to rename this unit's flows and split parameter into its "
+            "own vocabulary (e.g. a membrane skid exposing split_fraction as "
+            "recovery); ports (inlet/outlet_a/outlet_b) are never renamed.",
+        ),
+    )
 
     def build(self) -> None:
         """Build the inlet/two-outlet ports and the split mass balance."""
@@ -83,6 +93,19 @@ class SIDOBlockData(OpsBlockData):
         """
         return (0.0, 1.0)
 
+    def _split_parameter_value(self) -> float:
+        """Return the configured value of the split parameter.
+
+        Read through a method because ``component_names`` renames the Pyomo
+        component only — the config option carrying the value is a separate,
+        class-fixed name, which a subclass that renames the option itself (as
+        ``ReverseOsmosis`` does with ``recovery``) overrides here.
+
+        Returns:
+            The configured split fraction.
+        """
+        return self.config.split_fraction
+
     def _build_mass_balance(self) -> None:
         """Build the split parameter, the split definition, and conservation."""
         tb = self._find_time_block()
@@ -98,14 +121,14 @@ class SIDOBlockData(OpsBlockData):
             self._named("flow_out_b"),
             pyo.Reference(self.outlet_b_state.flow_vol_phase[:, "Liq"]),
         )
-        flow_in = getattr(self, self._named("flow_in"))
-        flow_out_a = getattr(self, self._named("flow_out_a"))
-        flow_out_b = getattr(self, self._named("flow_out_b"))
+        flow_in = self.find_component(self._named("flow_in"))
+        flow_out_a = self.find_component(self._named("flow_out_a"))
+        flow_out_b = self.find_component(self._named("flow_out_b"))
 
         name = self._named("split_fraction")
         split = self.declare_process_parameter(
             name,
-            self.config[name],
+            self._split_parameter_value(),
             pyunits.dimensionless,
             f"Fraction of the inlet flow leaving through outlet_a ({name}). "
             "Fixed at the configured value; FlexParameterize may regress it.",

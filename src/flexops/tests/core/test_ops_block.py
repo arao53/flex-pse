@@ -593,22 +593,37 @@ def test_pass_through_noop_when_not_allowed():
 
 @pytest.mark.unit
 def test_pass_through_builds_equality_constraints():
-    """allow_pass_through=True links every non-fixed inlet state var to the outlet.
-
-    ``dens_mass`` is fixed by SimpleAqueousFlow at every index, so only
-    ``flow_vol_phase`` gets a pass-through constraint (the fully-fixed-var
-    skip branch).
-    """
+    """allow_pass_through=True links every non-fixed inlet state var to the outlet."""
     m = _model(4)
     m.unit = OpsBlock(property_package=m.props, allow_pass_through=True)
     m.unit.add_stream_ports()
     m.unit.add_pass_through_constraints(m.unit.inlet, m.unit.outlet)
     constraint = m.unit.pass_through_flow_vol_phase_eq
-    assert m.unit.find_component("pass_through_dens_mass_eq") is None
     for t in m.time_block.time_index:
         m.unit.inlet_state.flow_vol_phase[t, "Liq"].fix(2.0)
         m.unit.outlet_state.flow_vol_phase[t, "Liq"].set_value(2.0)
         assert pyo.value(constraint[t, "Liq"].body) == pytest.approx(0.0)
+
+
+@pytest.mark.unit
+def test_pass_through_skips_a_fully_fixed_state_var():
+    """A state var already fixed at every index gets no redundant equality."""
+    m = pyo.ConcreteModel()
+    m.time_block = TimeBlock(
+        start_date="2025-01-01",
+        end_date="2025-01-01T01:00",
+        time_step=15 * pyunits.min,
+    )
+    m.props = SimpleAqueousFlow(has_pressure=True)
+    m.unit = OpsBlock(property_package=m.props, allow_pass_through=True)
+    m.unit.add_stream_ports()
+    for t in m.time_block.time_index:
+        m.unit.inlet_state.pressure[t].fix(101325.0)
+
+    m.unit.add_pass_through_constraints(m.unit.inlet, m.unit.outlet)
+
+    assert m.unit.find_component("pass_through_pressure_eq") is None
+    assert m.unit.find_component("pass_through_flow_vol_phase_eq") is not None
 
 
 @pytest.mark.unit

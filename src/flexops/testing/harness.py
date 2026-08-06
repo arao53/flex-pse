@@ -57,10 +57,10 @@ def dummy_time_block(n: int = 3) -> pyo.ConcreteModel:
     Returns:
         A ``pyo.ConcreteModel`` with ``m.time_block`` (an ``n``-point,
         15-minute-resolution ``TimeBlock`` starting 2025-01-01) and
-        ``m.properties`` (a ``SimpleAqueousFlow(fixed_density=True)``).
+        ``m.properties`` (a ``SimpleAqueousFlow()``).
     """
     m = _dummy_time_block(n)
-    m.properties = SimpleAqueousFlow(fixed_density=True)
+    m.properties = SimpleAqueousFlow()
     return m
 
 
@@ -69,7 +69,7 @@ def dummy_gas_time_block(n: int = 3) -> pyo.ConcreteModel:
 
     The gas twin of :func:`dummy_time_block`, for unit models built on
     :class:`~flexops.properties.simple_gas.SimpleGasFlow`. Its state blocks
-    always carry four state variables (flow, density, pressure, temperature),
+    always carry three state variables (flow, pressure, temperature),
     where the aqueous package's default carries one, so a gas unit's
     degree-of-freedom accounting differs and needs this fixture rather than
     the aqueous one.

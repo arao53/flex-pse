@@ -22,7 +22,7 @@ from idaes.core import declare_process_block_class
 from pyomo.common.config import ConfigValue
 from pyomo.environ import units as pyunits
 
-from flexops.core.ops_block import OpsBlockData
+from flexops.core.ops_block import OpsBlockData, component_names_domain
 
 
 @declare_process_block_class("DIDOBlock")
@@ -52,16 +52,25 @@ class DIDOBlockData(OpsBlockData):
         ),
     )
 
-    #: Role -> Pyomo/config component name. A physical subclass renames any
-    #: subset of these into its own vocabulary by overriding this dict; ports
-    #: (``inlet_a``/``inlet_b``/``outlet_a``/``outlet_b``) are never renamed.
-    _component_names = {
-        "flow_in_a": "flow_in_a",
-        "flow_in_b": "flow_in_b",
-        "flow_out_a": "flow_out_a",
-        "flow_out_b": "flow_out_b",
-        "transfer_fraction": "transfer_fraction",
-    }
+    CONFIG.declare(
+        "component_names",
+        ConfigValue(
+            default={},
+            domain=component_names_domain(
+                {
+                    "flow_in_a": "flow_in_a",
+                    "flow_in_b": "flow_in_b",
+                    "flow_out_a": "flow_out_a",
+                    "flow_out_b": "flow_out_b",
+                    "transfer_fraction": "transfer_fraction",
+                }
+            ),
+            description="Role -> Pyomo component name mapping. Override any "
+            "subset to rename this unit's flows and transfer parameter into "
+            "its own vocabulary; ports (inlet_a/inlet_b/outlet_a/outlet_b) "
+            "are never renamed.",
+        ),
+    )
 
     def build(self) -> None:
         """Build the two-inlet/two-outlet ports and the coupled mass balances."""
@@ -84,10 +93,10 @@ class DIDOBlockData(OpsBlockData):
             self.add_component(
                 self._named(role), pyo.Reference(state.flow_vol_phase[:, "Liq"])
             )
-        flow_in_a = getattr(self, self._named("flow_in_a"))
-        flow_in_b = getattr(self, self._named("flow_in_b"))
-        flow_out_a = getattr(self, self._named("flow_out_a"))
-        flow_out_b = getattr(self, self._named("flow_out_b"))
+        flow_in_a = self.find_component(self._named("flow_in_a"))
+        flow_in_b = self.find_component(self._named("flow_in_b"))
+        flow_out_a = self.find_component(self._named("flow_out_a"))
+        flow_out_b = self.find_component(self._named("flow_out_b"))
 
         transfer = self.declare_process_parameter(
             self._named("transfer_fraction"),

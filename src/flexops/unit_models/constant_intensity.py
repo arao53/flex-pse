@@ -2,7 +2,7 @@ r"""ConstantEnergyIntensityModel(SISOBlock): the generic surrogate unit.
 
 FlexOps' one generic building block for anything without a bespoke physical
 topology — a whole treatment plant modeled as a single surrogate, as in the
-api-freeze script's ``svcw.plant``. There is deliberately **no** separate
+api-freeze script's ``waterfacility.plant``. There is deliberately **no** separate
 regression unit class: every unit defaults to a constant energy intensity, and
 FlexParameterize later upgrades that relationship by swapping this unit's
 ``power_electrical_relation`` Constraint in place.

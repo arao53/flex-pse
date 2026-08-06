@@ -177,7 +177,7 @@ subclass (below).
 Generic "energy factor × flow" unit (library table §3.4), generalizing the M04
 Pump pattern. This is FlexOps' one generic building block for anything without a
 bespoke physical topology (R11) — the api_freeze script uses it directly as
-`m.svcw.plant`, standing in for a whole treatment plant:
+`m.waterfacility.plant`, standing in for a whole treatment plant:
 - CONFIG: `property_package`, `energy_intensity` (kWh/m³, with units), optional
   `costing_package`; inherited OpsBlock flags.
 - Inlet/outlet ports via the property package; pass-through mass balance on

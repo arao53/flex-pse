@@ -48,7 +48,7 @@ def _build_headline(tariff=None) -> pyo.ConcreteModel:
     m.time_block = TimeBlock(
         start_date="2025-07-08", end_date="2025-07-09", time_step=1 * pyunits.hr
     )
-    m.properties = SimpleAqueousFlow(fixed_density=True)
+    m.properties = SimpleAqueousFlow()
     if tariff is None:
         m.costing = FlexCosting(time_block=m.time_block, tariff_file=str(_TARIFF_JSON))
     else:

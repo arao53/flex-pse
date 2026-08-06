@@ -5,15 +5,13 @@
     "end_date": "2025-01-30",
     "time_step": "15 min"
   },
-  "properties": {
-    "fixed_density": true
-  },
+  "properties": {},
   "costing": {
     "tariff_source": "tariff.json",
     "dr": {"events_source": "dr_events.json"}
   },
   "plant": {
-    "name": "svcw",
+    "name": "waterfacility",
     "units": {
       "tank": {
         "unit_model_class": "Tank"

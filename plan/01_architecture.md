@@ -312,7 +312,7 @@ physical subclasses add the flow↔energy relationship and any bounds.
 | `ReverseOsmosis` | `SIDOBlock` | RO skid: feed → permeate + brine, split renamed to `recovery` |
 | `Combustor` | `OpsBlockData` (no fixed-arity base fits an arbitrary inlet count) | N gas inlets mixed into one flue-gas outlet; exports `power_electrical` (negative, upper-bounded at 0) under a heating-value or constant-intensity relation, resolved from whether every inlet has a heating value |
 | `BatteryModel` | `OpsBlockData` (no fluid ports) | SOC dynamics, charge/discharge power + efficiency, capacity as fixable design var; optional mutually-exclusive charge/discharge binary; first-class `external_dispatch` (DERMS, §3.6) |
-| `ConstantEnergyIntensityModel` | `SISOBlock` | generic "energy factor × flow" unit — the default building block for anything without a bespoke physical topology (e.g. a whole plant modeled as a single surrogate, as in the api-freeze script's `svcw.plant`) |
+| `ConstantEnergyIntensityModel` | `SISOBlock` | generic "energy factor × flow" unit — the default building block for anything without a bespoke physical topology (e.g. a whole plant modeled as a single surrogate, as in the api-freeze script's `waterfacility.plant`) |
 
 The general pattern (the platform's core idea): a unit model defines flows in/out (its topology) and energy draw; **every unit defaults to a constant energy-intensity relationship**. FlexParameterize (§5) is what upgrades that relationship to a fitted linear/multiconvex/NN/ARIMA form — by swapping the
 unit's energy-relationship constraint in place, not by introducing a different unit class. These are usually energy relationships but can also modify the input/output relationship for quantities like biogas production, salt and permeate flux, etc., not by introducing a different unit class. Same base topology, controllable functional form. `Tank` inheriting `SISOBlock` but *disabling* logic constraints is the canonical example of a physical subclass turning off a base capability.
@@ -443,11 +443,12 @@ A composable unit-commitment (UC) formulation, applied per unit via its
 
 ### 3.7 Properties (`flexops/properties/simple_aqueous.py`)
 
-- `SimpleAqueousFlow(fixed_density=True)`: minimal
-  `PhysicalParameterBlock`/StateBlock pair — volumetric flow, optional pressure/
-  temperature, fixed density. Modeled on WaterTAP's zero-order property package
+- `SimpleAqueousFlow()`: minimal
+  `PhysicalParameterBlock`/StateBlock pair — volumetric flow plus optional
+  pressure/temperature. Modeled on WaterTAP's zero-order property package
   (`prop_ZO`) as the structural reference. Ports carry flow between units via
-  standard IDAES/Pyomo `Arc`s.
+  standard IDAES/Pyomo `Arc`s. Density is deliberately **not** a state variable:
+  no unit needed it, and carrying it only added a degree of freedom to fix.
 
 ## 4. Energy nomenclature (project standard)
 

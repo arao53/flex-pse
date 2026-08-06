@@ -5,9 +5,7 @@
     "end_date": "2025-07-09",
     "time_step": "1 hr"
   },
-  "properties": {
-    "fixed_density": true
-  },
+  "properties": {},
   "costing": {
     "tariff_source": "tariff_tou_demo.json"
   },

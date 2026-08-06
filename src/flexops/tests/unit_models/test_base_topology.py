@@ -5,7 +5,7 @@ import pytest
 from pyomo.network import Port
 
 from flexops.testing import dummy_time_block
-from flexops.unit_models.base import DIDOBlock, SIDOBlock
+from flexops.unit_models.base import DIDOBlock, SIDOBlock, SISOBlock
 
 
 @pytest.mark.unit
@@ -67,4 +67,61 @@ def test_dido_mass_balance_bodies():
         )
         assert pyo.value(m.unit.mass_balance_b[t].body) == pytest.approx(
             5.0 - (4.0 + 0.1 * 10.0), abs=1e-9
+        )
+
+
+@pytest.mark.unit
+def test_component_names_default_to_the_topology_vocabulary():
+    """Passing no override leaves each base's generic role names in place."""
+    m = dummy_time_block(3)
+    m.siso = SISOBlock(property_package=m.properties)
+    m.sido = SIDOBlock(property_package=m.properties)
+    m.dido = DIDOBlock(property_package=m.properties)
+
+    assert {"flow_in", "flow_out"} <= set(m.siso.config.component_names)
+    for name in ("flow_in", "flow_out"):
+        assert m.siso.find_component(name) is not None
+    for name in ("flow_in", "flow_out_a", "flow_out_b", "split_fraction"):
+        assert m.sido.find_component(name) is not None
+    for name in ("flow_in_a", "flow_in_b", "flow_out_a", "flow_out_b"):
+        assert m.dido.find_component(name) is not None
+
+
+@pytest.mark.unit
+def test_component_names_override_renames_a_subset_at_build_time():
+    """A partial override renames only the named roles; the rest keep defaults."""
+    m = dummy_time_block(3)
+    m.unit = SIDOBlock(
+        property_package=m.properties,
+        component_names={"flow_in": "raw", "split_fraction": "recovery"},
+    )
+
+    for name in ("raw", "recovery", "flow_out_a", "flow_out_b"):
+        assert m.unit.find_component(name) is not None
+    assert m.unit.find_component("flow_in") is None
+    assert m.unit.find_component("split_fraction") is None
+
+    # Ports are never renamed by component_names.
+    ports = {p.local_name for p in m.unit.component_objects(Port)}
+    assert ports == {"inlet", "outlet_a", "outlet_b"}
+
+
+@pytest.mark.unit
+def test_component_names_rejects_an_unknown_role():
+    """An unknown role key is a config error, not a silently ignored entry."""
+    m = dummy_time_block(3)
+    with pytest.raises(ValueError, match="bogus_role"):
+        m.unit = SISOBlock(
+            property_package=m.properties,
+            component_names={"bogus_role": "whatever"},
+        )
+
+
+@pytest.mark.unit
+def test_component_names_rejects_a_non_mapping():
+    """component_names must be a mapping of role to component name."""
+    m = dummy_time_block(3)
+    with pytest.raises(ValueError, match="component_names must be a mapping"):
+        m.unit = SISOBlock(
+            property_package=m.properties, component_names=["flow_in", "flow_out"]
         )

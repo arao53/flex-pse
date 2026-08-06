@@ -30,23 +30,23 @@ m = pyo.ConcreteModel()
 m.time_block = fo.TimeBlock(
     start_date="2025-01-01", end_date="2025-01-30", time_step=15 * pyunits.min
 )
-m.properties = fo.SimpleAqueousFlow(fixed_density=True)
+m.properties = fo.SimpleAqueousFlow()
 m.costing = fo.FlexCosting(
     time_block=m.time_block,
     tariff_file="tariff.json",
     dr_event_file="dr_events.json",
 )
-m.svcw = fo.PlantBlock(time_block=m.time_block)
-m.svcw.tank = fo.Tank(property_package=m.properties)
-m.svcw.plant = fo.ConstantEnergyIntensityModel(
+m.waterfacility = fo.PlantBlock(time_block=m.time_block)
+m.waterfacility.tank = fo.Tank(property_package=m.properties)
+m.waterfacility.plant = fo.ConstantEnergyIntensityModel(
     property_package=m.properties,
     energy_intensity=0.5 * pyunits.kWh / pyunits.m**3,
     costing_package=m.costing,
 )
-m.svcw.tank_to_plant = Arc(
-    source=m.svcw.tank.outlet, destination=m.svcw.plant.inlet
+m.waterfacility.tank_to_plant = Arc(
+    source=m.waterfacility.tank.outlet, destination=m.waterfacility.plant.inlet
 )
-m.svcw.battery = fo.BatteryModel(
+m.waterfacility.battery = fo.BatteryModel(
     capacity=1 * pyunits.kWh, costing_package=m.costing
 )
 m.costing.cost_process()

@@ -229,8 +229,8 @@ class PlantBlockData(_AggregatingFlowsheet):
         ...     time_step=1 * pyunits.hr,
         ... )
         >>> m.properties = fo.SimpleAqueousFlow()
-        >>> m.svcw = fo.PlantBlock(time_block=m.time_block)
-        >>> m.svcw.plant = fo.ConstantEnergyIntensityModel(
+        >>> m.waterfacility = fo.PlantBlock(time_block=m.time_block)
+        >>> m.waterfacility.plant = fo.ConstantEnergyIntensityModel(
         ...     property_package=m.properties
         ... )
     """

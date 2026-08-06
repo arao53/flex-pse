@@ -21,8 +21,9 @@ custom relationship instead.
 
 import pyomo.environ as pyo
 from idaes.core import declare_process_block_class
+from pyomo.common.config import ConfigValue
 
-from flexops.core.ops_block import OpsBlockData
+from flexops.core.ops_block import OpsBlockData, component_names_domain
 
 
 @declare_process_block_class("SISOBlock")
@@ -39,8 +40,18 @@ class SISOBlockData(OpsBlockData):
 
     CONFIG = OpsBlockData.CONFIG()
     CONFIG.get("allow_pass_through").set_default_value(True)
-
-    _component_names = {"flow_in": "flow_in", "flow_out": "flow_out"}
+    CONFIG.declare(
+        "component_names",
+        ConfigValue(
+            default={},
+            domain=component_names_domain(
+                {"flow_in": "flow_in", "flow_out": "flow_out"}
+            ),
+            description="Role -> Pyomo component name mapping. Override any "
+            "subset to rename this unit's flow components into its own "
+            "vocabulary; ports are never renamed.",
+        ),
+    )
 
     def build(self) -> None:
         """Build the inlet/outlet ports and the per-stream mass balance."""

@@ -39,7 +39,7 @@ ordered integer `Set` installed as their time domain *by reference*, so
 Both take the TimeBlock **explicitly**:
 
 ```python
-m.svcw = fo.PlantBlock(time_block=m.time_block)
+m.waterfacility = fo.PlantBlock(time_block=m.time_block)
 ```
 
 This is a deliberate correction to the original slide API, which left the time
