@@ -47,3 +47,36 @@ class PowerKind(enum.StrEnum):
 
     ELECTRICAL = "electrical"
     THERMAL = "thermal"
+
+
+POWER_VARS = {
+    PowerKind.ELECTRICAL: (POWER_ELECTRICAL, "Electrical draw of the unit"),
+    PowerKind.THERMAL: (POWER_THERMAL, "Thermal/gas-driven duty of the unit"),
+}
+"""dict: per-``PowerKind`` ``(var name, doc)`` for a unit's own power Var,
+consumed by :meth:`flexops.core.ops_block.OpsBlockData.declare_power`."""
+
+INTENSITY_VARS = {
+    PowerKind.ELECTRICAL: "energy_intensity",
+    PowerKind.THERMAL: "thermal_intensity",
+}
+"""dict: per-``PowerKind`` name of a unit's constant-intensity Param."""
+
+TOTAL_PRODUCT = "total_product"
+"""str: name of the product-flow aggregation Expression, indexed (product, t)."""
+
+TOTAL_POWER_VARS = {
+    PowerKind.ELECTRICAL: (
+        "total_electrical_power",
+        "Sum of the child units' power_electrical (kW).",
+    ),
+    PowerKind.THERMAL: (
+        "total_thermal_power",
+        "Sum of the child units' power_thermal (kW).",
+    ),
+}
+"""dict: per-``PowerKind`` ``(Expression name, doc)`` for a plant's or
+network's power-total aggregation, indexed over time."""
+
+TOTAL_FUEL_USAGE = "total_fuel_usage"
+"""str: name of the fuel-usage aggregation Expression, indexed (fuel_name, t)."""

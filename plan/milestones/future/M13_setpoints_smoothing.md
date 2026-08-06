@@ -47,7 +47,7 @@ def extract_setpoints(model_or_result, *, registry=None) -> pd.DataFrame:
     | column    | dtype          | meaning                                        |
     |-----------|----------------|------------------------------------------------|
     | timestamp | datetime64[ns] | wall-clock time of the step (TimeBlock mapping) |
-    | plant     | str            | dotted PlantBlock path, e.g. "campus.svcw"      |
+    | plant     | str            | dotted PlantBlock path, e.g. "campus.waterfacility"      |
     | unit      | str            | unit-model local name, e.g. "tank"              |
     | variable  | str            | variable local name, e.g. "flow_vol_phase"       |
     | value     | float64        | solved value at that timestep                   |
@@ -70,7 +70,7 @@ def extract_setpoints(model_or_result, *, registry=None) -> pd.DataFrame:
   iterable of registry entries (the `IORegistry` dataclasses) restricting
   extraction to just those variables — used to pull actuator subsets.
 - `plant` is the dotted path of PlantBlocks from the model root, so nested
-  plants (§3.3) yield `"campus.svcw"`; `unit` and `variable` are local component
+  plants (§3.3) yield `"campus.waterfacility"`; `unit` and `variable` are local component
   names only (no dots). Derive the path from the Pyomo block hierarchy names
   (implementer's choice on traversal mechanics).
 - Rows sorted by (`plant`, `unit`, `variable`, `timestamp`); stable output makes
@@ -168,7 +168,7 @@ Per 02 §5, setpoints/smoothing tests run on **stored solved-model value
 dictionaries**, never fresh solves — keeping everything unit tier.
 
 - `solved_tank_pump.json`, `solved_nested_plant.json` — flat dicts mapping fully
-  qualified component names (`"svcw.tank.volume[3]"`) to float values, plus a
+  qualified component names (`"waterfacility.tank.volume[3]"`) to float values, plus a
   small metadata block (horizon start/dt/n so tests can rebuild the matching
   model). Include the realized aggregate-power series and the tariff reference so
   the cost-reporting test can evaluate `FlexCosting.report_cost` post-hoc without
@@ -220,7 +220,7 @@ All in `src/flexschedule/tests/`, ALL `@pytest.mark.unit` (no solver anywhere).
 `test_setpoints.py`:
 - `test_schema_exact` — column list `== ["timestamp", "plant", "unit", "variable", "value", "units"]` (order included); dtypes: `datetime64[ns]`, str/object ×3 around a `float64` value column.
 - `test_values_match_fixture` — every row's `value` equals the fixture dict entry for `plant.unit.variable` at that timestep.
-- `test_nested_plant_paths` — nested-plant fixture yields `plant == "campus.svcw"`, `unit == "tank"`, no dots in `unit`/`variable`.
+- `test_nested_plant_paths` — nested-plant fixture yields `plant == "campus.waterfacility"`, `unit == "tank"`, no dots in `unit`/`variable`.
 - `test_registry_subset` — passing an explicit `registry` of one entry yields rows for only that variable.
 - `test_unsolved_raises` — model with unset values → `FlexDataError` naming the variable.
 - `test_schedule_result_input` — a hand-built `ScheduleResult` (wide frame + units attrs) melts to the identical schema.

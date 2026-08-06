@@ -45,12 +45,7 @@ from flexops.core.registration import (
     ParameterRecord,
     PowerRecord,
 )
-from flexops.core.time_block import TimeBlockData
-
-_POWER_VARS = {
-    nm.PowerKind.ELECTRICAL: (nm.POWER_ELECTRICAL, "Electrical draw of the unit"),
-    nm.PowerKind.THERMAL: (nm.POWER_THERMAL, "Thermal/gas-driven duty of the unit"),
-}
+from flexops.core.time_block import TimeBlockData, find_time_block
 
 
 class RelaxationPolicy(enum.StrEnum):
@@ -204,6 +199,37 @@ class OpsBlockData(UnitModelBlockData):
         ),
     )
 
+    #: Default role -> Pyomo component name mapping. Each IO-topology base sets
+    #: its own generic vocabulary here; a physical subclass renames any subset by
+    #: passing ``naming_dict`` to the base ``build()``, which registers it.
+    _component_names: dict[str, str] = {}
+
+    def create_stream_naming_convention(self, naming_dict: dict[str, str]) -> None:
+        """Register this unit's role -> Pyomo component name mapping.
+
+        Called once from an IO-topology base's ``build()``, before any named
+        component is built, with either that topology's default vocabulary or
+        the ``naming_dict`` a physical subclass passed up. Only the components
+        are renamed; ports never are.
+
+        Args:
+            naming_dict: The complete role -> component name mapping this unit
+                builds and looks names up through.
+        """
+        self._component_names = dict(naming_dict)
+
+    def _named(self, role: str) -> str:
+        """Return the Pyomo component name registered for `role`.
+
+        Args:
+            role: A logical role in this unit's naming convention (e.g.
+                ``"flow_in"``, ``"split_fraction"``).
+
+        Returns:
+            The Pyomo component name to build/look up for that role.
+        """
+        return self._component_names[role]
+
     def build(self) -> None:
         """Set up dynamics defaults and the empty IO registry (no constraints)."""
         super().build()
@@ -218,10 +244,11 @@ class OpsBlockData(UnitModelBlockData):
     def _find_time_block(self) -> TimeBlockData:
         """Return the unique TimeBlock on this unit's model.
 
-        Interim time access until the ``flowsheet()``: search the model for
-        exactly one TimeBlock. The result is not cached on the block —
-        assigning a Pyomo component to an attribute would trip
-        ``Block.__setattr__`` (pitfall 2).
+        Delegates to :func:`~flexops.core.time_block.find_time_block`, the one
+        auto-discovery implementation shared with ``PlantBlock``/
+        ``NetworkBlock``. The result is not cached on the block — assigning a
+        Pyomo component to an attribute would trip ``Block.__setattr__``
+        (pitfall 2).
 
         Returns:
             The model's ``TimeBlockData``.
@@ -229,18 +256,7 @@ class OpsBlockData(UnitModelBlockData):
         Raises:
             FlexConfigError: If the model has zero or several TimeBlocks.
         """
-        model = self.model()
-        found = [
-            b
-            for b in model.component_data_objects(pyo.Block, descend_into=True)
-            if isinstance(b, TimeBlockData)
-        ]
-        if len(found) != 1:
-            raise FlexConfigError(
-                f"Expected exactly one TimeBlock on model {model.name!r}, found "
-                f"{len(found)}. Build a TimeBlock on the model first.",
-            )
-        return found[0]
+        return find_time_block(self.model())
 
     # -- registration API -------------------------------------------------
 
@@ -406,7 +422,7 @@ class OpsBlockData(UnitModelBlockData):
         """
         self._check_power_kind(kind)
         self._check_power_metadata(kind, temperature)
-        name, doc = _POWER_VARS[kind]
+        name, doc = nm.POWER_VARS[kind]
         tb = self._find_time_block()
         self.add_component(
             name,
@@ -414,6 +430,56 @@ class OpsBlockData(UnitModelBlockData):
         )
         var = self.find_component(name)
         self.register_power(var, kind=kind, temperature=temperature)
+        return var
+
+    def declare_process_parameter(
+        self,
+        name: str,
+        value,
+        units,
+        doc: str,
+        *,
+        bounds: tuple[float | None, float | None] | None = None,
+        regressable: bool = True,
+    ):
+        """Create, fix, register, and return a scalar process-parameter Var.
+
+        The parameter twin of :meth:`declare_power`, and the one way flex-pse
+        declares a design or fitted coefficient: a **scalar Var fixed at its
+        configured value** rather than a ``Param``, so a design mode or a
+        regression can unfix it in place without any component being replaced
+        (conventions §9). Because it is registered, the value is reachable
+        afterwards through :meth:`update_parameters`.
+
+        Args:
+            name: The component name to attach the Var under.
+            value: The initial value, either a units-carrying Pyomo expression
+                (converted into ``units``) or a bare number, taken to be in
+                ``units`` already.
+            units: The Var's Pyomo units.
+            doc: The Var's ``doc=`` string; required, since the generated docs
+                render it.
+            bounds: Optional ``(lower, upper)`` bounds, in ``units``. Give them
+                whenever unfixing the parameter would otherwise admit a
+                physically meaningless value (an efficiency above one, say);
+                ``None`` leaves it unbounded.
+            regressable: Whether FlexParameterize may fit this parameter.
+
+        Returns:
+            The created, fixed scalar ``Var``.
+        """
+        magnitude = (
+            float(value)
+            if isinstance(value, numbers.Real) and not isinstance(value, bool)
+            else float(pyo.value(pyunits.convert(value, units)))
+        )
+        self.add_component(
+            name,
+            pyo.Var(initialize=magnitude, bounds=bounds, units=units, doc=doc),
+        )
+        var = self.find_component(name)
+        var.fix(magnitude)
+        self.register_process_parameter(var, regressable=regressable)
         return var
 
     def register_fuel_usage(self, var, fuel_name: str) -> None:
@@ -529,14 +595,15 @@ class OpsBlockData(UnitModelBlockData):
         outlet: Port,
         *,
         exclude_vars: Sequence[str] = (),
+        name_prefix: str = "pass_through",
     ) -> None:
         """Pass non-excluded, non-fixed inlet state variables straight to the outlet.
 
         For each state-variable name exposed by ``inlet`` and not in
         ``exclude_vars``, adds an equality Constraint ``outlet_var[idx] ==
         inlet_var[idx]`` over every index the variable carries -- unless every
-        entry of that variable is already ``fixed`` (e.g. ``dens_mass`` under
-        ``fixed_density=True``), in which case building a redundant constraint
+        entry of that variable is already ``fixed`` (e.g. an inlet held at a
+        known pressure), in which case building a redundant constraint
         is skipped. This is the generic "everything not otherwise governed
         flows straight through" wiring: ``SISOBlock`` calls it with no
         exclusions (the flow pass-through is itself a pass-through equality);
@@ -556,6 +623,10 @@ class OpsBlockData(UnitModelBlockData):
             exclude_vars: State-variable names to leave unlinked (e.g. a
                 topology's flow-basis variable when the unit governs flow
                 itself).
+            name_prefix: Prefix of the Constraint names this builds
+                (``"{name_prefix}_{state_var}_eq"``). A multi-outlet topology
+                calls this once per outlet and must vary the prefix, since two
+                calls would otherwise collide on one component name.
 
         Raises:
             FlexConfigError: If a name in ``exclude_vars`` is not a state
@@ -614,13 +685,157 @@ class OpsBlockData(UnitModelBlockData):
                 return _out[idx] == _in[idx]
 
             self.add_component(
-                f"pass_through_{name}_eq",
+                f"{name_prefix}_{name}_eq",
                 pyo.Constraint(
                     inlet_var.index_set(),
                     rule=_pass_through_rule,
                     doc=f"Pass-through: outlet {name} equals inlet {name}.",
                 ),
             )
+
+    # -- flow <-> energy relationship (the one place it is built) ----------
+
+    def add_constant_intensity_relation(
+        self,
+        flow,
+        *,
+        kind: nm.PowerKind = nm.PowerKind.ELECTRICAL,
+        intensity,
+        temperature=None,
+    ) -> None:
+        """Declare a power draw and tie it to ``flow`` by a constant intensity.
+
+        Every flex-pse unit's flow-to-energy relationship is built here (there
+        is no separate regression unit class): it declares ``power_<kind>[t]``,
+        an intensity Var (``energy_intensity`` for an electrical draw,
+        ``thermal_intensity`` for a heat duty) fixed at ``intensity`` and
+        registered as a regressable process parameter, and the equality
+
+        .. math:: P_{kind}[t] = \\text{intensity} \\cdot \\dot{V}[t]
+
+        as a Constraint named ``power_<kind>_relation``. **That name is the
+        swap contract**: FlexParameterize deactivates exactly it and attaches a
+        fitted replacement (see :meth:`swap_energy_relation`). When this unit
+        was built from a config whose ``SurrogateSpec`` asks for a richer
+        functional form, the swap is applied here, at construction.
+
+        Args:
+            flow: A time-indexed flow Var/Reference (``flow[t]``) the draw
+                scales with.
+            kind: The :class:`~flexcore.nomenclature.PowerKind` of the draw.
+            intensity: Energy per unit volume (e.g. ``0.5 * pyunits.kWh /
+                pyunits.m**3``), converted to kWh/m³.
+            temperature: The heat-duty temperature (required for
+                ``PowerKind.THERMAL``).
+        """
+        tb = self._find_time_block()
+        power = self.declare_power(kind, temperature=temperature)
+        self.register_io_variable(power, role="output")
+
+        intensity_var = self.declare_process_parameter(
+            nm.INTENSITY_VARS[kind],
+            intensity,
+            pyunits.kWh / pyunits.m**3,
+            f"{kind.value.capitalize()} energy per unit volume processed.",
+        )
+
+        relation = f"{nm.POWER_VARS[kind][0]}_relation"
+        self.add_component(
+            relation,
+            pyo.Constraint(
+                tb.time_index,
+                rule=lambda b, t: power[t]
+                == pyunits.convert(intensity_var * flow[t], pyunits.kW),
+                doc=f"{relation}: power == {nm.INTENSITY_VARS[kind]} * flow. "
+                "kWh/m^3 * m^3/hr = kW "
+                "exactly, no fudge factor. FlexParameterize swaps this "
+                "Constraint in place when it fits a richer relationship.",
+            ),
+        )
+
+        surrogate = getattr(self.config.flexops_config, "surrogate", None)
+        if surrogate is not None and surrogate.functional_form != "constant_intensity":
+            self.swap_energy_relation(surrogate, kind=kind)
+
+    def swap_energy_relation(
+        self, surrogate, *, kind: nm.PowerKind = nm.PowerKind.ELECTRICAL
+    ) -> None:
+        """Replace this unit's energy relationship in place, from a fitted spec.
+
+        Deactivates ``power_<kind>_relation`` (never deletes it — conventions
+        §9) and adds ``power_<kind>_relation_fitted`` built from ``surrogate``,
+        reusing the unit's existing registered variables, so ports and arcs are
+        untouched. One implementation, two callers: construction-time
+        (:meth:`add_constant_intensity_relation`, via a config's
+        ``SurrogateSpec``) and runtime (``flexparameterize.apply_to_model``).
+
+        The ``"linear"`` form is ``power[t] == intercept + Σ_i c_i *
+        input_i[t]``, where each input is named in
+        ``surrogate.input_variables``, resolved on this unit, and normalized by
+        its own units — so every coefficient is read in kW.
+
+        Args:
+            surrogate: The fitted
+                :class:`~flexcore.config.schema.SurrogateSpec`.
+            kind: Which power draw's relationship to replace.
+
+        Raises:
+            FlexConfigError: If the unit has no such relationship to swap, an
+                input variable is not found on the unit, or the functional form
+                is one of the reserved post-v0 values.
+        """
+        power_name = nm.POWER_VARS[kind][0]
+        relation = self.find_component(f"{power_name}_relation")
+        if relation is None:
+            raise FlexConfigError(
+                f"{self.name!r} has no {power_name}_relation to swap; only a "
+                "unit that built a constant-intensity relationship can be "
+                "re-fitted.",
+                field="functional_form",
+                value=surrogate.functional_form,
+            )
+        if surrogate.functional_form != "linear":
+            raise FlexConfigError(
+                f"Functional form {surrogate.functional_form!r} is reserved for "
+                "post-v0; use 'constant_intensity' or 'linear'.",
+                field="functional_form",
+                value=surrogate.functional_form,
+            )
+
+        tb = self._find_time_block()
+        power = self.find_component(power_name)
+        inputs = []
+        for input_name in surrogate.input_variables:
+            var = self.find_component(input_name)
+            if var is None:
+                raise FlexConfigError(
+                    f"Fitted relationship names input {input_name!r}, which is "
+                    f"not a variable on {self.name!r}.",
+                    field="input_variables",
+                    value=input_name,
+                )
+            inputs.append((surrogate.coefficients.get(input_name, 0.0), var))
+        intercept = surrogate.coefficients.get("intercept", 0.0)
+
+        relation.deactivate()
+        self.add_component(
+            f"{power_name}_relation_fitted",
+            pyo.Constraint(
+                tb.time_index,
+                rule=lambda b, t: power[t]
+                == (
+                    intercept
+                    + sum(
+                        coef * var[t] / pyunits.get_units(var[t])
+                        for coef, var in inputs
+                    )
+                )
+                * pyunits.kW,
+                doc="Fitted energy relationship (linear), replacing the "
+                f"deactivated {power_name}_relation. Coefficients are in kW "
+                "over each input's own units.",
+            ),
+        )
 
     # -- in-place parameter updates (FlexParameterize 2-way, §5) -----------
 
@@ -743,19 +958,61 @@ class OpsBlockData(UnitModelBlockData):
     def build_from_config(cls, cfg: UnitConfig, **kwargs):
         """Construct a unit from a validated ``UnitConfig``.
 
+        The per-unit primitive behind
+        :func:`~flexops.core.build.build_model`. A path or mapping is
+        round-tripped through the pydantic schema first, so a raw dict is never
+        passed onward (conventions §4) and an invalid one raises
+        ``pydantic.ValidationError`` naming the offending field path (the error
+        is deliberately **not** wrapped — the field path is the contract).
+
+        The unit-model class always comes from ``cfg.unit_model_class``,
+        resolved against ``flexops.unit_models``. Persisted construction
+        options carry their units as data: a value written
+        ``{"value": 0.5, "units": "kWh/m^3"}`` becomes a units-carrying Pyomo
+        expression, anything else passes through unchanged -- including a plain
+        string naming an enum member (``"detail": "polarization"``), which the
+        receiving ``ConfigValue``'s own domain then validates. Runtime-only
+        options that cannot be serialized (``property_package``,
+        ``costing_package``) are supplied by the caller through ``kwargs``,
+        which wins over the config on a key collision.
+
+        Args:
+            cfg: A ``UnitConfig``, or a mapping/path to validate into one.
+            **kwargs: Extra runtime construction options.
+
+        Returns:
+            The constructible unit block, to be assigned onto a model
+            (``m.u = OpsBlockData.build_from_config(cfg, ...)``).
+
         Raises:
-            NotImplementedError: Always; config-driven construction and the
-                whole-model ``flexops.build_model``.
+            pydantic.ValidationError: If ``cfg`` fails schema validation.
+            FlexConfigError: If ``cfg.unit_model_class`` is not a flexops
+                unit-model class.
         """
-        # TODO: whoever implements this JSON-to-model bridge must first parse the
-        # units that persisted configs carry as plain text into Pyomo units --
-        # CostingConfig.energy_prices entries ({"value": 0.12, "units": "USD/kWh"})
-        # and TimeConfig.time_step ("15 min"). No such parser exists anywhere yet;
-        # the runtime APIs take units-carrying Pyomo expressions directly, so
-        # nothing has needed one. Building the model straight from those strings
-        # without converting them would silently mis-scale prices and timesteps.
-        # See architecture §2.3 (the config artifact) and conventions §4 (the two
-        # config layers, which "never mix").
-        raise NotImplementedError(
-            "build_from_config is not implemented; build units directly."
+        # Local imports: both modules import this one, so the unit-model
+        # registry and the units parser are only reachable at call time.
+        from flexops import unit_models
+        from flexops.core.build import parse_quantity
+
+        if not isinstance(cfg, UnitConfig):
+            cfg = UnitConfig.model_validate(cfg)
+        block_class = getattr(unit_models, cfg.unit_model_class, None)
+        if block_class is None:
+            known = ", ".join(sorted(unit_models.__all__))
+            raise FlexConfigError(
+                f"Unknown unit_model_class {cfg.unit_model_class!r}. Known "
+                f"flexops unit models: {known}.",
+                field="unit_model_class",
+                value=cfg.unit_model_class,
+            )
+        options = {
+            name: parse_quantity(value, strict=False)
+            for name, value in cfg.construction_options.items()
+        }
+        return block_class(
+            **options,
+            unit_commitment=cfg.unit_commitment,
+            external_dispatch=cfg.external_dispatch,
+            flexops_config=cfg,
+            **kwargs,
         )

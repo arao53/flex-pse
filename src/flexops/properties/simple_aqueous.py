@@ -1,17 +1,16 @@
 """SimpleAqueousFlow: the minimal flow-carrying property package (§3.7).
 
 A minimal IDAES ``PhysicalParameterBlock``/``StateBlock`` pair carrying a
-volumetric flow and a mass density, structurally modeled on WaterTAP's
-zero-order package (``prop_ZO``). Ports built from these state blocks carry
-flow between flex-pse units via standard IDAES/Pyomo ``Arc``s.
+volumetric flow, structurally modeled on WaterTAP's zero-order package
+(``prop_ZO``). Ports built from these state blocks carry flow between flex-pse
+units via standard IDAES/Pyomo ``Arc``s.
 
-Volumetric flow is *extensive* (conserved across an arc); density and, when
-enabled, pressure and temperature are *intensive* (equal across an arc / at a
-node). The topology base classes build ports honoring that distinction
+Volumetric flow is *extensive* (conserved across an arc); pressure and
+temperature, when enabled, are *intensive* (equal across an arc / at a node).
+The topology base classes build ports honoring that distinction
 (``Port.Extensive`` for flow, ``Port.Equality`` for the intensive states).
-Pressure and temperature are **opt-in** (default off); density is fixed at
-the configured value by default (``fixed_density=True``) so the v0 default
-stays flow-only in its degrees of freedom.
+Pressure and temperature are **opt-in** (default off), so the v0 default stays
+flow-only in its degrees of freedom.
 """
 
 from idaes.core import (
@@ -24,7 +23,7 @@ from idaes.core import (
 )
 from idaes.core.util.initialization import fix_state_vars, revert_state_vars
 from pyomo.common.config import ConfigValue
-from pyomo.environ import NonNegativeReals, PositiveReals, Var, value
+from pyomo.environ import NonNegativeReals, PositiveReals, Var
 from pyomo.environ import units as pyunits
 
 from flexcore.exceptions import FlexConfigError
@@ -36,8 +35,6 @@ class SimpleAqueousFlowData(PhysicalParameterBlock):
 
     Config options (see the CONFIG entries below):
 
-    * ``fixed_density`` (default True) fixes each state block's ``dens_mass``
-      state variable at ``density`` (default ``1000 kg/m^3``).
     * ``has_pressure`` / ``has_temperature`` (default False) add the intensive
       ``pressure`` / ``temperature`` state variables.
 
@@ -45,26 +42,10 @@ class SimpleAqueousFlowData(PhysicalParameterBlock):
         >>> import pyomo.environ as pyo
         >>> import flexops as fo
         >>> m = pyo.ConcreteModel()
-        >>> m.props = fo.SimpleAqueousFlow(fixed_density=True)
+        >>> m.props = fo.SimpleAqueousFlow()
     """
 
     CONFIG = PhysicalParameterBlock.CONFIG()
-    CONFIG.declare(
-        "fixed_density",
-        ConfigValue(
-            default=True,
-            domain=bool,
-            description="Whether state blocks fix dens_mass at 'density'.",
-        ),
-    )
-    CONFIG.declare(
-        "density",
-        ConfigValue(
-            default=1000 * pyunits.kg / pyunits.m**3,
-            description="Units-carrying mass density used to initialize "
-            "dens_mass (and fix it when fixed_density is True).",
-        ),
-    )
     CONFIG.declare(
         "has_pressure",
         ConfigValue(
@@ -111,7 +92,6 @@ class SimpleAqueousFlowData(PhysicalParameterBlock):
         obj.add_properties(
             {
                 "flow_vol_phase": {"method": None, "units": "m^3/hr"},
-                "dens_mass": {"method": None, "units": "kg/m^3"},
                 "pressure": {"method": None, "units": "Pa"},
                 "temperature": {"method": None, "units": "K"},
             }
@@ -164,14 +144,14 @@ class _SimpleAqueousStateBlock(StateBlock):
     "SimpleAqueousStateBlock", block_class=_SimpleAqueousStateBlock
 )
 class SimpleAqueousStateBlockData(StateBlockData):
-    """State block carrying volumetric flow, density, and optional extras.
+    """State block carrying volumetric flow and optional extras.
 
     State variables are indexed over time directly: the owning unit passes the
     ``time_index`` Set via ``build_state_block(time_index=...)`` and gets a
     single scalar state block whose variables span the horizon. Extensive,
     per-phase quantities lead with time then phase (``flow_vol_phase[t, phase]``);
-    intensive stream properties drop the phase index (``dens_mass[t]``, and the
-    opt-in ``pressure[t]``/``temperature[t]``, assumed equal across phases).
+    intensive stream properties drop the phase index (the opt-in
+    ``pressure[t]``/``temperature[t]``, assumed equal across phases).
     """
 
     CONFIG = StateBlockData.CONFIG()
@@ -185,7 +165,7 @@ class SimpleAqueousStateBlockData(StateBlockData):
     )
 
     def build(self) -> None:
-        """Create time-indexed ``flow_vol_phase``, ``dens_mass``, and extras."""
+        """Create the time-indexed ``flow_vol_phase`` and any enabled extras."""
         super().build()
         time = self.config.time_index
         if time is None:
@@ -203,17 +183,6 @@ class SimpleAqueousStateBlockData(StateBlockData):
             units=pyunits.m**3 / pyunits.hr,
             doc="Volumetric flowrate by time and phase",
         )
-        self.dens_mass = Var(
-            time,
-            initialize=value(
-                pyunits.convert(self.params.config.density, pyunits.kg / pyunits.m**3)
-            ),
-            domain=PositiveReals,
-            units=pyunits.kg / pyunits.m**3,
-            doc="Mass density",
-        )
-        if self.params.config.fixed_density:
-            self.dens_mass.fix()
         if self.params.config.has_pressure:
             self.pressure = Var(
                 time,
@@ -232,11 +201,8 @@ class SimpleAqueousStateBlockData(StateBlockData):
             )
 
     def define_state_vars(self) -> dict:
-        """Return the state-variable dict (flow and density plus enabled ones)."""
-        state_vars = {
-            "flow_vol_phase": self.flow_vol_phase,
-            "dens_mass": self.dens_mass,
-        }
+        """Return the state-variable dict (flow plus any enabled extras)."""
+        state_vars = {"flow_vol_phase": self.flow_vol_phase}
         if hasattr(self, "pressure"):
             state_vars["pressure"] = self.pressure
         if hasattr(self, "temperature"):

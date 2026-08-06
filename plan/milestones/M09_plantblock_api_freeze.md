@@ -6,7 +6,7 @@
 Complete the flexops composition layer and the config-driven build path, then
 freeze the public API. Deliver:
 - **`PlantBlock`** (collection of units) and the new **`NetworkBlock`**
-  (composition of plants with inter-plant arcs) — both thin `dynamic=False`
+  (composition of plants with inter-plant constraints) — both thin `dynamic=False`
   flowsheets with recursive aggregation (§3.3, R7).
 - The **IO-topology base classes** `SIDOBlock` (1→2) and `DIDOBlock` (2→2)
   (`SISOBlock` already exists from M04), and the **physical zoo** built on them:
@@ -37,7 +37,7 @@ a breaking change.
   aggregation; auto-discovery as convenience)
 - `plan/01_architecture.md` §3.4 (R6: IO-topology bases `SISOBlock`/`SIDOBlock`/
   `DIDOBlock`; physical zoo `Separator`/`Exchanger`/`ElectrolysisSeparator`/
-  `ElectrolysisExchanger`/`ReverseOsmosisSkid`/`Combustor`;
+  `ElectrolysisExchanger`/`ReverseOsmosis`/`Combustor`;
   `ConstantEnergyIntensityModel`; the "helper functions attach the
   flow↔energy relationship" paragraph; `Electrolyzer`→`Separator`)
 - `plan/01_architecture.md` §2.3 (R3: config-driven-everything;
@@ -61,7 +61,7 @@ a breaking change.
 - `src/flexops/unit_models/separator.py` — `Separator(SIDOBlock)` (replaces the old `Electrolyzer`).
 - `src/flexops/unit_models/exchanger.py` — `Exchanger(DIDOBlock)`.
 - `src/flexops/unit_models/electrolysis.py` — `ElectrolysisSeparator(Separator)` (v0) and `ElectrolysisExchanger(Exchanger)` (stretch).
-- `src/flexops/unit_models/ro_skid.py` — `ReverseOsmosisSkid(Separator)` (v0).
+- `src/flexops/unit_models/reverseosmosis.py` — `ReverseOsmosis(Separator)` (v0).
 - `src/flexops/unit_models/combustor.py` — `Combustor(Separator)` (stretch).
 - `src/flexops/unit_models/constant_intensity.py` — `ConstantEnergyIntensityModel`.
 - `src/flexops/core/ops_block.py` — implement `build_from_config` for real (stub since M03); optional TimeBlock auto-discovery.
@@ -94,6 +94,8 @@ no compat layer), declared with `declare_process_block_class("PlantBlock", ...)`
   are added (implementer's choice — document which; the api_freeze script adds
   units after both plant and costing exist, so whatever you pick must survive that
   ordering — FlexCosting's `cost_process()` deferral from M07 is the precedent).
+- Users should be able to register products on a `PlantBlock` that are registered 
+  and then aggregated across the network (see `NetworkBlock`). 
 - **`PlantBlock` composes units, NOT plants** (R7): a plant containing plants is
   now a `NetworkBlock`. Do not overload `PlantBlock` to nest into itself.
 - **In-place parameterization, not block replacement** (R10/R11, §5): the M03
@@ -112,15 +114,22 @@ The **composition of plants** — a portfolio / campus / multi-facility system
 (§3.3, R7). Same thin `FlowsheetBlockData` / `dynamic=False` / injected
 `time_set` construction as `PlantBlock`:
 - CONFIG: `time_block` (explicit; `description=` set), same primary API.
-- Holds **child `PlantBlock`s** and **inter-plant arcs** between them.
-- Recursive aggregation: `total_electrical_power[t]` / `total_thermal_power[t]` are
-  Expressions summing each child **plant's** own totals (which in turn sum their
-  units), so `NetworkBlock` total = Σ child `PlantBlock` totals = Σ their units'
+- Holds **child `PlantBlock`s** and builds constraints between them.
+- `NetworkBlock` is responsible for aggregating energy and product flows among
+  plants. Expressions summing each child **plant's** own totals (which in turn sum 
+  their units), so `NetworkBlock` total = Σ child `PlantBlock` totals = Σ their units'
   `power_electrical`/`power_thermal` (the composition invariant, §3.3). Use the same
   lazy/idempotent aggregation pattern as `PlantBlock`.
+- When aggregating product flows, there should be an option to register/aggregate both
+  the amount and a quality indicator associated with the resource. For example, 
+  if aggregating product flow from a plant, the plant block is responsible for tracking
+  and registering the quality. The network block is responsible for aggregating by either 
+  only requiring mixing between 
 - Unit/plant discovery must **not double-count**: recurse into child plants OR
   their units, never both (Pitfall 7). A `NetworkBlock` sums plant totals; it does
   not re-walk each plant's units directly.
+- `NetworkBlock` does not use arcs directly. However, it will form custom constraints
+  and aggregation across properties in the plant block. 
 
 ### IO-topology base classes (`src/flexops/unit_models/base/`)
 Extend the M04 topology-base pattern (`base/siso.py` — `SISOBlock` — already
@@ -143,12 +152,12 @@ relationship** (constant intensity in v0). Same base topology, controllable
 functional form.
 
 **v0 (must build this session):** the bases + `Separator` + `Exchanger` + at
-least `ReverseOsmosisSkid` + one electrolysis variant:
+least `ReverseOsmosis` + one electrolysis variant:
 - `Separator(SIDOBlock)` — one feed split into two product streams. **This
   replaces the old `Electrolyzer` name** (R6). Constant-intensity energy relation
   wiring `power_electrical[t]`.
 - `Exchanger(DIDOBlock)` — two inlet / two outlet streams exchanging mass/energy.
-- `ReverseOsmosisSkid(Separator)` — RO skid: feed → permeate + concentrate; thin
+- `ReverseOsmosis(Separator)` — RO skid: feed → permeate + concentrate; thin
   subclass fixing the split semantics + energy relation.
 - `ElectrolysisSeparator(Separator)` — electrolysis modeled as a separation;
   exercises **`power_thermal`** in addition to `power_electrical` (register both
@@ -168,7 +177,7 @@ subclass (below).
 Generic "energy factor × flow" unit (library table §3.4), generalizing the M04
 Pump pattern. This is FlexOps' one generic building block for anything without a
 bespoke physical topology (R11) — the api_freeze script uses it directly as
-`m.svcw.plant`, standing in for a whole treatment plant:
+`m.waterfacility.plant`, standing in for a whole treatment plant:
 - CONFIG: `property_package`, `energy_intensity` (kWh/m³, with units), optional
   `costing_package`; inherited OpsBlock flags.
 - Inlet/outlet ports via the property package; pass-through mass balance on
@@ -228,7 +237,7 @@ through `load_model_config`/pydantic first — never a raw dict, conventions §4
    `PlantConfig` (§2.3): a `NetworkBlock` of `PlantBlock`s, or a single
    `PlantBlock`, each populated with units via `OpsBlock.build_from_config` on their
    `UnitConfig`s;
-4. construct the arcs (intra-plant and inter-plant) declared in the config;
+4. construct the arcs (intra-plant) and network constraints declared in the config;
 5. apply any per-unit `unit_commitment` (§3.5) and `external_dispatch` (§3.2)
    declared in the config;
 6. finalize costing (`cost_process()` deferral, M07) and return the
@@ -294,6 +303,10 @@ explicitly. Explicit argument is the primary, tested-first path (architecture §
 10. **Config vs. imperative drift.** `api_freeze_config.json` must describe the
     *same* model; the equal-objective test is the contract. Keep the config
     minimal and hand-readable; validate it against the checked-in JSON Schema.
+11. **Using arcs at the network level.** Since the `NetworkBlock` does not explicitly
+    touch units, it won't use arcs in the same way (copying state properties). 
+    Instead, configure a way to build constraints between any two objects within a plant 
+    but at the network level (e.g. heat in vs. heating load, product out vs. feed in). 
 
 ## Tests
 `src/flexops/tests/core/test_plant_block.py`
@@ -324,7 +337,7 @@ explicitly. Explicit argument is the primary, tested-first path (architecture §
 `src/flexops/tests/unit_models/test_separator.py`
 - `TestSeparator(UnitModelTestHarness)` — harness subclass (build/units/
   registration/DoF `unit`; solve `component`).
-- `TestReverseOsmosisSkid(UnitModelTestHarness)` and
+- `TestReverseOsmosis(UnitModelTestHarness)` and
   `TestElectrolysisSeparator(UnitModelTestHarness)` — harness subclasses; the
   electrolysis one asserts **both** `power_electrical` and `power_thermal` are
   registered (the `power_thermal` exerciser, §3.4).
@@ -377,7 +390,7 @@ explicitly. Explicit argument is the primary, tested-first path (architecture §
   short section on the config-driven twin (`build_model(load_model_config(...))`)
   and where `NetworkBlock` fits for multi-plant systems.
 - Reference pages (autosummary + `.. flexops-unit-tables::`) for the new units:
-  `Separator`, `Exchanger`, `ReverseOsmosisSkid`, `ElectrolysisSeparator` (and the
+  `Separator`, `Exchanger`, `ReverseOsmosis`, `ElectrolysisSeparator` (and the
   stretch units if built), `ConstantEnergyIntensityModel`; document the
   `SIDOBlock`/`DIDOBlock` topology bases; add `PlantBlock`, `NetworkBlock`, and
   `build_model` to `docs/reference/flexops/core.rst`.
@@ -396,7 +409,7 @@ explicitly. Explicit argument is the primary, tested-first path (architecture §
 - [ ] `PlantBlock` aggregates its units correctly (constraint-body test).
 - [ ] `NetworkBlock` composes plants with inter-plant arcs; network total == Σ plant totals == Σ unit works; no double-counting.
 - [ ] `SIDOBlock` and `DIDOBlock` topology bases build with correct ports and mass balances; harness-tested physical units on top.
-- [ ] v0 zoo present: `Separator`, `Exchanger`, `ReverseOsmosisSkid`, and one electrolysis variant (`ElectrolysisSeparator`, exercising `power_thermal`); stretch units built or deferral noted in the PR.
+- [ ] v0 zoo present: `Separator`, `Exchanger`, `ReverseOsmosis`, and one electrolysis variant (`ElectrolysisSeparator`, exercising `power_thermal`); stretch units built or deferral noted in the PR.
 - [ ] No `Electrolyzer` class exists — it is `Separator`/`ElectrolysisSeparator` (R6).
 - [ ] `build_from_config` builds a real unit; bad config → `ValidationError` naming the field path.
 - [ ] `build_model(config)` constructs TimeBlock + properties + costing + tree + arcs from one config; equals the hand-built model; bad config → `ValidationError` naming the field path.

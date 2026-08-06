@@ -8,14 +8,17 @@ fixed at the constructor value by default (operations mode); a
 ``costing_package=`` associates it with :meth:`FlexCostingData.set_design_mode`/
 :meth:`~flexops.costing.flex_costing.FlexCostingData.set_operations_mode`.
 
-* ``UnitCommitmentConfig.status`` defaults ``True`` project-wide; here, when
-  ``True``, :func:`~flexops.logic.status.add_status` is attached to
+* ``UnitCommitmentConfig.status`` defaults ``True`` project-wide, but
+  ``BatteryModel`` overrides that default to ``False`` -- a bare
+  ``BatteryModel(capacity=...)`` builds as a plain LP, no on/off binary. A
+  caller opts in with ``unit_commitment=UnitCommitmentConfig(status=True)``;
+  when ``True``, :func:`~flexops.logic.status.add_status` is attached to
   ``power_charge`` and a symmetric ``discharge_exclusivity`` constraint bounds
   ``power_discharge`` by ``(1 - status)`` -- one binary gives
   mutually-exclusive charge/discharge. This requires both
   ``power_charge_max``/``power_discharge_max`` (the semicontinuous link needs a
-  finite bound); a caller who wants an unbounded, non-UC battery passes
-  ``unit_commitment=UnitCommitmentConfig(status=False)``.
+  finite bound), which -- like the non-UC default case -- falls back to a 1C
+  rate (the whole capacity in one hour) when neither is given.
 * ``soc[t]`` is a Var, bounded by ``soc_min``/``soc_max``, tied to
   ``charge[t]``/``capacity`` by the equality Constraint ``soc_capacity_link``
   (``charge[t] == soc[t] * capacity``), matching the milestone spec literally.
@@ -87,6 +90,7 @@ from pyomo.common.config import ConfigValue
 from pyomo.environ import units as pyunits
 
 from flexcore import nomenclature as nm
+from flexcore.config.schema import UnitCommitmentConfig
 from flexcore.exceptions import FlexConfigError
 from flexops.core.ops_block import OpsBlockData
 from flexops.logic.status import add_status
@@ -108,11 +112,28 @@ def _efficiency_domain(value):
     )
 
 
+def _power_max_kw(configured, fallback_kw: float | None) -> float | None:
+    """Resolve a configured power limit to kW, or fall back.
+
+    Args:
+        configured: The units-carrying configured limit, or ``None``.
+        fallback_kw: The kW value to use when none was configured (``None``
+            leaves the actuator unbounded above).
+
+    Returns:
+        The limit in kW, or ``None`` for unbounded.
+    """
+    if configured is None:
+        return fallback_kw
+    return pyo.value(pyunits.convert(abs(configured), pyunits.kW))
+
+
 @declare_process_block_class("BatteryModel")
 class BatteryModelData(OpsBlockData):
     """A battery: SOC dynamics, fixable capacity, DERMS dispatch (module docstring)."""
 
     CONFIG = OpsBlockData.CONFIG()
+    CONFIG.get("unit_commitment").set_default_value(UnitCommitmentConfig(status=False))
     CONFIG.declare(
         "capacity",
         ConfigValue(
@@ -124,18 +145,20 @@ class BatteryModelData(OpsBlockData):
         "power_charge_max",
         ConfigValue(
             default=None,
-            description="Maximum charging power, kW. None (default) leaves "
-            "power_charge unbounded above; required (along with "
-            "power_discharge_max) when unit_commitment.status is enabled, "
-            "since the semicontinuous link needs a finite bound.",
+            description="Maximum charging power, kW. None (default) falls back "
+            "to a 1C rate (the whole capacity in one hour) -- with "
+            "unit_commitment.status enabled, its semicontinuous link needs a "
+            "finite bound; the fallback applies either way so a bare battery "
+            "is never unbounded. Give it and power_discharge_max together or "
+            "not at all.",
         ),
     )
     CONFIG.declare(
         "power_discharge_max",
         ConfigValue(
             default=None,
-            description="Maximum discharging power, kW. Same requirement as "
-            "power_charge_max.",
+            description="Maximum discharging power, kW. Same rule as "
+            "power_charge_max, including the 1C fallback.",
         ),
     )
     CONFIG.declare(
@@ -204,18 +227,19 @@ class BatteryModelData(OpsBlockData):
         super().build()
         tb = self._find_time_block()
 
-        if self.config.unit_commitment.status and (
-            self.config.power_charge_max is None
-            or self.config.power_discharge_max is None
-        ):
+        given = (
+            self.config.power_charge_max is not None,
+            self.config.power_discharge_max is not None,
+        )
+        if self.config.unit_commitment.status and any(given) and not all(given):
             raise FlexConfigError(
-                "BatteryModel requires both power_charge_max and "
-                "power_discharge_max when unit_commitment.status is enabled "
-                "(the default): the mutually-exclusive charge/discharge link "
-                "needs a finite bound. Pass both, or disable status via "
-                "unit_commitment=UnitCommitmentConfig(status=False).",
-                field="unit_commitment.status",
-                value=True,
+                "BatteryModel needs power_charge_max and power_discharge_max "
+                "together when unit_commitment.status is enabled: the "
+                "mutually-exclusive charge/discharge link needs a finite "
+                "bound on each side. Pass both, or pass neither (both then "
+                "default to a 1C rate, capacity per hour).",
+                field="power_discharge_max" if given[0] else "power_charge_max",
+                value=None,
             )
 
         capacity_val = pyo.value(pyunits.convert(self.config.capacity, pyunits.kWh))
@@ -245,16 +269,12 @@ class BatteryModelData(OpsBlockData):
         self.soh.fix(soh_val)
         self.register_process_parameter(self.soh, regressable=True)
 
-        charge_max_val = (
-            pyo.value(pyunits.convert(abs(self.config.power_charge_max), pyunits.kW))
-            if self.config.power_charge_max is not None
-            else None
-        )
-        discharge_max_val = (
-            pyo.value(pyunits.convert(abs(self.config.power_discharge_max), pyunits.kW))
-            if self.config.power_discharge_max is not None
-            else None
-        )
+        # A battery with no explicit power rating falls back to a 1C bound --
+        # its whole capacity in one hour, the textbook default -- regardless
+        # of unit_commitment.status, so a bare battery is never unbounded.
+        one_c = capacity_val
+        charge_max_val = _power_max_kw(self.config.power_charge_max, one_c)
+        discharge_max_val = _power_max_kw(self.config.power_discharge_max, one_c)
 
         self.power_charge = pyo.Var(
             tb.time_index,

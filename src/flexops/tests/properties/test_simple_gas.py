@@ -4,7 +4,7 @@ Mirrors the test skeleton of ``test_simple_aqueous.py``; the gas package has no
 config options, so there are no package-specific extras.
 
 State variables are indexed over time directly (``flow_vol_phase[t, phase]``,
-``dens_mass[t]`` and so on); the owning unit passes a ``time_index`` Set and
+``pressure[t]`` and so on); the owning unit passes a ``time_index`` Set and
 gets a single scalar state block rather than one block per time point.
 """
 
@@ -56,11 +56,10 @@ def test_phase_and_component(model):
 
 @pytest.mark.unit
 def test_define_state_vars(model):
-    """define_state_vars exposes flow, density, pressure, and temperature."""
+    """define_state_vars exposes flow, pressure, and temperature."""
     model.state = model.props.build_state_block(time_index=model.time)
     assert set(model.state.define_state_vars().keys()) == {
         "flow_vol_phase",
-        "dens_mass",
         "pressure",
         "temperature",
     }
@@ -68,13 +67,12 @@ def test_define_state_vars(model):
 
 @pytest.mark.unit
 def test_state_var_units(model):
-    """Flow, density, pressure, and temperature carry the expected units."""
+    """Flow, pressure, and temperature carry the expected units."""
     model.state = model.props.build_state_block(time_index=model.time)
     state_block = model.state
     assert_units_equivalent(
         state_block.flow_vol_phase[0, "Vap"], pyunits.m**3 / pyunits.hr
     )
-    assert_units_equivalent(state_block.dens_mass[0], pyunits.kg / pyunits.m**3)
     assert_units_equivalent(state_block.pressure[0], pyunits.Pa)
     assert_units_equivalent(state_block.temperature[0], pyunits.K)
 
@@ -85,20 +83,17 @@ def test_state_var_domains(model):
     model.state = model.props.build_state_block(time_index=model.time)
     state_block = model.state
     assert state_block.flow_vol_phase[0, "Vap"].domain is pyo.NonNegativeReals
-    for var in (
-        state_block.dens_mass[0],
-        state_block.pressure[0],
-        state_block.temperature[0],
-    ):
+    for var in (state_block.pressure[0], state_block.temperature[0]):
         assert var.domain is pyo.PositiveReals
 
 
 @pytest.mark.unit
 def test_metadata_properties_and_units(model):
-    """Metadata declares the four properties and the five base default units."""
+    """Metadata declares the three properties and the five base default units."""
     meta = model.props.get_metadata()
     supported = {p.name for p in meta.properties.list_supported_properties()}
-    assert {"flow_vol_phase", "dens_mass", "pressure", "temperature"} <= supported
+    assert {"flow_vol_phase", "pressure", "temperature"} <= supported
+    assert "dens_mass" not in supported
     assert meta.default_units["time"] == pyunits.hr
     assert meta.default_units["length"] == pyunits.m
     assert meta.default_units["mass"] == pyunits.kg

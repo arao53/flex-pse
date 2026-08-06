@@ -1,15 +1,14 @@
 """SimpleGasFlow: the minimal gas-stream property package (§3.7).
 
 The gas-phase counterpart of
-:mod:`flexops.properties.simple_aqueous`. Where the aqueous package is
-flow-only with opt-in extras, a gas stream's density varies with pressure and
-temperature, so every ``SimpleGasFlow`` state block **always** carries four
-state variables: ``flow_vol_phase``, ``dens_mass``, ``pressure``, and
-``temperature``. No equation of state links them — units add whatever relation
-they need as their own constraints.
+:mod:`flexops.properties.simple_aqueous`. Where the aqueous package's pressure
+and temperature are opt-in, a gas stream's conditions always matter, so every
+``SimpleGasFlow`` state block **always** carries three state variables:
+``flow_vol_phase``, ``pressure``, and ``temperature``. No equation of state
+links them — units add whatever relation they need as their own constraints.
 
-Volumetric flow is *extensive* (conserved across an arc); density, pressure,
-and temperature are *intensive* (equal across an arc / at a node). The topology
+Volumetric flow is *extensive* (conserved across an arc); pressure and
+temperature are *intensive* (equal across an arc / at a node). The topology
 base classes build ports honoring that distinction (``Port.Extensive`` for
 flow, ``Port.Equality`` for the intensive states).
 """
@@ -35,8 +34,8 @@ class SimpleGasFlowData(PhysicalParameterBlock):
     """Parameter block for a simple gas stream.
 
     State blocks built from this package always carry ``flow_vol_phase``,
-    ``dens_mass``, ``pressure``, and ``temperature``; there are no config
-    options beyond the ``PhysicalParameterBlock`` base.
+    ``pressure``, and ``temperature``; there are no config options beyond the
+    ``PhysicalParameterBlock`` base.
 
     Example:
         >>> import pyomo.environ as pyo
@@ -69,7 +68,6 @@ class SimpleGasFlowData(PhysicalParameterBlock):
         obj.add_properties(
             {
                 "flow_vol_phase": {"method": None, "units": "m^3/hr"},
-                "dens_mass": {"method": None, "units": "kg/m^3"},
                 "pressure": {"method": None, "units": "Pa"},
                 "temperature": {"method": None, "units": "K"},
             }
@@ -120,14 +118,14 @@ class _SimpleGasStateBlock(StateBlock):
 
 @declare_process_block_class("SimpleGasStateBlock", block_class=_SimpleGasStateBlock)
 class SimpleGasStateBlockData(StateBlockData):
-    """State block carrying flow, density, pressure, and temperature.
+    """State block carrying flow, pressure, and temperature.
 
     State variables are indexed over time directly: the owning unit passes the
     ``time_index`` Set via ``build_state_block(time_index=...)`` and gets a
     single scalar state block whose variables span the horizon. Extensive,
     per-phase quantities lead with time then phase (``flow_vol_phase[t, phase]``);
-    intensive stream properties drop the phase index (``dens_mass[t]``,
-    ``pressure[t]``, ``temperature[t]``, assumed equal across phases).
+    intensive stream properties drop the phase index (``pressure[t]``,
+    ``temperature[t]``, assumed equal across phases).
     """
 
     CONFIG = StateBlockData.CONFIG()
@@ -141,7 +139,7 @@ class SimpleGasStateBlockData(StateBlockData):
     )
 
     def build(self) -> None:
-        """Create the four time-indexed gas state variables."""
+        """Create the three time-indexed gas state variables."""
         super().build()
         time = self.config.time_index
         if time is None:
@@ -159,13 +157,6 @@ class SimpleGasStateBlockData(StateBlockData):
             units=pyunits.m**3 / pyunits.hr,
             doc="Volumetric flowrate by time and phase",
         )
-        self.dens_mass = Var(
-            time,
-            initialize=1.2,
-            domain=PositiveReals,
-            units=pyunits.kg / pyunits.m**3,
-            doc="Mass density",
-        )
         self.pressure = Var(
             time,
             initialize=101325.0,
@@ -182,10 +173,9 @@ class SimpleGasStateBlockData(StateBlockData):
         )
 
     def define_state_vars(self) -> dict:
-        """Return the state-variable dict (all four gas states)."""
+        """Return the state-variable dict (all three gas states)."""
         return {
             "flow_vol_phase": self.flow_vol_phase,
-            "dens_mass": self.dens_mass,
             "pressure": self.pressure,
             "temperature": self.temperature,
         }

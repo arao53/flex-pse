@@ -87,7 +87,7 @@ def _time_model() -> pyo.ConcreteModel:
     m.time_block = TimeBlock(
         start_date="2025-07-08", end_date="2025-07-09", time_step=1 * pyunits.hr
     )
-    m.properties = SimpleAqueousFlow(fixed_density=True)
+    m.properties = SimpleAqueousFlow()
     return m
 
 
