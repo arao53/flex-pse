@@ -48,7 +48,7 @@ with it:
     \dot{V}_{flue}[t] = (1 + \text{air\_to\_gas\_ratio})
                         \sum_i \dot{V}_i[t]
 
-``air_to_gas_ratio`` is an **IC-design property**, not something derived here:
+``air_to_fuel_ratio`` is an **IC-design property**, not something derived here:
 estimate it or model it externally, then supply it (or regress it). Keeping it a
 multiplier — rather than a fuel/air reciprocal — keeps the balance linear even
 once a design mode or regression unfixes it. Real combustion also changes moles,
@@ -117,13 +117,13 @@ def _heating_values_domain(value):
     return dict(value)
 
 
-def _air_to_gas_ratio_domain(value):
+def _air_to_fuel_ratio_domain(value):
     """ConfigValue domain: the air-to-gas ratio must be a non-negative float."""
     if isinstance(value, (int, float)) and not isinstance(value, bool) and value >= 0:
         return float(value)
     raise FlexConfigError(
-        f"air_to_gas_ratio must be a non-negative float, got {value!r}.",
-        field="air_to_gas_ratio",
+        f"air_to_fuel_ratio must be a non-negative float, got {value!r}.",
+        field="air_to_fuel_ratio",
         value=value,
     )
 
@@ -159,7 +159,7 @@ class CombustorData(OpsBlockData):
         ``efficiency`` (default 0.35): electrical conversion efficiency,
         heating-value relation only. ``energy_intensity`` (default 2.0
         kWh/m^3): electrical output per unit total inlet volume, constant-
-        intensity relation only. ``air_to_gas_ratio`` (default 9.5): volumes of
+        intensity relation only. ``air_to_fuel_ratio`` (default 9.5): volumes of
         combustion air entrained per unit volume of fuel gas, which sets the
         flue-gas volume. ``flue_gas_temperature`` (default 750 K): the outlet
         temperature.
@@ -223,10 +223,10 @@ class CombustorData(OpsBlockData):
         ),
     )
     CONFIG.declare(
-        "air_to_gas_ratio",
+        "air_to_fuel_ratio",
         ConfigValue(
             default=9.5,
-            domain=_air_to_gas_ratio_domain,
+            domain=_air_to_fuel_ratio_domain,
             description="Volumes of combustion air entrained per unit volume of "
             "fuel gas (a fixed, regressable Var once built), dimensionless. "
             "Sets the flue-gas volume, since combustion air is not a modeled "
@@ -408,9 +408,9 @@ class CombustorData(OpsBlockData):
         )
         flow_out = self.flow_out
 
-        air_to_gas_ratio = self.declare_process_parameter(
-            "air_to_gas_ratio",
-            self.config.air_to_gas_ratio,
+        air_to_fuel_ratio = self.declare_process_parameter(
+            "air_to_fuel_ratio",
+            self.config.air_to_fuel_ratio,
             pyunits.dimensionless,
             "Volumes of combustion air entrained per unit volume of fuel gas.",
             bounds=(0.0, None),
@@ -418,11 +418,11 @@ class CombustorData(OpsBlockData):
 
         @self.Constraint(
             tb.time_index,
-            doc="Flue gas: outlet flow == (1 + air_to_gas_ratio) * total fuel "
+            doc="Flue gas: outlet flow == (1 + air_to_fuel_ratio) * total fuel "
             "flow — the fuel burned plus the combustion air it entrains.",
         )
         def mixing_mass_balance(b, t):
-            return flow_out[t] == (1 + air_to_gas_ratio) * sum(
+            return flow_out[t] == (1 + air_to_fuel_ratio) * sum(
                 flows[name][t] for name in inlet_names
             )
 

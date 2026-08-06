@@ -106,7 +106,7 @@ def test_combustor_builds_one_port_per_inlet_name():
 def test_combustor_mixing_mass_balance_body():
     """The flue-gas flow is the fuel sum scaled up by the entrained air."""
     ratio = 9.5
-    _, unit = _combustor(3, inlet_names=("a", "b", "c"), air_to_gas_ratio=ratio)
+    _, unit = _combustor(3, inlet_names=("a", "b", "c"), air_to_fuel_ratio=ratio)
     fuel_sum = 1.0 + 2.0 + 3.0
     for t in range(3):
         _fix(unit, "flow_in_a", t, 1.0)
@@ -166,7 +166,7 @@ def test_combustor_arbitrary_inlet_count():
     for t in range(3):
         for name, val in zip(("a", "b", "c", "d"), (1.0, 2.0, 3.0, 4.0), strict=True):
             _fix(unit, f"flow_in_{name}", t, val)
-        ratio = pyo.value(unit.air_to_gas_ratio)
+        ratio = pyo.value(unit.air_to_fuel_ratio)
         unit.flow_out[t].fix((1 + ratio) * 10.0)
         assert pyo.value(unit.mixing_mass_balance[t].body) == pytest.approx(
             0.0, abs=1e-9
@@ -220,21 +220,21 @@ def test_combustor_outlet_temperature_is_the_flue_gas_temperature():
 
 
 @pytest.mark.unit
-def test_combustor_air_to_gas_ratio_is_a_fixed_regressable_parameter():
+def test_combustor_air_to_fuel_ratio_is_a_fixed_regressable_parameter():
     """The ratio is a fixed, registered, non-negative scalar Var."""
-    _, unit = _combustor(3, air_to_gas_ratio=8.0)
+    _, unit = _combustor(3, air_to_fuel_ratio=8.0)
 
-    assert unit.air_to_gas_ratio.fixed
-    assert pyo.value(unit.air_to_gas_ratio) == pytest.approx(8.0)
-    assert unit.air_to_gas_ratio.bounds == (0.0, None)
+    assert unit.air_to_fuel_ratio.fixed
+    assert pyo.value(unit.air_to_fuel_ratio) == pytest.approx(8.0)
+    assert unit.air_to_fuel_ratio.bounds == (0.0, None)
     registered = {rec.name: rec.regressable for rec in unit._io_registry.parameters}
-    assert registered["air_to_gas_ratio"] is True
+    assert registered["air_to_fuel_ratio"] is True
 
 
 @pytest.mark.unit
-def test_combustor_zero_air_to_gas_ratio_recovers_the_plain_inlet_sum():
+def test_combustor_zero_air_to_fuel_ratio_recovers_the_plain_inlet_sum():
     """A zero ratio entrains no air, leaving flue volume == the fuel sum."""
-    _, unit = _combustor(3, inlet_names=("a", "b"), air_to_gas_ratio=0.0)
+    _, unit = _combustor(3, inlet_names=("a", "b"), air_to_fuel_ratio=0.0)
     for t in range(3):
         _fix(unit, "flow_in_a", t, 2.0)
         _fix(unit, "flow_in_b", t, 3.0)
@@ -245,10 +245,10 @@ def test_combustor_zero_air_to_gas_ratio_recovers_the_plain_inlet_sum():
 
 
 @pytest.mark.unit
-def test_combustor_rejects_a_negative_air_to_gas_ratio():
+def test_combustor_rejects_a_negative_air_to_fuel_ratio():
     """A negative air-to-gas ratio is not a physical IC design."""
-    with pytest.raises(ValueError, match="air_to_gas_ratio"):
-        _combustor(3, air_to_gas_ratio=-1.0)
+    with pytest.raises(ValueError, match="air_to_fuel_ratio"):
+        _combustor(3, air_to_fuel_ratio=-1.0)
 
 
 @pytest.mark.unit
