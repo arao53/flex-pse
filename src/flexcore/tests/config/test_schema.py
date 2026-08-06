@@ -57,7 +57,9 @@ def _model_config() -> ModelConfig:
             start_date="2025-01-01", end_date="2025-01-30", time_step="15 min"
         ),
         costing=CostingConfig(tariff_source="tariff.json", dr=DRConfig()),
-        plant=PlantConfig(name="svcw", units={"tank": tank, "plant": plant_unit}),
+        plant=PlantConfig(
+            name="waterfacility", units={"tank": tank, "plant": plant_unit}
+        ),
     )
 
 

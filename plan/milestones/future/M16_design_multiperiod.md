@@ -71,7 +71,7 @@ class DesignConfig(...):
   Each period builds a full, independent operations model.
 - `shared_sizing_vars` names the sizing variables (dotted
   `plant.unit.variable`-style paths, resolved per period) that must be equal
-  across periods — e.g. `["svcw.battery.capacity"]`. A name absent from a period's
+  across periods — e.g. `["waterfacility.battery.capacity"]`. A name absent from a period's
   registered sizing vars → `FlexConfigError` naming the period and the var.
 - If `DesignConfig` is persisted (it should be — it drives a whole study), it is a
   pydantic v2 model with `schema_version` and field descriptions, exported to JSON

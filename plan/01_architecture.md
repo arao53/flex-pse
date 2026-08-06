@@ -306,17 +306,60 @@ physical subclasses add the flow↔energy relationship and any bounds.
 |---|---|---|
 | `Pump` | `SISOBlock` | `power_electrical[t] = energy_intensity * flow_vol[t]` |
 | `Tank` | `SISOBlock` | holdup `V[t+1] = V[t] + dt*(in − out)`; level bounds; initial level is rolling-horizon state. **Logic/unit-commitment constraints disabled** (a tank has no on/off status) |
-| `Separator` | `SIDOBlock` | one feed split into two product streams (replaces the old `Electrolyzer` name) |
 | `Exchanger` | `DIDOBlock` | two inlet / two outlet streams exchanging mass/energy |
-| `ElectrolysisSeparator` | `Separator` | electrolysis modeled as a separation; exercises `power_thermal` |
+| `ElectrolysisSeparator` | `SIDOBlock` | electrolysis modeled as a separation; exercises `power_thermal` |
 | `ElectrolysisExchanger` | `Exchanger` | electrolysis with two coupled streams |
-| `ReverseOsmosisSkid` | `Separator` | RO skid: feed → permeate + concentrate |
-| `Combustor` | `Separator` | combustion as a separation of products |
+| `ReverseOsmosis` | `SIDOBlock` | RO skid: feed → permeate + brine, split renamed to `recovery` |
+| `Combustor` | `OpsBlockData` (no fixed-arity base fits an arbitrary inlet count) | N gas inlets mixed into one flue-gas outlet; exports `power_electrical` (negative, upper-bounded at 0) under a heating-value or constant-intensity relation, resolved from whether every inlet has a heating value |
 | `BatteryModel` | `OpsBlockData` (no fluid ports) | SOC dynamics, charge/discharge power + efficiency, capacity as fixable design var; optional mutually-exclusive charge/discharge binary; first-class `external_dispatch` (DERMS, §3.6) |
-| `ConstantEnergyIntensityModel` | `SISOBlock` | generic "energy factor × flow" unit — the default building block for anything without a bespoke physical topology (e.g. a whole plant modeled as a single surrogate, as in the api-freeze script's `svcw.plant`) |
+| `ConstantEnergyIntensityModel` | `SISOBlock` | generic "energy factor × flow" unit — the default building block for anything without a bespoke physical topology (e.g. a whole plant modeled as a single surrogate, as in the api-freeze script's `waterfacility.plant`) |
 
 The general pattern (the platform's core idea): a unit model defines flows in/out (its topology) and energy draw; **every unit defaults to a constant energy-intensity relationship**. FlexParameterize (§5) is what upgrades that relationship to a fitted linear/multiconvex/NN/ARIMA form — by swapping the
 unit's energy-relationship constraint in place, not by introducing a different unit class. These are usually energy relationships but can also modify the input/output relationship for quantities like biogas production, salt and permeate flux, etc., not by introducing a different unit class. Same base topology, controllable functional form. `Tank` inheriting `SISOBlock` but *disabling* logic constraints is the canonical example of a physical subclass turning off a base capability.
+
+#### Choosing a base class for a new unit model
+
+The deciding question is: **does every port on this unit share one
+`property_package`?**
+
+- **Yes — one property package, one homogeneous flow basis.** Subclass
+  whichever topology base matches the port count (`SISOBlock`/`SIDOBlock`/
+  `DIDOBlock`). These bases already own port construction, the per-stream mass
+  balance, and pass-through wiring against that single `property_package`. A
+  physical subclass (`Pump`, `ReverseOsmosis`, ...) does not rebuild any of
+  that — it renames the topology's generic roles into its own nomenclature via
+  `_component_names` (e.g. `{"flow_in": "feed", "flow_out_a": "permeate"}`,
+  §2 naming), then adds its flow↔energy relationship
+  (`add_constant_intensity_relation` or a hand-written constraint) in `build()`
+  after calling `super().build()`. Ports themselves are never renamed, only the
+  logical roles resolved through `_named()`.
+- **No — the unit genuinely needs more than one property package** (e.g. a
+  fuel stream and an air stream that do not share a flow basis). None of
+  `SISOBlock`/`SIDOBlock`/`DIDOBlock` fit: each assumes one
+  `config.property_package` shared by every port (`add_stream_ports` reads that
+  single slot) and provides one ready-made mass balance built on it. Subclass
+  `OpsBlockData` directly instead: declare one `ConfigValue` property-package
+  slot per stream family (each named for its role, e.g. `fuel_property_package`,
+  `air_property_package` — never a bare second `property_package`), build each
+  stream's state blocks/ports against its own package, and hand-write the mass
+  and energy balance across them. There is no shared helper for a heterogeneous
+  multi-package balance — that hand-written balance *is* what makes the unit its
+  own topology, per the OpsBlockData module docstring ("subclasses hand-write
+  their 1-3 balance constraints").
+
+A unit never subclasses a topology base and then also carries a second,
+differently-typed property package alongside the base's one slot — that
+half-fits the topology contract and produces a mass balance that silently
+ignores the second stream's properties. Multi-package is an `OpsBlockData`
+decision made once, at the top of the class, not a topology base extended
+after the fact.
+
+- **The unit's port count is itself a config option** (e.g. `Combustor`'s
+  arbitrary number of gas inlets). No fixed-arity topology base fits — each of
+  `SISOBlock`/`SIDOBlock`/`DIDOBlock` has a fixed port count baked into its
+  `build()`. Subclass `OpsBlockData` directly and hand-write the ports (one
+  inlet per configured role name) and the mixing mass balance, the same way a
+  genuinely multi-package unit does.
 
 ### 3.5 logic layer (`flexops/logic/`) — customizable unit commitment
 
@@ -400,11 +443,12 @@ A composable unit-commitment (UC) formulation, applied per unit via its
 
 ### 3.7 Properties (`flexops/properties/simple_aqueous.py`)
 
-- `SimpleAqueousFlow(fixed_density=True)`: minimal
-  `PhysicalParameterBlock`/StateBlock pair — volumetric flow, optional pressure/
-  temperature, fixed density. Modeled on WaterTAP's zero-order property package
+- `SimpleAqueousFlow()`: minimal
+  `PhysicalParameterBlock`/StateBlock pair — volumetric flow plus optional
+  pressure/temperature. Modeled on WaterTAP's zero-order property package
   (`prop_ZO`) as the structural reference. Ports carry flow between units via
-  standard IDAES/Pyomo `Arc`s.
+  standard IDAES/Pyomo `Arc`s. Density is deliberately **not** a state variable:
+  no unit needed it, and carrying it only added a degree of freedom to fix.
 
 ## 4. Energy nomenclature (project standard)
 
@@ -500,7 +544,7 @@ Pipeline: **tabular data → tag aliasing → sufficiency validation → regress
 | R3 | Pydantic v2 is the schema authority; the whole model+run builds from one version-controlled config (canonical format JSON; no other on-disk format supported); no essential config lives only in code | config-driven-everything requirement; files are both human-tracked and written programmatically by external modules |
 | R4 | FlexCosting subclasses IDAES costing and delegates tariff cost to EECO — convex-relaxed cost in the objective + post-solve EECO evaluation for reporting; owns CapEx, modes, clear naming; DR is containers-only in v0 | reuse the lab's maintained cost engine; the objective is a relaxed proxy so the reported cost must be re-evaluated post-hoc |
 | R5 | Solver facade never transforms models silently | relaxed-MIP schedules sent to a real plant are a correctness hazard; explicit SolveSequence instead |
-| R6 | Unit models organized by IO topology (SISO/SIDO/DIDO bases) then specialized physically; `Electrolyzer`→`Separator` etc. | one place for ports/mass-balance per topology; physical zoo (RO skid, combustor, exchangers) reuses it; Tank = SISO with logic disabled |
+| R6 | Unit models organized by IO topology (SISO/SIDO/DIDO bases) then specialized physically; no intermediate `Separator`/`Electrolyzer` class — a physical unit subclasses the topology base directly and renames its roles via `_component_names` | one place for ports/mass-balance per topology; physical zoo (RO skid, combustor, exchangers) reuses it; Tank = SISO with logic disabled |
 | R7 | `NetworkBlock` composes plants; `PlantBlock` composes units | explicit two-level composition instead of overloading PlantBlock to nest into itself |
 | R8 | Customizable unit commitment: `status` base, optional startup/shutdown/dwell/delays/conditional; parallel-train degeneracy detection is model-level, not per-unit | a unit can't see its siblings, so symmetry-breaking lives above the unit; everything else is opt-in per unit |
 | R9 | Never report the solver objective as the user-facing result; report EECO's post-solve cost; battery/all units accept external (DERMS) dispatch commands | objective is relaxed/scalarized; third-party-controlled assets need their dispatch fixed from outside |

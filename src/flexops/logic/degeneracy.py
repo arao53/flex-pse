@@ -78,7 +78,7 @@ def _unit_class(unit: Any) -> type:
     fresh synthetic ``_ScalarPump``-style wrapper class **per instance**, so
     two separately-built, otherwise-identical ``Pump`` instances never share
     ``type(a) is type(b)``. The module-level ``*Data`` class one MRO step up
-    (``PumpData``, ``StorageTankData``, ...) is defined once and shared by
+    (``PumpData``, ``TankData``, ...) is defined once and shared by
     every instance, so it is the correct class identity to compare.
     """
     return type(unit).__mro__[1]

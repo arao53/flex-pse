@@ -65,7 +65,7 @@ def build_model(config: ExampleConfig, tariff: pd.DataFrame) -> pyo.ConcreteMode
         end_date=config.time.end_date,
         time_step=parse_quantity(config.time.time_step),
     )
-    m.properties = SimpleAqueousFlow(fixed_density=True)
+    m.properties = SimpleAqueousFlow()
     m.costing = FlexCosting(time_block=m.time_block, tariff=tariff)
 
     m.pump = Pump(

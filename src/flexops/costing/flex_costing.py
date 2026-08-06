@@ -715,6 +715,7 @@ class FlexCostingData(FlowsheetCostingBlockData):
         cur = self._currency
         dt_hours = pyo.value(pyunits.convert(tb.dt, pyunits.hr))
 
+        self._build_composition_aggregates()
         self._build_power_aggregation(tb)
         self._build_fuel_aggregation(tb)
         self._build_opex(tb, cur, dt_hours)
@@ -722,6 +723,21 @@ class FlexCostingData(FlowsheetCostingBlockData):
         self._build_totals_and_annualization(tb, cur)
 
         self.set_operations_mode()  # default final state (scheduling first)
+
+    def _build_composition_aggregates(self) -> None:
+        """Build every PlantBlock's/NetworkBlock's own aggregation Expressions.
+
+        Those totals are deferred exactly as this block's are: a plant may be
+        built before its units (the frozen api-freeze script does), so it cannot
+        aggregate at its own construction. Costing is the natural trigger — it
+        is the point at which the model is declared complete — so it drives
+        them here. Duck-typed on ``_build_aggregates`` so this module needs no
+        import of the composition layer; the call is idempotent.
+        """
+        for block in self.model().component_data_objects(pyo.Block, descend_into=True):
+            build_aggregates = getattr(block, "_build_aggregates", None)
+            if callable(build_aggregates):
+                build_aggregates()
 
     def _build_power_aggregation(self, tb) -> None:
         """Build the indexed per-carrier kW aggregation (Var + Constraint).

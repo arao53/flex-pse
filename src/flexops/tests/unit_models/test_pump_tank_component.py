@@ -25,7 +25,7 @@ def test_pump_fills_tank_lp():
     m.time_block = TimeBlock(
         start_date="2025-01-01", end_date="2025-01-02", time_step=1 * pyunits.hr
     )
-    m.properties = SimpleAqueousFlow(fixed_density=True)
+    m.properties = SimpleAqueousFlow()
     m.pump = Pump(property_package=m.properties)
     m.tank = Tank(
         property_package=m.properties,

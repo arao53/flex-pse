@@ -20,7 +20,7 @@ page renders generated tables.
 ## Read first
 
 - `plan/03_documentation.md` — ALL of it; this milestone implements §1–§6 to completion
-- `plan/01_architecture.md` §3.2 (IORegistry / registration API — flexdoc's data source), §3.4 (the unit-model table: **every** class needs a reference page — SISO/SIDO/DIDO bases and the physical zoo: Pump, Tank, Separator, Exchanger, ElectrolysisSeparator, ElectrolysisExchanger, ReverseOsmosisSkid, Combustor, BatteryModel, ConstantEnergyIntensityModel)
+- `plan/01_architecture.md` §3.2 (IORegistry / registration API — flexdoc's data source), §3.4 (the unit-model table: **every** class needs a reference page — SISO/SIDO/DIDO bases and the physical zoo: Pump, Tank, Separator, Exchanger, ElectrolysisSeparator, ElectrolysisExchanger, ReverseOsmosis, Combustor, BatteryModel, ConstantEnergyIntensityModel)
 - `plan/01_architecture.md` §3.3 (`NetworkBlock`/`PlantBlock` composition — reference pages), §3.5 (the customizable unit-commitment logic modules), §3.6 (`report_cost`/post-hoc EECO evaluation; the reported cost is never the objective — R9), §2.3 (config-driven `build_model` + the JSON config schema)
 - `plan/01_architecture.md` §3.6 (`flexops.design` — the multi-period design wrapper documented in M16)
 - `plan/02_testing_and_ci.md` §3 (docs.yml and nightly.yml specs), §1 (tier markers for the flexdoc unit test)
@@ -122,7 +122,7 @@ model**, not just the original six:
   `DIDOBlock` — one reference page each, documenting the ports / per-stream mass
   balance / energy-registration wiring they own.
 - **Physical zoo**: `Pump`, `Tank`, `Separator`, `Exchanger`,
-  `ElectrolysisSeparator`, `ElectrolysisExchanger`, `ReverseOsmosisSkid`,
+  `ElectrolysisSeparator`, `ElectrolysisExchanger`, `ReverseOsmosis`,
   `Combustor`, `BatteryModel`, `ConstantEnergyIntensityModel`.
 
 (The old `Electrolyzer` name is gone — R6 renamed it to `Separator`; the
@@ -303,7 +303,7 @@ This whole milestone is documentation; specifically also:
 
 - [ ] `docs/conf.py` final: napoleon, autosummary generate, myst_nb, intersphinx (pyomo/idaes/pandas/pydantic), furo, nitpicky + curated ignore list, `NB_EXECUTION_MODE` switch
 - [ ] `flexdoc.py` provides `flexops-unit-tables` and `flexops-config-table`; failures are loud, never empty tables
-- [ ] `_templates/autosummary/unit_model.rst` in place; **every** public unit model renders generated Variables/Constraints/DoF tables — the SISO/SIDO/DIDO bases and the full physical zoo (Pump, Tank, Separator, Exchanger, ElectrolysisSeparator, ElectrolysisExchanger, ReverseOsmosisSkid, Combustor, BatteryModel, ConstantEnergyIntensityModel); no `Electrolyzer` reference anywhere
+- [ ] `_templates/autosummary/unit_model.rst` in place; **every** public unit model renders generated Variables/Constraints/DoF tables — the SISO/SIDO/DIDO bases and the full physical zoo (Pump, Tank, Separator, Exchanger, ElectrolysisSeparator, ElectrolysisExchanger, ReverseOsmosis, Combustor, BatteryModel, ConstantEnergyIntensityModel); no `Electrolyzer` reference anywhere
 - [ ] Reference pages exist for `NetworkBlock` (§3.3), the unit-commitment logic modules (§3.5), `flexops.design` (M16), and `FlexCosting.evaluate_cost`/`report_cost` (§3.6)
 - [ ] `build_model` documented and the JSON config schema (`ModelConfig` tree) rendered via `flexops-config-table` (§2.3)
 - [ ] Explanation note: reported cost is EECO post-hoc, never the objective (R9), linkable and cross-referenced from M12/M13 surfaces

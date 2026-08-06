@@ -136,7 +136,7 @@ from the constructor keyword on the thin path (data flows one way, conventions
   construction-order invariant (architecture §3.6) is that FlexCosting may be
   constructed before any units exist *because all aggregation, both sub-blocks,
   and the EECO call are deferred to `cost_process()`*. This is what lets the
-  API-freeze script construct `m.costing` before `m.svcw.tank` (PLAN.md §2).
+  API-freeze script construct `m.costing` before `m.waterfacility.tank` (PLAN.md §2).
 
 ### 3. Energy + sizing registration mechanism (mirrors the WaterTAP pattern)
 

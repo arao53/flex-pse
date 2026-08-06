@@ -56,7 +56,7 @@ Three tools in one repository (monorepo now, engineered to split later):
 
 | Tool | Import package | What it does |
 |---|---|---|
-| **FlexOps** | `flexops` | Modeling library: time-discretized unit models organized by IO topology (SISO/SIDO/DIDO → pump, tank, separator, exchanger, RO skid, combustor, battery, surrogates), LP/NLP/MIP with configurable relaxations, customizable unit commitment (status/dwell/delays/conditional), plant + network composition, external (DERMS) dispatch, and EECO-backed costing. Everything buildable from one config file. |
+| **FlexOps** | `flexops` | Modeling library: time-discretized unit models organized by IO topology (SISO/SIDO/DIDO → pump, tank, exchanger, RO skid, combustor, battery, surrogates), LP/NLP/MIP with configurable relaxations, customizable unit commitment (status/dwell/delays/conditional), plant + network composition, external (DERMS) dispatch, and EECO-backed costing. Everything buildable from one config file. |
 | **FlexParameterize** | `flexparameterize` | Data-driven parameterization: ingests tabular plant data, maps historian tags to model variables, validates data sufficiency, regresses registered parameters, and emits a config file that rebuilds the parameterized FlexOps model. |
 | **FlexSchedule** | `flexschedule` | Scheduling engine: rolling-horizon driver, relaxation/warm-start solve sequences, set-point extraction and smoothing for plant control. |
 
@@ -76,29 +76,30 @@ and guarded by a component test; any change that breaks it is a breaking change.
 ```python
 import pyomo.environ as pyo
 from pyomo.environ import units as pyunits
+from pyomo.network import Arc
 import flexops as fo
 
 m = pyo.ConcreteModel()
 m.time_block = fo.TimeBlock(
     start_date="2025-01-01", end_date="2025-01-30", time_step=15 * pyunits.min
 )
-m.properties = fo.SimpleAqueousFlow(fixed_density=True)
+m.properties = fo.SimpleAqueousFlow()
 m.costing = fo.FlexCosting(
     time_block=m.time_block,
     tariff_file="tariff.json",
     dr_event_file="dr_events.json",
 )
-m.svcw = fo.PlantBlock(time_block=m.time_block)
-m.svcw.tank = fo.Tank(property_package=m.properties)
-m.svcw.plant = fo.ConstantEnergyIntensityModel(
+m.waterfacility = fo.PlantBlock(time_block=m.time_block)
+m.waterfacility.tank = fo.Tank(property_package=m.properties)
+m.waterfacility.plant = fo.ConstantEnergyIntensityModel(
     property_package=m.properties,
     energy_intensity=0.5 * pyunits.kWh / pyunits.m**3,
     costing_package=m.costing,
 )
-m.svcw.tank_to_plant = pyo.Arc(
-    source=m.svcw.tank.outlet, destination=m.svcw.plant.inlet
+m.waterfacility.tank_to_plant = Arc(
+    source=m.waterfacility.tank.outlet, destination=m.waterfacility.plant.inlet
 )
-m.svcw.battery = fo.BatteryModel(
+m.waterfacility.battery = fo.BatteryModel(
     capacity=1 * pyunits.kWh, costing_package=m.costing
 )
 m.costing.cost_process()
@@ -107,7 +108,10 @@ m.objective = pyo.Objective(expr=m.costing.aggregate_operating_cost)
 
 (Names differ slightly from the original slide pseudo-code: ISO-8601 dates,
 keyword configuration arguments, and an explicit `time_block=` on `PlantBlock`.
-The reasons are recorded as decisions R2 in `plan/01_architecture.md`.)
+The reasons are recorded as decisions R2 in `plan/01_architecture.md`. The `Arc`
+import is a second such correction, made in M09: `Arc` lives in `pyomo.network`
+and has never been re-exported as `pyo.Arc`, so the earlier spelling could not
+run.)
 
 ### Design constraints (why the architecture looks the way it does)
 
@@ -153,7 +157,7 @@ Dependencies are strict unless marked ∥ (parallelizable with the previous one)
 | [M06](plan/milestones/M06_eeco_integration.md) | EECO integration (tariffs & costs) | 2 | M00 ∥ | `eeco` wired; tariff-signal helpers; in-objective cost + post-solve numpy evaluator; DR containers |
 | [M07](plan/milestones/M07_flexcosting.md) | FlexCosting | 3 | M04, M05, M06 | First end-to-end result: tank+pump shifts load off-peak; `report_cost` (EECO post-hoc) |
 | [M08](plan/milestones/M08_battery_logic.md) | Battery (DERMS) + customizable unit commitment | 3 | M07 | SOC + external dispatch; status/startup/shutdown/dwell/delays/conditional; model-level degeneracy detection |
-| [M09](plan/milestones/M09_plantblock_api_freeze.md) | Network/Plant + topology bases + surrogates + config build + API freeze | 3 | M08 | `NetworkBlock`/`PlantBlock`; SIDO/DIDO + Separator/Exchanger; `build_model(config)`; `api_freeze.py` runs |
+| [M09](plan/milestones/M09_plantblock_api_freeze.md) | Network/Plant + topology bases + surrogates + config build + API freeze | 3 | M08 | `NetworkBlock`/`PlantBlock`; SIDO/DIDO + ReverseOsmosis/Exchanger; `build_model(config)`; `api_freeze.py` runs |
 | [M10](plan/milestones/M10_parameterize_core.md) | FlexParameterize core (2-way) | 3 | M09 | Tag aliasing; sufficiency; constant-EI round-trip; `apply_to_model` fixes params + replaces blocks in place |
 | [M11](plan/milestones/M11_regressor_protocol.md) | Regressor protocol + linear regression | 2 | M10 | Pluggable regressors; fit provenance in emitted configs |
 | [M12](plan/milestones/M12_rolling_horizon.md) | FlexSchedule: rolling horizon + solve sequences | 3 | M09 | 7-day windowed solve within 2 % of monolithic |
