@@ -22,7 +22,7 @@ from idaes.core import declare_process_block_class
 from pyomo.common.config import ConfigValue
 from pyomo.environ import units as pyunits
 
-from flexops.core.ops_block import OpsBlockData, component_names_domain
+from flexops.core.ops_block import OpsBlockData
 
 
 @declare_process_block_class("DIDOBlock")
@@ -52,29 +52,25 @@ class DIDOBlockData(OpsBlockData):
         ),
     )
 
-    CONFIG.declare(
-        "component_names",
-        ConfigValue(
-            default={},
-            domain=component_names_domain(
-                {
-                    "flow_in_a": "flow_in_a",
-                    "flow_in_b": "flow_in_b",
-                    "flow_out_a": "flow_out_a",
-                    "flow_out_b": "flow_out_b",
-                    "transfer_fraction": "transfer_fraction",
-                }
-            ),
-            description="Role -> Pyomo component name mapping. Override any "
-            "subset to rename this unit's flows and transfer parameter into "
-            "its own vocabulary; ports (inlet_a/inlet_b/outlet_a/outlet_b) "
-            "are never renamed.",
-        ),
-    )
+    _component_names = {
+        "flow_in_a": "flow_in_a",
+        "flow_in_b": "flow_in_b",
+        "flow_out_a": "flow_out_a",
+        "flow_out_b": "flow_out_b",
+        "transfer_fraction": "transfer_fraction",
+    }
 
-    def build(self) -> None:
-        """Build the two-inlet/two-outlet ports and the coupled mass balances."""
+    def build(self, naming_dict: dict[str, str] | None = None) -> None:
+        """Build the two-inlet/two-outlet ports and the coupled mass balances.
+
+        Args:
+            naming_dict: Complete role -> component name mapping for this unit,
+                passed up by a physical subclass renaming the generic roles
+                (spread ``DIDOBlockData._component_names`` and override the
+                subset it renames). None uses this topology's own vocabulary.
+        """
         super().build()
+        self.create_stream_naming_convention(naming_dict or self._component_names)
         self.add_stream_ports(
             inlet_ports=("inlet_a", "inlet_b"), outlet_ports=("outlet_a", "outlet_b")
         )

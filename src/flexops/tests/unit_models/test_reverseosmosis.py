@@ -98,28 +98,14 @@ def test_reverseosmosis_rejects_an_unusable_recovery_window(options, field):
 
 
 @pytest.mark.unit
-def test_reverseosmosis_component_names_default_to_ro_vocabulary():
-    """RO's default mapping is its own vocabulary, not the SIDO generic one."""
+def test_reverseosmosis_registers_its_naming_convention_at_build():
+    """The mapping RO passes up to SIDO's build is the one the unit resolves through."""
     m = dummy_time_block(3)
     m.unit = ReverseOsmosis(property_package=m.properties)
 
-    assert m.unit.config.component_names == {
+    assert m.unit._component_names == {
         "flow_in": "feed",
         "flow_out_a": "permeate",
         "flow_out_b": "brine",
         "split_fraction": "recovery",
     }
-
-
-@pytest.mark.unit
-def test_reverseosmosis_component_names_override_merges_onto_ro_defaults():
-    """A partial override renames one role; the others keep RO's names, not SIDO's."""
-    m = dummy_time_block(3)
-    m.unit = ReverseOsmosis(
-        property_package=m.properties, component_names={"flow_in": "raw_feed"}
-    )
-
-    assert m.unit.find_component("raw_feed") is not None
-    assert m.unit.find_component("feed") is None
-    for name in ("permeate", "brine", "recovery"):
-        assert m.unit.find_component(name) is not None

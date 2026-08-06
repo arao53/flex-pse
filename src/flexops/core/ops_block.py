@@ -23,7 +23,7 @@ constraints; FlexParameterize drives this.
 
 import enum
 import numbers
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 
 import pyomo.environ as pyo
 from idaes.core import UnitModelBlockData, declare_process_block_class
@@ -109,38 +109,6 @@ def _costing_package_domain(value):
         field="costing_package",
         value=value,
     )
-
-
-def component_names_domain(defaults: Mapping[str, str]):
-    """Build the ``component_names`` ConfigValue domain for one topology base.
-
-    Args:
-        defaults: The topology's role -> Pyomo component name mapping, which a
-            caller's value overrides key by key.
-
-    Returns:
-        A domain function merging a caller's partial mapping onto ``defaults``.
-    """
-
-    def domain(value):
-        if not isinstance(value, Mapping):
-            raise FlexConfigError(
-                "component_names must be a mapping of role to Pyomo component "
-                f"name, got {type(value).__name__}.",
-                field="component_names",
-                value=value,
-            )
-        unknown = sorted(set(value) - set(defaults))
-        if unknown:
-            raise FlexConfigError(
-                f"component_names names unknown role(s) {unknown}; this unit's "
-                f"roles are {sorted(defaults)}.",
-                field="component_names",
-                value=unknown,
-            )
-        return {**defaults, **value}
-
-    return domain
 
 
 def _relaxation_domain(value):
@@ -231,17 +199,36 @@ class OpsBlockData(UnitModelBlockData):
         ),
     )
 
-    def _named(self, role: str) -> str:
-        """Return the Pyomo component name configured for `role`.
+    #: Default role -> Pyomo component name mapping. Each IO-topology base sets
+    #: its own generic vocabulary here; a physical subclass renames any subset by
+    #: passing ``naming_dict`` to the base ``build()``, which registers it.
+    _component_names: dict[str, str] = {}
+
+    def create_stream_naming_convention(self, naming_dict: dict[str, str]) -> None:
+        """Register this unit's role -> Pyomo component name mapping.
+
+        Called once from an IO-topology base's ``build()``, before any named
+        component is built, with either that topology's default vocabulary or
+        the ``naming_dict`` a physical subclass passed up. Only the components
+        are renamed; ports never are.
 
         Args:
-            role: A logical role declared in this unit's ``component_names``
-                config option (e.g. ``"flow_in"``, ``"split_fraction"``).
+            naming_dict: The complete role -> component name mapping this unit
+                builds and looks names up through.
+        """
+        self._component_names = dict(naming_dict)
+
+    def _named(self, role: str) -> str:
+        """Return the Pyomo component name registered for `role`.
+
+        Args:
+            role: A logical role in this unit's naming convention (e.g.
+                ``"flow_in"``, ``"split_fraction"``).
 
         Returns:
             The Pyomo component name to build/look up for that role.
         """
-        return self.config.component_names[role]
+        return self._component_names[role]
 
     def build(self) -> None:
         """Set up dynamics defaults and the empty IO registry (no constraints)."""

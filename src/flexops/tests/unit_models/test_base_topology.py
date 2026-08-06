@@ -2,10 +2,12 @@
 
 import pyomo.environ as pyo
 import pytest
+from idaes.core import declare_process_block_class
 from pyomo.network import Port
 
 from flexops.testing import dummy_time_block
 from flexops.unit_models.base import DIDOBlock, SIDOBlock, SISOBlock
+from flexops.unit_models.base.siso import SISOBlockData
 
 
 @pytest.mark.unit
@@ -72,13 +74,12 @@ def test_dido_mass_balance_bodies():
 
 @pytest.mark.unit
 def test_component_names_default_to_the_topology_vocabulary():
-    """Passing no override leaves each base's generic role names in place."""
+    """A base builds its own generic role names when no naming_dict is passed."""
     m = dummy_time_block(3)
     m.siso = SISOBlock(property_package=m.properties)
     m.sido = SIDOBlock(property_package=m.properties)
     m.dido = DIDOBlock(property_package=m.properties)
 
-    assert {"flow_in", "flow_out"} <= set(m.siso.config.component_names)
     for name in ("flow_in", "flow_out"):
         assert m.siso.find_component(name) is not None
     for name in ("flow_in", "flow_out_a", "flow_out_b", "split_fraction"):
@@ -87,41 +88,25 @@ def test_component_names_default_to_the_topology_vocabulary():
         assert m.dido.find_component(name) is not None
 
 
-@pytest.mark.unit
-def test_component_names_override_renames_a_subset_at_build_time():
-    """A partial override renames only the named roles; the rest keep defaults."""
-    m = dummy_time_block(3)
-    m.unit = SIDOBlock(
-        property_package=m.properties,
-        component_names={"flow_in": "raw", "split_fraction": "recovery"},
-    )
+@declare_process_block_class("RenamedSISOBlock")
+class RenamedSISOBlockData(SISOBlockData):
+    """A SISO subclass renaming one role, the way a physical unit does."""
 
-    for name in ("raw", "recovery", "flow_out_a", "flow_out_b"):
-        assert m.unit.find_component(name) is not None
+    def build(self) -> None:
+        """Build the SISO base with ``flow_in`` renamed to ``raw``."""
+        super().build(naming_dict={**SISOBlockData._component_names, "flow_in": "raw"})
+
+
+@pytest.mark.unit
+def test_a_subclass_naming_dict_renames_only_the_roles_it_overrides():
+    """The spread default carries the untouched roles; ports are never renamed."""
+    m = dummy_time_block(3)
+    # RenamedSISOBlock is injected into this module by the decorator above.
+    m.unit = RenamedSISOBlock(property_package=m.properties)  # noqa: F821
+
+    assert m.unit.find_component("raw") is not None
     assert m.unit.find_component("flow_in") is None
-    assert m.unit.find_component("split_fraction") is None
+    assert m.unit.find_component("flow_out") is not None
 
-    # Ports are never renamed by component_names.
     ports = {p.local_name for p in m.unit.component_objects(Port)}
-    assert ports == {"inlet", "outlet_a", "outlet_b"}
-
-
-@pytest.mark.unit
-def test_component_names_rejects_an_unknown_role():
-    """An unknown role key is a config error, not a silently ignored entry."""
-    m = dummy_time_block(3)
-    with pytest.raises(ValueError, match="bogus_role"):
-        m.unit = SISOBlock(
-            property_package=m.properties,
-            component_names={"bogus_role": "whatever"},
-        )
-
-
-@pytest.mark.unit
-def test_component_names_rejects_a_non_mapping():
-    """component_names must be a mapping of role to component name."""
-    m = dummy_time_block(3)
-    with pytest.raises(ValueError, match="component_names must be a mapping"):
-        m.unit = SISOBlock(
-            property_package=m.properties, component_names=["flow_in", "flow_out"]
-        )
+    assert ports == {"inlet", "outlet"}

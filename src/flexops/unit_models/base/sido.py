@@ -21,7 +21,7 @@ from idaes.core import declare_process_block_class
 from pyomo.common.config import ConfigValue
 from pyomo.environ import units as pyunits
 
-from flexops.core.ops_block import OpsBlockData, component_names_domain
+from flexops.core.ops_block import OpsBlockData
 
 
 @declare_process_block_class("SIDOBlock")
@@ -30,11 +30,10 @@ class SIDOBlockData(OpsBlockData):
 
     Config:
         Inherits the OpsBlock config; adds ``split_fraction`` (default 0.5),
-        bounded here only to a physical fraction, and ``component_names``
-        (the role -> component name mapping, overridable per unit). A physical
-        subclass may rename the components, rename the option itself, and
-        narrow that window (see :meth:`_split_parameter_value` and
-        :meth:`_split_parameter_bounds`).
+        bounded here only to a physical fraction. A physical subclass may
+        rename the components (via ``build(naming_dict=...)``), rename the
+        option itself, and narrow that window (see
+        :meth:`_split_parameter_value` and :meth:`_split_parameter_bounds`).
 
     Example:
         >>> from flexops.testing import dummy_time_block
@@ -56,28 +55,26 @@ class SIDOBlockData(OpsBlockData):
         ),
     )
 
-    CONFIG.declare(
-        "component_names",
-        ConfigValue(
-            default={},
-            domain=component_names_domain(
-                {
-                    "flow_in": "flow_in",
-                    "flow_out_a": "flow_out_a",
-                    "flow_out_b": "flow_out_b",
-                    "split_fraction": "split_fraction",
-                }
-            ),
-            description="Role -> Pyomo component name mapping. Override any "
-            "subset to rename this unit's flows and split parameter into its "
-            "own vocabulary (e.g. a membrane skid exposing split_fraction as "
-            "recovery); ports (inlet/outlet_a/outlet_b) are never renamed.",
-        ),
-    )
+    _component_names = {
+        "flow_in": "flow_in",
+        "flow_out_a": "flow_out_a",
+        "flow_out_b": "flow_out_b",
+        "split_fraction": "split_fraction",
+    }
 
-    def build(self) -> None:
-        """Build the inlet/two-outlet ports and the split mass balance."""
+    def build(self, naming_dict: dict[str, str] | None = None) -> None:
+        """Build the inlet/two-outlet ports and the split mass balance.
+
+        Args:
+            naming_dict: Complete role -> component name mapping for this unit,
+                passed up by a physical subclass renaming the generic roles
+                (spread ``SIDOBlockData._component_names`` and override the
+                subset it renames, as
+                :class:`~flexops.unit_models.reverseosmosis.ReverseOsmosis`
+                does). None uses this topology's own vocabulary.
+        """
         super().build()
+        self.create_stream_naming_convention(naming_dict or self._component_names)
         self.add_stream_ports(outlet_ports=("outlet_a", "outlet_b"))
         self._build_mass_balance()
 
