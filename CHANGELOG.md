@@ -14,6 +14,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **`examples/pump_tank_load_shifting` now builds its model through `flexops.core.build.build_model` instead of hand-rolling the same TimeBlock/properties/costing/units/arcs construction.** `helpers/config.py::ExampleConfig` is now a `flexcore.config.schema.ModelConfig` plus only the knobs it cannot express (facility draw, pump flow cap, pump unit-commitment relaxation); `config.json` is rewritten to that shape. `helpers/units.py` is gone (`flexops.core.build.parse_quantity` replaces it), and `helpers/results.py::extract_results`'s `total_cost` now reads `FlexCostingData.report_cost` instead of the raw (relaxed/scalarized) objective. The example's `include_demand_charges` toggle is dropped — not expressible through the generic builder — so demand charges are always on. The solved objective is unchanged; the reported cost differs by design (see `report_cost`'s own docstring).
 - **Renamed the example plant block `svcw` to `waterfacility`** throughout the API-freeze script, its config twin, the docs, and the plan. A placeholder name only; no API or behavior change.
 
 ### Removed
