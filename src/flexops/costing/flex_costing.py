@@ -644,7 +644,7 @@ class FlexCostingData(FlowsheetCostingBlockData):
         Args:
             name: The cost's name.
             quantity: A time-indexed ``Var``/``Expression`` (a rate).
-            price: The signed price per unit quantity, in the base currency
+            price: The signed price per unit quantity, in the currency basis
                 (positive = cost, negative = revenue/credit).
             quantity_units: The Pyomo units ``quantity`` is converted to before
                 costing (a rate, e.g. ``m**3/hr``).
