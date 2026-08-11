@@ -71,18 +71,8 @@ def _(mo):
 def _():
     from pathlib import Path
 
-    from flexcore.config.schema import TimeConfig, UnitCommitmentConfig
-    from helpers.build import build_model, load_tariff_for_config, solve_model
-    from helpers.config import (
-        BatteryConfig,
-        ExampleConfig,
-        FacilityConfig,
-        PumpConfig,
-        TankConfig,
-        TariffConfig,
-        load_config,
-        save_config,
-    )
+    from helpers.build import build_model, solve_model
+    from helpers.config import ExampleConfig, load_config, save_config
     from helpers.plotting import plot_results
     from helpers.results import extract_results
 
@@ -90,20 +80,11 @@ def _():
     CONFIG_PATH = EXAMPLE_DIR / "config.json"
 
     return (
-        BatteryConfig,
         CONFIG_PATH,
-        EXAMPLE_DIR,
         ExampleConfig,
-        FacilityConfig,
-        PumpConfig,
-        TankConfig,
-        TariffConfig,
-        TimeConfig,
-        UnitCommitmentConfig,
         build_model,
         extract_results,
         load_config,
-        load_tariff_for_config,
         plot_results,
         save_config,
         solve_model,
@@ -121,7 +102,6 @@ def _(mo):
     tank_initial_volume = mo.ui.slider(
         start=0, stop=1000, step=50, value=200, label="Tank initial volume (m³)"
     )
-    include_demand_charges = mo.ui.checkbox(value=True, label="Include demand charges")
 
     include_battery = mo.ui.checkbox(value=True, label="Include battery")
     battery_capacity = mo.ui.slider(
@@ -159,7 +139,6 @@ def _(mo):
             pump_max_flow,
             tank_max_volume,
             tank_initial_volume,
-            include_demand_charges,
             mo.md("**Battery** (behind-the-meter)"),
             include_battery,
             battery_capacity,
@@ -181,7 +160,6 @@ def _(mo):
         battery_soc_max,
         battery_soc_min,
         include_battery,
-        include_demand_charges,
         pump_max_flow,
         pump_min_downtime,
         pump_min_uptime,
@@ -213,16 +191,8 @@ def _(mo):
 
 @app.cell
 def _(
-    BatteryConfig,
     CONFIG_PATH,
-    EXAMPLE_DIR,
     ExampleConfig,
-    FacilityConfig,
-    PumpConfig,
-    TankConfig,
-    TariffConfig,
-    TimeConfig,
-    UnitCommitmentConfig,
     battery_capacity,
     battery_charge_max,
     battery_discharge_max,
@@ -232,9 +202,7 @@ def _(
     extract_results,
     get_solved_once,
     include_battery,
-    include_demand_charges,
     load_config,
-    load_tariff_for_config,
     mo,
     pump_max_flow,
     pump_min_downtime,
@@ -260,48 +228,91 @@ def _(
     set_solved_once(True)
 
     # 1. Every knob above -> one ExampleConfig -> config.json. The model is
-    #    never built from the sliders directly.
+    #    never built from the sliders directly. `units` is a plain
+    #    flexcore.config.schema.PlantConfig.units mapping -- the same shape
+    #    config.json itself uses.
+    units = {
+        "pump": {
+            "unit_model_class": "Pump",
+            "construction_options": {
+                "energy_intensity": {"value": 0.5, "units": "kWh/m^3"}
+            },
+            "unit_commitment": {
+                "status": pump_unit_commitment.value,
+                "startup_shutdown": pump_unit_commitment.value,
+                "min_up": pump_min_uptime.value,
+                "min_down": pump_min_downtime.value,
+            },
+        },
+        "tank": {
+            "unit_model_class": "Tank",
+            "construction_options": {
+                "max_volume": {"value": tank_max_volume.value, "units": "m^3"},
+                "initial_volume": {
+                    "value": tank_initial_volume.value,
+                    "units": "m^3",
+                },
+            },
+            # Tank.build() forces unit_commitment.status back to False
+            # regardless of what is passed; set it explicitly so the
+            # persisted config doesn't claim otherwise.
+            "unit_commitment": {"status": False},
+        },
+    }
+    if include_battery.value:
+        soc_min = battery_soc_min.value / 100.0
+        soc_max = battery_soc_max.value / 100.0
+        units["battery"] = {
+            "unit_model_class": "BatteryModel",
+            "construction_options": {
+                "capacity": {"value": battery_capacity.value, "units": "kWh"},
+                "power_charge_max": {
+                    "value": battery_charge_max.value,
+                    "units": "kW",
+                },
+                "power_discharge_max": {
+                    "value": battery_discharge_max.value,
+                    "units": "kW",
+                },
+                "eta_charge": 0.95,
+                "eta_discharge": 0.95,
+                "soc_min": soc_min,
+                "soc_max": soc_max,
+                "initial_soc": (soc_min + soc_max) / 2,
+            },
+            # BatteryModel defaults to status=False, but build_from_config
+            # always passes unit_commitment explicitly, so it must be
+            # repeated here to keep the battery a plain LP.
+            "unit_commitment": {"status": False},
+        }
+
     draft_config = ExampleConfig(
-        time=TimeConfig(
-            start_date="2025-07-01", end_date="2025-08-01", time_step="1 hr"
-        ),
-        tariff=TariffConfig(
-            path="tariff_tou_demo.json",
-            include_demand_charges=include_demand_charges.value,
-        ),
-        facility=FacilityConfig(draw="100 m**3/hr"),
-        pump=PumpConfig(
-            max_flow=f"{pump_max_flow.value} m**3/hr",
-            unit_commitment=UnitCommitmentConfig(
-                status=pump_unit_commitment.value,
-                startup_shutdown=pump_unit_commitment.value,
-                min_up=pump_min_uptime.value,
-                min_down=pump_min_downtime.value,
-            ),
-            relax=not pump_uc_exact.value,
-        ),
-        tank=TankConfig(
-            max_volume=f"{tank_max_volume.value} m**3",
-            initial_volume=f"{tank_initial_volume.value} m**3",
-        ),
-        battery=BatteryConfig(
-            enabled=include_battery.value,
-            capacity=f"{battery_capacity.value} kWh",
-            power_charge_max=f"{battery_charge_max.value} kW",
-            power_discharge_max=f"{battery_discharge_max.value} kW",
-            soc_min=battery_soc_min.value / 100.0,
-            soc_max=battery_soc_max.value / 100.0,
-        ),
+        model={
+            "schema_version": "0.0.1",
+            "time": {
+                "start_date": "2025-07-01",
+                "end_date": "2025-08-01",
+                "time_step": "1 hr",
+            },
+            "costing": {"tariff_source": "tariff_tou_demo.json"},
+            "plant": {
+                "name": "facility",
+                "units": units,
+                "arcs": [{"source": "pump.outlet", "destination": "tank.inlet"}],
+            },
+        },
+        facility_draw="100 m^3/hr",
+        pump_max_flow=f"{pump_max_flow.value} m^3/hr",
+        pump_relax=not pump_uc_exact.value,
     )
     save_config(draft_config, CONFIG_PATH)
 
     # 2. Read config.json back -- everything below is built purely from the
     #    on-disk artifact, not from `draft_config` above.
     config = load_config(CONFIG_PATH)
-    tariff = load_tariff_for_config(config, EXAMPLE_DIR)
-    model = build_model(config, tariff)
+    model = build_model(config)
     solve_model(model)
-    results = extract_results(model, config, tariff)
+    results = extract_results(model, config)
     return (results,)
 
 
