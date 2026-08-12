@@ -20,6 +20,12 @@ typically share the same property/costing package instance, and comparing
 Pyomo component objects with ``==`` would build a constraint expression rather
 than a boolean. "Same connectivity" (the milestone's smallest v0 form) is
 approximated as: the same set of named Ports.
+
+:func:`detect_parallel_trains` only catches units matching that predicate.
+:func:`register_parallel_group` is the manual complement: it lets a caller
+declare a group directly (by chaining :func:`~flexops.logic.conditional.add_conditional`
+over it) for units known to be interchangeable/hierarchically related but that
+the predicate misses.
 """
 
 import enum
@@ -31,7 +37,9 @@ from pydantic import BaseModel
 from pyomo.environ import units as pyunits
 from pyomo.network import Port
 
+from flexcore.exceptions import FlexConfigError
 from flexops.core.ops_block import OpsBlockData
+from flexops.logic.conditional import add_conditional
 
 _SKIPPED_CONFIG_KEYS = {
     "property_package",
@@ -181,3 +189,50 @@ def break_parallel_symmetry(block: Any) -> int:
         "unless its predecessor is).",
     )
     return len(pairs)
+
+
+def register_parallel_group(
+    units: list[Any], *, then: str = "on"
+) -> list[pyo.Constraint]:
+    """Manually declare units as a parallel/degenerate hierarchy group.
+
+    Complements :func:`detect_parallel_trains`'s automatic class/config/
+    connectivity predicate (module docstring) for units that are known by the
+    caller to be interchangeable or otherwise hierarchically related but do
+    not satisfy that predicate. Chains
+    :func:`~flexops.logic.conditional.add_conditional` over every consecutive
+    pair in ``units`` (in the given order), reusing its tested two-unit
+    implication semantics rather than re-implementing them.
+
+    Args:
+        units: >= 2 units, in the intended canonical order. Each must carry a
+            ``status`` Var (see :func:`~flexops.logic.status.add_status`).
+        then: ``"on"`` or ``"off"``, passed through to each ``add_conditional``
+            call (see its docstring for exact semantics per pair).
+
+    Returns:
+        The ``len(units) - 1`` attached ``conditional`` Constraints, one per
+        consecutive pair, in order.
+
+    Raises:
+        FlexConfigError: If fewer than two units are given, if a unit repeats
+            in the list, or (raised by ``add_conditional``) if ``then`` is
+            invalid or a unit lacks a ``status`` Var.
+    """
+    if len(units) < 2:
+        raise FlexConfigError(
+            f"register_parallel_group requires >= 2 units, got {len(units)}.",
+            field="units",
+            value=len(units),
+        )
+    if len({id(u) for u in units}) != len(units):
+        raise FlexConfigError(
+            "register_parallel_group requires distinct units; a unit was "
+            "repeated in the list.",
+            field="units",
+            value=[u.name for u in units],
+        )
+    return [
+        add_conditional(units[i], units[i + 1], then=then)
+        for i in range(len(units) - 1)
+    ]

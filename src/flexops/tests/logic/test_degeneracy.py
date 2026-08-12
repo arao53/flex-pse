@@ -8,10 +8,17 @@ stands in for "a PlantBlock/NetworkBlock" here.
 import pyomo.environ as pyo
 import pytest
 from pyomo.environ import units as pyunits
+from pyomo.network import Arc
 
-from flexops.logic import add_status, break_parallel_symmetry, detect_parallel_trains
+from flexcore.exceptions import FlexConfigError
+from flexops.logic import (
+    add_status,
+    break_parallel_symmetry,
+    detect_parallel_trains,
+    register_parallel_group,
+)
 from flexops.testing import dummy_time_block
-from flexops.unit_models import Pump
+from flexops.unit_models import Pump, ReverseOsmosis
 
 
 def _plant_with_units(n: int = 4):
@@ -27,6 +34,22 @@ def _plant_with_units(n: int = 4):
     m.plant.u2 = Pump(
         property_package=m.properties, energy_intensity=0.9 * pyunits.kWh / pyunits.m**3
     )
+    return m
+
+
+def _plant_pump_and_ro_trains(n: int = 4):
+    """One Pump feeding three parallel ReverseOsmosis trains via Arcs."""
+    m = dummy_time_block(n)
+    m.plant = pyo.Block()
+    m.plant.pump = Pump(property_package=m.properties)
+    for i in range(3):
+        m.plant.add_component(f"ro{i}", ReverseOsmosis(property_package=m.properties))
+    for i in range(3):
+        ro = m.plant.component(f"ro{i}")
+        m.plant.add_component(
+            f"pump_to_ro{i}", Arc(source=m.plant.pump.outlet, destination=ro.inlet)
+        )
+    pyo.TransformationFactory("network.expand_arcs").apply_to(m)
     return m
 
 
@@ -148,3 +171,79 @@ def test_symmetry_breaking_makes_solve_deterministic():
 
     assert pyo.value(m.plant.u0.status[0]) == pytest.approx(1.0)
     assert pyo.value(m.plant.u1.status[0]) == pytest.approx(0.0)
+
+
+@pytest.mark.unit
+def test_register_parallel_group_chains_conditionals():
+    """Registering 3 RO trains chains on-implications: ro0 -> ro1 -> ro2."""
+    m = _plant_pump_and_ro_trains()
+    for i in range(3):
+        ro = m.plant.component(f"ro{i}")
+        add_status(ro, ro.power_electrical, 0.0, 100.0)
+
+    cons = register_parallel_group([m.plant.ro0, m.plant.ro1, m.plant.ro2])
+
+    assert len(cons) == 2
+    assert cons[0] is m.plant.ro0.conditional
+    assert cons[1] is m.plant.ro1.conditional
+    assert not hasattr(m.plant.ro2, "conditional")
+
+    def _satisfied(con):
+        body = pyo.value(con.body)
+        lower, upper = con.lower, con.upper
+        ok = True
+        if lower is not None:
+            ok = ok and pyo.value(lower) <= body + 1e-9
+        if upper is not None:
+            ok = ok and body <= pyo.value(upper) + 1e-9
+        return ok
+
+    # ro0 on forces ro1 on; ro1 on forces ro2 on.
+    m.plant.ro0.status[0].set_value(1)
+    m.plant.ro1.status[0].set_value(1)
+    m.plant.ro2.status[0].set_value(1)
+    assert _satisfied(m.plant.ro0.conditional[0])
+    assert _satisfied(m.plant.ro1.conditional[0])
+
+    # ro0 on, ro1 off: violates the ro0 -> ro1 link.
+    m.plant.ro1.status[0].set_value(0)
+    assert not _satisfied(m.plant.ro0.conditional[0])
+
+
+@pytest.mark.unit
+def test_register_parallel_group_then_off():
+    """then='off': registering two RO trains ties ro0 on to ro1 off."""
+    m = _plant_pump_and_ro_trains()
+    for i in range(2):
+        ro = m.plant.component(f"ro{i}")
+        add_status(ro, ro.power_electrical, 0.0, 100.0)
+
+    register_parallel_group([m.plant.ro0, m.plant.ro1], then="off")
+
+    m.plant.ro0.status[0].set_value(1)
+    m.plant.ro1.status[0].set_value(1)
+    body = pyo.value(m.plant.ro0.conditional[0].body)
+    upper = pyo.value(m.plant.ro0.conditional[0].upper)
+    assert body > upper + 1e-9
+
+
+@pytest.mark.unit
+def test_register_parallel_group_requires_at_least_two_units():
+    """A single-unit list is not a group -> FlexConfigError."""
+    m = _plant_pump_and_ro_trains()
+    add_status(m.plant.ro0, m.plant.ro0.power_electrical, 0.0, 100.0)
+
+    with pytest.raises(FlexConfigError):
+        register_parallel_group([m.plant.ro0])
+
+
+@pytest.mark.unit
+def test_register_parallel_group_rejects_duplicate_units():
+    """The same unit repeated in the list -> FlexConfigError."""
+    m = _plant_pump_and_ro_trains()
+    for i in range(2):
+        ro = m.plant.component(f"ro{i}")
+        add_status(ro, ro.power_electrical, 0.0, 100.0)
+
+    with pytest.raises(FlexConfigError):
+        register_parallel_group([m.plant.ro0, m.plant.ro1, m.plant.ro0])

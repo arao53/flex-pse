@@ -7,7 +7,10 @@ built-in minimum uptime/downtime, via its ``min_uptime``/``min_downtime``
 args), :func:`add_dwell`, :func:`add_startup_delay`, :func:`add_conditional`,
 and :func:`add_bypass` are all optional. :func:`detect_parallel_trains`/
 :func:`break_parallel_symmetry` are **model-level** (over a PlantBlock/
-NetworkBlock, never a per-unit method -- R8).
+NetworkBlock, never a per-unit method -- R8). :func:`register_parallel_group`
+is the manual complement to :func:`detect_parallel_trains`, for units known by
+the caller to be interchangeable/hierarchically related but missed by its
+automatic predicate.
 
 Note: :func:`add_dwell` is a distinct, unrelated concept from
 ``add_startup_shutdown``'s minimum uptime/downtime -- it holds a **continuous**
@@ -20,7 +23,11 @@ consume that registry.
 
 from flexops.logic.bypass import add_bypass
 from flexops.logic.conditional import add_conditional
-from flexops.logic.degeneracy import break_parallel_symmetry, detect_parallel_trains
+from flexops.logic.degeneracy import (
+    break_parallel_symmetry,
+    detect_parallel_trains,
+    register_parallel_group,
+)
 from flexops.logic.delays import add_startup_delay
 from flexops.logic.dwell import add_dwell
 from flexops.logic.status import add_status, relax, unrelax
@@ -36,5 +43,6 @@ __all__ = [
     "add_conditional",
     "detect_parallel_trains",
     "break_parallel_symmetry",
+    "register_parallel_group",
     "add_bypass",
 ]
