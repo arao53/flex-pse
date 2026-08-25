@@ -10,7 +10,9 @@ and :func:`add_bypass` are all optional. :func:`register_parallel_group` is
 siblings, so a caller declares the group of interchangeable/hierarchically
 related units itself. The group, listed in priority order, is ordered
 descending along that list -- its first-listed unit is the first one on -- for
-both the units' status and any continuous Vars the caller names.
+both the units' status and any continuous Vars the caller names. Its
+``order_status=False`` mode orders those Vars alone, which is how a group whose
+units carry no ``status`` Var is registered.
 
 Note: :func:`add_dwell` is a distinct, unrelated concept from
 ``add_startup_shutdown``'s minimum uptime/downtime -- it holds a **continuous**

@@ -65,6 +65,15 @@ list::
 
 so a train may not run unless its predecessor runs, and the first-listed unit
 is the first one on. The same ordering applies to any continuous Vars named in
-``variables``.
+``variables``. What an ordering buys is a smaller search — the permuted copies
+of a split duty are cut — rather than a unique split: an equal-cost split that
+is not merely a relabelling of another still satisfies it.
+
+Status ordering is the default and requires a ``status`` Var on every unit in
+the group. Since ``status`` is attached by the caller
+(:func:`~flexops.logic.status.add_status`) rather than by a unit's ``build()``,
+a group that never had unit commitment applied — or one of units that have no
+on/off state at all, such as a tank — is registered with ``order_status=False``,
+which orders the named ``variables`` alone.
 
 .. autofunction:: register_parallel_group

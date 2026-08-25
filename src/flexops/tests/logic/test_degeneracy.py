@@ -197,3 +197,140 @@ def test_register_parallel_group_rejects_duplicate_units():
 
     with pytest.raises(FlexConfigError):
         register_parallel_group([m.plant.ro0, m.plant.ro1, m.plant.ro0])
+
+
+@pytest.mark.unit
+def test_order_status_false_orders_units_without_a_status_var():
+    """A group carrying no status Var at all still gets its Vars ordered."""
+    m = _plant_pump_and_ro_trains()  # deliberately no add_status on any train
+
+    cons = register_parallel_group(
+        [m.plant.ro0, m.plant.ro1, m.plant.ro2],
+        variables=["recovery"],
+        order_status=False,
+    )
+
+    assert cons == []
+    for i in range(3):
+        assert not hasattr(m.plant.component(f"ro{i}"), "status")
+
+    # The one name chains across the whole group: ro0 >= ro1 >= ro2.
+    assert not hasattr(m.plant.ro0, "recovery_ordering")
+    m.plant.ro0.recovery.set_value(0.6)
+    m.plant.ro1.recovery.set_value(0.5)
+    m.plant.ro2.recovery.set_value(0.4)
+    assert _satisfied(m.plant.ro1.recovery_ordering)
+    assert _satisfied(m.plant.ro2.recovery_ordering)
+
+    m.plant.ro2.recovery.set_value(0.9)
+    assert not _satisfied(m.plant.ro2.recovery_ordering)
+
+
+@pytest.mark.unit
+def test_order_status_true_rejects_units_without_a_status_var():
+    """The default path needs a status Var -- exactly what order_status frees."""
+    m = _plant_pump_and_ro_trains()
+
+    with pytest.raises(FlexConfigError):
+        register_parallel_group([m.plant.ro0, m.plant.ro1], variables=["recovery"])
+
+
+@pytest.mark.unit
+def test_order_status_false_leaves_status_unconstrained():
+    """Units that do carry status keep their on/off order free."""
+    m = _plant_pump_and_ro_trains()
+    for i in range(3):
+        ro = m.plant.component(f"ro{i}")
+        add_status(ro, ro.power_electrical, 0.0, 100.0)
+
+    before = {id(c) for c in m.component_data_objects(pyo.Constraint, active=True)}
+    cons = register_parallel_group(
+        [m.plant.ro0, m.plant.ro1, m.plant.ro2],
+        variables=["recovery"],
+        order_status=False,
+    )
+    added = [
+        c
+        for c in m.component_data_objects(pyo.Constraint, active=True)
+        if id(c) not in before
+    ]
+
+    # The *only* thing registration added is the recovery ordering: nothing new
+    # touches status, so ro0 off while ro1 on -- which the default path forbids
+    # -- is left feasible.
+    assert cons == []
+    assert {c.parent_component().local_name for c in added} == {"recovery_ordering"}
+    assert len(added) == 2
+    for i in range(3):
+        assert not hasattr(m.plant.component(f"ro{i}"), "conditional")
+
+
+@pytest.mark.unit
+def test_order_status_false_still_orders_variables():
+    """Releasing the status order leaves the continuous ordering fully in force."""
+    m = _plant_pump_and_ro_trains()
+    for i in range(3):
+        ro = m.plant.component(f"ro{i}")
+        add_status(ro, ro.power_electrical, 0.0, 100.0)
+
+    register_parallel_group(
+        [m.plant.ro0, m.plant.ro1, m.plant.ro2],
+        variables=["recovery"],
+        order_status=False,
+    )
+
+    m.plant.ro0.recovery.set_value(0.6)
+    m.plant.ro1.recovery.set_value(0.4)
+    m.plant.ro2.recovery.set_value(0.4)
+    assert _satisfied(m.plant.ro1.recovery_ordering)
+    assert _satisfied(m.plant.ro2.recovery_ordering)
+
+    m.plant.ro1.recovery.set_value(0.8)
+    assert not _satisfied(m.plant.ro1.recovery_ordering)
+
+
+@pytest.mark.unit
+def test_order_status_false_without_variables_is_rejected():
+    """Ordering neither status nor any variable orders nothing -> FlexConfigError."""
+    m = _plant_pump_and_ro_trains()
+    for i in range(2):
+        ro = m.plant.component(f"ro{i}")
+        add_status(ro, ro.power_electrical, 0.0, 100.0)
+
+    with pytest.raises(FlexConfigError):
+        register_parallel_group([m.plant.ro0, m.plant.ro1], order_status=False)
+
+
+@pytest.mark.component
+@pytest.mark.needs_highs
+def test_order_status_false_orders_a_degenerate_split_deterministically():
+    """Ordering a flow alone breaks a split symmetry, with no UC in the model."""
+    from flexcore.solvers import get_solver
+
+    m = dummy_time_block(1)
+    m.plant = pyo.Block()
+    m.plant.u0 = Pump(property_package=m.properties)
+    m.plant.u1 = Pump(property_package=m.properties)
+
+    # No add_status anywhere: neither pump carries a status Var, so the default
+    # path could not register this group at all.
+    register_parallel_group(
+        [m.plant.u0, m.plant.u1], variables=["flow_in"], order_status=False
+    )
+
+    m.demand = pyo.Constraint(
+        expr=m.plant.u0.flow_in[0] + m.plant.u1.flow_in[0] == 50.0
+    )
+
+    # Minimizing u0's flow alone would push the whole duty onto u1 (0/50); the
+    # ordering u0 >= u1 forbids that, leaving the even split as the unique
+    # optimum.
+    @m.Objective(sense=pyo.minimize)
+    def lead_flow(b):
+        return b.plant.u0.flow_in[0]
+
+    results = get_solver(model=m, prefer="highs").solve(m)
+    pyo.assert_optimal_termination(results)
+
+    assert pyo.value(m.plant.u0.flow_in[0]) == pytest.approx(25.0, rel=1e-6)
+    assert pyo.value(m.plant.u1.flow_in[0]) == pytest.approx(25.0, rel=1e-6)

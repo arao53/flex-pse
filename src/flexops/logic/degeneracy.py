@@ -14,9 +14,17 @@ in priority order and it is ordered **descending** along that list::
 
 so a train may not run unless its predecessor runs, and the first-listed unit
 is the first one on. The same ordering is applied to any continuous Vars the
-caller names, which is what breaks the degeneracy in a split duty (three RO
-trains free to trade recovery among themselves have many equal-cost splits;
-one canonical ordering among them does not).
+caller names, which rules out the *permuted copies* of a split duty: three RO
+trains free to trade recovery among themselves reach the same cost under any
+relabelling, and the ordering admits exactly one of those labellings. What that
+buys is a smaller search -- symmetric branches are cut -- not a unique split:
+an equal-cost split that is not merely a relabelling of another still satisfies
+the ordering.
+
+Status ordering is the default and needs a ``status`` Var on every unit. A group
+whose units carry none -- a tank, or any unit the caller never applied
+:func:`~flexops.logic.status.add_status` to -- is registered with
+``order_status=False``, which orders the named variables alone.
 """
 
 from collections.abc import Sequence
@@ -63,16 +71,25 @@ def _ordered_variable(unit: Any, name: str) -> Any:
     return var
 
 
-def _attach_variable_ordering(unit: Any, upper: Any, lower: Any, name: str) -> None:
-    """Attach ``upper >= lower`` to ``unit`` as ``{name}_ordering``.
+def _attach_variable_ordering(
+    name: str, upper_unit: Any, lower_unit: Any
+) -> pyo.Constraint:
+    """Order ``name`` across one consecutive pair of units.
+
+    Attaches ``upper_unit.<name> >= lower_unit.<name>`` to ``lower_unit`` (the
+    *later* unit of the pair, so it lands beside that pair's ``conditional``)
+    as ``{name}_ordering``.
 
     Args:
-        unit: The unit to attach the Constraint to (the *later* unit of the
-            pair, so it lands beside that pair's ``conditional``).
-        upper: The predecessor unit's Var (the >= side).
-        lower: The later unit's Var (the <= side).
-        name: Local component name shared by both Vars; names the Constraint.
+        name: Local component name of the Var, as both units expose it.
+        upper_unit: The predecessor unit (the >= side).
+        lower_unit: The later unit (the <= side).
+
+    Returns:
+        The attached Constraint.
     """
+    upper = _ordered_variable(upper_unit, name)
+    lower = _ordered_variable(lower_unit, name)
     doc = (
         f"Canonical ordering among parallel units: the predecessor's {name} "
         f"is >= this unit's {name}."
@@ -85,11 +102,12 @@ def _attach_variable_ordering(unit: Any, upper: Any, lower: Any, name: str) -> N
         )
     else:
         con = pyo.Constraint(expr=upper >= lower, doc=doc)
-    unit.add_component(f"{name}_ordering", con)
+    lower_unit.add_component(f"{name}_ordering", con)
+    return con
 
 
 def register_parallel_group(
-    units: list[Any], *, variables: Sequence[str] = ()
+    units: list[Any], *, variables: Sequence[str] = (), order_status: bool = True
 ) -> list[pyo.Constraint]:
     """Declare units as a parallel/degenerate hierarchy group and order them.
 
@@ -102,7 +120,9 @@ def register_parallel_group(
         units[0].status[t] >= units[1].status[t] >= ... >= units[-1].status[t]
 
     so a train may not run unless its predecessor runs and ``units[0]`` is the
-    first one on. Implemented by chaining
+    first one on. Pass ``order_status=False`` to skip this and order only the
+    named ``variables`` -- the way to register a group whose units carry no
+    ``status`` Var. Implemented by chaining
     :func:`~flexops.logic.conditional.add_conditional` over every consecutive
     pair *back to front* (``add_conditional(units[i + 1], units[i])`` reads as
     "``units[i + 1]`` on implies ``units[i]`` on"), reusing its tested two-unit
@@ -119,29 +139,32 @@ def register_parallel_group(
     ordering over them only binds once a caller or FlexParameterize unfixes
     them — until then it is a trivially satisfied constant.
 
-    A group is always a hierarchy. For the unrelated "these two may not run
-    together" relation, call
-    :func:`~flexops.logic.conditional.add_conditional` with ``then="off"``
-    directly on the pair.
-
     Args:
         units: >= 2 units, in the intended canonical order (highest priority
-            first). Each must carry a ``status`` Var (see
-            :func:`~flexops.logic.status.add_status`).
-        variables: Local component names of Vars to order across the group in
-            the same direction, as each unit exposes them (a renaming unit
-            exposes the renamed name). Empty by default.
+            first).
+        variables: Local component names of continuous Vars to order across the
+            group, as each unit exposes them -- a renaming unit exposes the
+            renamed name. One name is resolved on every unit and chained over
+            the whole group, ``units[0].<name> >= units[1].<name> >= ...``.
+            Empty by default.
+        order_status: Whether to order the group's ``status`` Vars (default
+            True). Pass False for a group whose units carry no ``status`` Var,
+            or to leave the on/off order free and canonicalize only
+            ``variables``.
 
     Returns:
         The ``len(units) - 1`` attached ``conditional`` Constraints, one per
-        consecutive pair, in order. Any ``variables`` Constraints are reachable
-        on the units as ``{name}_ordering``.
+        consecutive pair, in order -- empty when ``order_status`` is False. Any
+        ``variables`` Constraints are reachable on the units as
+        ``{name}_ordering``.
 
     Raises:
         FlexConfigError: If fewer than two units are given, if a unit repeats
-            in the list, if a variable name does not resolve to a Var on every
-            unit or resolves to differently-indexed Vars across the group, or
-            (raised by ``add_conditional``) if a unit lacks a ``status`` Var.
+            in the list, if ``order_status`` is False with no ``variables`` (the
+            call would order nothing), if a variable name does not resolve to a
+            Var on every unit or resolves to differently-indexed Vars across the
+            group, or -- on the default path only, raised by
+            ``add_conditional`` -- if a unit lacks a ``status`` Var.
     """
     if len(units) < 2:
         raise FlexConfigError(
@@ -156,11 +179,19 @@ def register_parallel_group(
             field="units",
             value=[u.name for u in units],
         )
-    # Resolve and validate every ordered variable up front, so a bad name
-    # cannot leave a half-built group behind.
-    resolved = {name: [_ordered_variable(u, name) for u in units] for name in variables}
-    for name, group_vars in resolved.items():
-        if len({tuple(v.index_set()) for v in group_vars}) > 1:
+    if not order_status and not variables:
+        raise FlexConfigError(
+            "register_parallel_group with order_status=False and no variables "
+            "would order nothing. Name the continuous variables to order, or "
+            "leave order_status enabled.",
+            field="order_status",
+            value=order_status,
+        )
+
+    # Every named Var must resolve on every unit, and carry one shared index set.
+    for name in variables:
+        unit_vars = [_ordered_variable(unit, name) for unit in units]
+        if len({tuple(var.index_set()) for var in unit_vars}) > 1:
             raise FlexConfigError(
                 f"register_parallel_group requires {name!r} to carry the same "
                 "index set on every unit in the group, but the units "
@@ -169,13 +200,16 @@ def register_parallel_group(
                 value=name,
             )
 
-    constraints = [
-        add_conditional(units[i + 1], units[i], then="on")
-        for i in range(len(units) - 1)
-    ]
-    for name, group_vars in resolved.items():
-        for i in range(len(units) - 1):
-            _attach_variable_ordering(
-                units[i + 1], group_vars[i], group_vars[i + 1], name
-            )
+    for name in variables:
+        for upper_unit, lower_unit in zip(units, units[1:], strict=False):
+            _attach_variable_ordering(name, upper_unit, lower_unit)
+
+    constraints = (
+        [
+            add_conditional(units[i + 1], units[i], then="on")
+            for i in range(len(units) - 1)
+        ]
+        if order_status
+        else []
+    )
     return constraints
