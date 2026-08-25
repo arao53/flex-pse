@@ -5,12 +5,14 @@ A composable set of optional constraint pieces applied per unit via its
 unit can be shut off); :func:`add_startup_shutdown` (transition logic plus
 built-in minimum uptime/downtime, via its ``min_uptime``/``min_downtime``
 args), :func:`add_dwell`, :func:`add_startup_delay`, :func:`add_conditional`,
-and :func:`add_bypass` are all optional. :func:`detect_parallel_trains`/
-:func:`break_parallel_symmetry` are **model-level** (over a PlantBlock/
-NetworkBlock, never a per-unit method -- R8). :func:`register_parallel_group`
-is the manual complement to :func:`detect_parallel_trains`, for units known by
-the caller to be interchangeable/hierarchically related but missed by its
-automatic predicate.
+and :func:`add_bypass` are all optional. :func:`register_parallel_group` is
+**model-level** rather than a per-unit method (R8): a unit cannot see its
+siblings, so a caller declares the group of interchangeable/hierarchically
+related units itself. The group, listed in priority order, is ordered
+descending along that list -- its first-listed unit is the first one on -- for
+both the units' status and any continuous Vars the caller names. Its
+``order_status=False`` mode orders those Vars alone, which is how a group whose
+units carry no ``status`` Var is registered.
 
 Note: :func:`add_dwell` is a distinct, unrelated concept from
 ``add_startup_shutdown``'s minimum uptime/downtime -- it holds a **continuous**
@@ -23,11 +25,7 @@ consume that registry.
 
 from flexops.logic.bypass import add_bypass
 from flexops.logic.conditional import add_conditional
-from flexops.logic.degeneracy import (
-    break_parallel_symmetry,
-    detect_parallel_trains,
-    register_parallel_group,
-)
+from flexops.logic.degeneracy import register_parallel_group
 from flexops.logic.delays import add_startup_delay
 from flexops.logic.dwell import add_dwell
 from flexops.logic.status import add_status, relax, unrelax
@@ -41,8 +39,6 @@ __all__ = [
     "add_dwell",
     "add_startup_delay",
     "add_conditional",
-    "detect_parallel_trains",
-    "break_parallel_symmetry",
     "register_parallel_group",
     "add_bypass",
 ]
