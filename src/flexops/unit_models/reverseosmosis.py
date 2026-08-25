@@ -88,7 +88,7 @@ class ReverseOsmosisData(SIDOBlockData):
         "energy_intensity",
         ConfigValue(
             default=3.0 * pyunits.kWh / pyunits.m**3,
-            description="Electrical energy per unit volume of feed processed "
+            description="Electrical energy per unit volume of product "
             "(a fixed, regressable Var once built), kWh/m^3.",
         ),
     )
@@ -105,7 +105,7 @@ class ReverseOsmosisData(SIDOBlockData):
             }
         )
         self.add_constant_intensity_relation(
-            self.find_component(self._named("flow_in")),
+            self.find_component(self._named("flow_out_a")),
             kind=nm.PowerKind.ELECTRICAL,
             intensity=self.config.energy_intensity,
         )
