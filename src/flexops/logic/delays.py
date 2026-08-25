@@ -30,9 +30,9 @@ def add_startup_delay(unit: Any, upstream: Any, k: int) -> pyo.Constraint:
         k: Number of steps the downstream start is delayed behind the upstream.
 
     Registers ``unit``'s ``status`` Var as rolling-horizon state (trailing
-    ``k`` steps) via
-    :func:`~flexops.logic.status._register_rolling_state` -- consumption is
-    M12's job, not built here.
+    ``k`` steps) via ``flexops.logic.status._register_rolling_state`` --
+    consuming that registry is the rolling-horizon scheduler's job, not built
+    here.
 
     Returns:
         The attached ``startup_delay`` Constraint.
