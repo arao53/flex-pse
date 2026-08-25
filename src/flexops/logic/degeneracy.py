@@ -1,223 +1,147 @@
-"""Model-level parallel-train degeneracy detection + symmetry breaking (M08, R8).
+"""Manual parallel-train degeneracy handling: hierarchy over a declared group.
 
-Symmetry among identical parallel trains (pumps, batteries, ...) creates
-solver-time degeneracy: many equal-objective MILP solutions differ only in
-*which* interchangeable unit is on. A unit cannot see its siblings, so this is
-implemented **outside the unit level**, as a diagnostic/transform pass invoked
-explicitly by a caller over a ``PlantBlock``/``NetworkBlock`` (a bare
-``pyo.Block`` in v0, since ``PlantBlock`` itself lands in M09) -- never inside
-``build()`` (pitfall 8).
+Symmetry among identical parallel trains (RO skids, pumps, batteries, ...)
+creates solver-time degeneracy: many equal-objective solutions differ only in
+*which* interchangeable unit is on, or in how a shared duty is split between
+them. A unit cannot see its siblings, so this is handled **outside the unit
+level**, as a transform a caller applies explicitly to a group of units it has
+declared -- never inside a unit's ``build()``.
 
-**v0 interchangeability predicate** (documented choice): two units are
-interchangeable if they are the same class and every config entry that is a
-plain scalar (``int``/``float``/``str``/``bool``), an enum, a pydantic sub-config
-(``UnitCommitmentConfig``, ``ExternalDispatchSpec``), or a Pyomo units-carrying
-numeric quantity (e.g. ``capacity``, ``power_charge_max``) compares equal
-(numeric quantities are compared by converted value, not object identity).
-Object-reference config entries (``property_package``, ``costing_package``,
-and similar Pyomo components/blocks) are **not** compared -- sibling trains
-typically share the same property/costing package instance, and comparing
-Pyomo component objects with ``==`` would build a constraint expression rather
-than a boolean. "Same connectivity" (the milestone's smallest v0 form) is
-approximated as: the same set of named Ports.
+:func:`register_parallel_group` is that transform. The caller lists the group
+in priority order and it is ordered **descending** along that list::
 
-:func:`detect_parallel_trains` only catches units matching that predicate.
-:func:`register_parallel_group` is the manual complement: it lets a caller
-declare a group directly (by chaining :func:`~flexops.logic.conditional.add_conditional`
-over it) for units known to be interchangeable/hierarchically related but that
-the predicate misses.
+    group[0].status[t] >= group[1].status[t] >= ... >= group[-1].status[t]
+
+so a train may not run unless its predecessor runs, and the first-listed unit
+is the first one on. The same ordering is applied to any continuous Vars the
+caller names, which is what breaks the degeneracy in a split duty (three RO
+trains free to trade recovery among themselves have many equal-cost splits;
+one canonical ordering among them does not).
 """
 
-import enum
-import math
+from collections.abc import Sequence
 from typing import Any
 
 import pyomo.environ as pyo
-from pydantic import BaseModel
-from pyomo.environ import units as pyunits
-from pyomo.network import Port
 
 from flexcore.exceptions import FlexConfigError
-from flexops.core.ops_block import OpsBlockData
 from flexops.logic.conditional import add_conditional
 
-_SKIPPED_CONFIG_KEYS = {
-    "property_package",
-    "costing_package",
-    "flexops_config",
-    "dynamic",
-    "has_holdup",
-}
 
-
-def _config_value_matches(a: Any, b: Any) -> bool:
-    """Whether two config values are equal under the v0 interchangeability predicate.
-
-    Plain scalars/enums/pydantic sub-configs compare with ``==``. Pyomo
-    units-carrying numeric quantities compare by converted value. Anything else
-    (Pyomo components/blocks held by reference) is treated as non-disqualifying
-    -- sibling trains legitimately share the same property/costing package.
-    """
-    if a is None or b is None:
-        return a is b
-    if isinstance(a, (int, float, str, bool)):
-        return type(a) is type(b) and a == b
-    if isinstance(a, enum.Enum):
-        return a == b
-    if isinstance(a, BaseModel):  # UnitCommitmentConfig, ExternalDispatchSpec, ...
-        return type(a) is type(b) and a == b
-    try:
-        units_a = pyunits.get_units(a)
-        val_b = pyo.value(pyunits.convert(b, units_a))
-        return math.isclose(pyo.value(a), val_b, rel_tol=1e-9, abs_tol=1e-12)
-    except (TypeError, ValueError, AttributeError):
-        return True  # not a comparable scalar/quantity -> don't disqualify
-
-
-def _port_names(unit: Any) -> set[str]:
-    """Names of every Port a unit exposes ("same connectivity", v0 smallest form)."""
-    return {c.local_name for c in unit.component_objects(Port, descend_into=False)}
-
-
-def _unit_class(unit: Any) -> type:
-    """The unit's stable "Data" class (e.g. ``PumpData``), for identity comparison.
-
-    ``type(unit)`` is unusable here: ``declare_process_block_class`` mints a
-    fresh synthetic ``_ScalarPump``-style wrapper class **per instance**, so
-    two separately-built, otherwise-identical ``Pump`` instances never share
-    ``type(a) is type(b)``. The module-level ``*Data`` class one MRO step up
-    (``PumpData``, ``TankData``, ...) is defined once and shared by
-    every instance, so it is the correct class identity to compare.
-    """
-    return type(unit).__mro__[1]
-
-
-def _interchangeable(a: Any, b: Any) -> bool:
-    """Whether two units are interchangeable under the v0 predicate."""
-    if _unit_class(a) is not _unit_class(b):
-        return False
-    if _port_names(a) != _port_names(b):
-        return False
-    a_keys = set(a.config.keys()) - _SKIPPED_CONFIG_KEYS
-    b_keys = set(b.config.keys()) - _SKIPPED_CONFIG_KEYS
-    if a_keys != b_keys:
-        return False
-    return all(_config_value_matches(a.config[key], b.config[key]) for key in a_keys)
-
-
-def _child_units(block: Any) -> list[Any]:
-    """Every ``OpsBlockData`` instance under ``block``, in declaration order."""
-    seen: set[int] = set()
-    units = []
-    for data in block.component_data_objects(pyo.Block, descend_into=True):
-        if isinstance(data, OpsBlockData) and id(data) not in seen:
-            seen.add(id(data))
-            units.append(data)
-    return units
-
-
-def detect_parallel_trains(block: Any) -> list[list[Any]]:
-    """Group ``block``'s child units into interchangeable equivalence classes.
-
-    Walks every unit under ``block`` and groups units pairwise interchangeable
-    under the v0 predicate (module docstring) into classes of size >= 2;
-    singleton units are not degenerate and are omitted.
+def _ordered_variable(unit: Any, name: str) -> Any:
+    """Resolve ``name`` on ``unit`` as a Var to be ordered across a group.
 
     Args:
-        block: A ``PlantBlock``/``NetworkBlock`` (or, pre-M09, any ``pyo.Block``)
-            whose child units to inspect.
+        unit: The unit to resolve the name on.
+        name: Local component name of the Var, as that unit exposes it.
 
     Returns:
-        A list of groups (each a list of >= 2 interchangeable units), in
-        declaration order.
+        The resolved Var component (possibly a ``pyo.Reference`` to one).
+
+    Raises:
+        FlexConfigError: If the name does not resolve on ``unit``, or resolves
+            to something other than a Var.
     """
-    units = _child_units(block)
-    assigned: set[int] = set()
-    groups: list[list[Any]] = []
-    for i, unit in enumerate(units):
-        if id(unit) in assigned:
-            continue
-        group = [unit]
-        for other in units[i + 1 :]:
-            if id(other) not in assigned and _interchangeable(unit, other):
-                group.append(other)
-                assigned.add(id(other))
-        if len(group) >= 2:
-            assigned.add(id(unit))
-            groups.append(group)
-    return groups
+    var = unit.find_component(name)
+    if var is None:
+        raise FlexConfigError(
+            f"register_parallel_group found no component named {name!r} on "
+            f"unit {unit.name!r}; every ordered variable must exist on every "
+            "unit in the group. A unit that renames its roles exposes the "
+            "renamed name (ReverseOsmosis carries 'recovery', not "
+            "'split_fraction').",
+            field="variables",
+            value=name,
+        )
+    if var.ctype is not pyo.Var:
+        raise FlexConfigError(
+            f"register_parallel_group orders Vars only, but {name!r} on unit "
+            f"{unit.name!r} is a {var.ctype.__name__}; pass the name of a Var.",
+            field="variables",
+            value=name,
+        )
+    return var
 
 
-def break_parallel_symmetry(block: Any) -> int:
-    """Add canonical-ordering constraints for every interchangeable group.
-
-    Calls :func:`detect_parallel_trains` and, for each group of >= 2
-    interchangeable units ``[u0, u1, ...]``, adds ``u_i.status[t] >=
-    u_{i+1}.status[t]`` for every consecutive pair and every ``t`` (a train may
-    not be on unless its predecessor is). The constraints are attached to
-    ``block`` itself as ``train_ordering`` -- never to a single unit (R8,
-    pitfall 8). A no-op (returns 0, adds no component) if no group has size
-    >= 2.
+def _attach_variable_ordering(unit: Any, upper: Any, lower: Any, name: str) -> None:
+    """Attach ``upper >= lower`` to ``unit`` as ``{name}_ordering``.
 
     Args:
-        block: The ``PlantBlock``/``NetworkBlock`` (or bare ``pyo.Block``) to
-            scan and attach ordering constraints to.
-
-    Returns:
-        The number of ordering constraints added.
+        unit: The unit to attach the Constraint to (the *later* unit of the
+            pair, so it lands beside that pair's ``conditional``).
+        upper: The predecessor unit's Var (the >= side).
+        lower: The later unit's Var (the <= side).
+        name: Local component name shared by both Vars; names the Constraint.
     """
-    groups = detect_parallel_trains(block)
-    pairs: dict[tuple[int, int, int], tuple[Any, Any]] = {}
-    for g_idx, group in enumerate(groups):
-        tb = group[0]._find_time_block()
-        for pos in range(len(group) - 1):
-            for t in tb.time_index:
-                pairs[(g_idx, pos, t)] = (group[pos], group[pos + 1])
-
-    if not pairs:
-        return 0
-
-    def _rule(_b, g_idx, pos, t):
-        upper, lower = pairs[(g_idx, pos, t)]
-        return upper.status[t] >= lower.status[t]
-
-    block.train_ordering = pyo.Constraint(
-        list(pairs),
-        rule=_rule,
-        doc="Canonical ordering among interchangeable parallel trains: "
-        "train[i].status[t] >= train[i+1].status[t] (a train may not be on "
-        "unless its predecessor is).",
+    doc = (
+        f"Canonical ordering among parallel units: the predecessor's {name} "
+        f"is >= this unit's {name}."
     )
-    return len(pairs)
+    if upper.is_indexed():
+        con = pyo.Constraint(
+            list(upper.index_set()),
+            rule=lambda _b, i: upper[i] >= lower[i],
+            doc=doc,
+        )
+    else:
+        con = pyo.Constraint(expr=upper >= lower, doc=doc)
+    unit.add_component(f"{name}_ordering", con)
 
 
 def register_parallel_group(
-    units: list[Any], *, then: str = "on"
+    units: list[Any], *, variables: Sequence[str] = ()
 ) -> list[pyo.Constraint]:
-    """Manually declare units as a parallel/degenerate hierarchy group.
+    """Declare units as a parallel/degenerate hierarchy group and order them.
 
-    Complements :func:`detect_parallel_trains`'s automatic class/config/
-    connectivity predicate (module docstring) for units that are known by the
-    caller to be interchangeable or otherwise hierarchically related but do
-    not satisfy that predicate. Chains
+    For units the caller knows to be interchangeable or otherwise
+    hierarchically related — parallel skids, staged trains, a lead/lag pair.
+
+    **Canonical direction.** ``units`` is given in priority order, lowest
+    first, and the group is ordered *descending* along that list::
+
+        units[0].status[t] >= units[1].status[t] >= ... >= units[-1].status[t]
+
+    so a train may not run unless its predecessor runs and ``units[0]`` is the
+    first one on. Implemented by chaining
     :func:`~flexops.logic.conditional.add_conditional` over every consecutive
-    pair in ``units`` (in the given order), reusing its tested two-unit
-    implication semantics rather than re-implementing them.
+    pair *back to front* (``add_conditional(units[i + 1], units[i])`` reads as
+    "``units[i + 1]`` on implies ``units[i]`` on"), reusing its tested two-unit
+    implication semantics rather than re-implementing them. Each pair's
+    Constraint therefore lands on the **later** unit: ``units[0]`` carries no
+    ``conditional``, ``units[-1]`` does.
+
+    **Continuous variables.** Each name in ``variables`` is resolved on every
+    unit and ordered the same way, ``units[i].<name> >= units[i + 1].<name>``,
+    as a Constraint named ``{name}_ordering`` attached beside that pair's
+    ``conditional``. Time-indexed Vars are ordered at every index; scalar Vars
+    (a unit's regressable process parameters, e.g. ``ReverseOsmosis.recovery``)
+    get a single Constraint. Such parameters are *fixed* at construction, so an
+    ordering over them only binds once a caller or FlexParameterize unfixes
+    them — until then it is a trivially satisfied constant.
+
+    A group is always a hierarchy. For the unrelated "these two may not run
+    together" relation, call
+    :func:`~flexops.logic.conditional.add_conditional` with ``then="off"``
+    directly on the pair.
 
     Args:
-        units: >= 2 units, in the intended canonical order. Each must carry a
-            ``status`` Var (see :func:`~flexops.logic.status.add_status`).
-        then: ``"on"`` or ``"off"``, passed through to each ``add_conditional``
-            call (see its docstring for exact semantics per pair).
+        units: >= 2 units, in the intended canonical order (highest priority
+            first). Each must carry a ``status`` Var (see
+            :func:`~flexops.logic.status.add_status`).
+        variables: Local component names of Vars to order across the group in
+            the same direction, as each unit exposes them (a renaming unit
+            exposes the renamed name). Empty by default.
 
     Returns:
         The ``len(units) - 1`` attached ``conditional`` Constraints, one per
-        consecutive pair, in order.
+        consecutive pair, in order. Any ``variables`` Constraints are reachable
+        on the units as ``{name}_ordering``.
 
     Raises:
         FlexConfigError: If fewer than two units are given, if a unit repeats
-            in the list, or (raised by ``add_conditional``) if ``then`` is
-            invalid or a unit lacks a ``status`` Var.
+            in the list, if a variable name does not resolve to a Var on every
+            unit or resolves to differently-indexed Vars across the group, or
+            (raised by ``add_conditional``) if a unit lacks a ``status`` Var.
     """
     if len(units) < 2:
         raise FlexConfigError(
@@ -232,7 +156,26 @@ def register_parallel_group(
             field="units",
             value=[u.name for u in units],
         )
-    return [
-        add_conditional(units[i], units[i + 1], then=then)
+    # Resolve and validate every ordered variable up front, so a bad name
+    # cannot leave a half-built group behind.
+    resolved = {name: [_ordered_variable(u, name) for u in units] for name in variables}
+    for name, group_vars in resolved.items():
+        if len({tuple(v.index_set()) for v in group_vars}) > 1:
+            raise FlexConfigError(
+                f"register_parallel_group requires {name!r} to carry the same "
+                "index set on every unit in the group, but the units "
+                f"{[u.name for u in units]} index it differently.",
+                field="variables",
+                value=name,
+            )
+
+    constraints = [
+        add_conditional(units[i + 1], units[i], then="on")
         for i in range(len(units) - 1)
     ]
+    for name, group_vars in resolved.items():
+        for i in range(len(units) - 1):
+            _attach_variable_ordering(
+                units[i + 1], group_vars[i], group_vars[i + 1], name
+            )
+    return constraints

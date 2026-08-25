@@ -1,0 +1,70 @@
+flexops.logic
+=============
+
+The composable unit-commitment layer (architecture §3.5): a set of optional
+constraint pieces applied per unit. :func:`~flexops.logic.status.add_status` is
+the base — present whenever a unit can be shut off — and everything else is
+opt-in. Every name below is re-exported from ``flexops.logic`` itself.
+
+Status
+------
+
+.. currentmodule:: flexops.logic.status
+
+.. autofunction:: add_status
+
+.. autofunction:: relax
+
+.. autofunction:: unrelax
+
+Commitment and timing
+---------------------
+
+.. currentmodule:: flexops.logic.unit_commitment
+
+.. autofunction:: add_startup_shutdown
+
+.. currentmodule:: flexops.logic.delays
+
+.. autofunction:: add_startup_delay
+
+.. currentmodule:: flexops.logic.dwell
+
+.. autofunction:: add_dwell
+
+``add_dwell`` is a distinct, unrelated concept from ``add_startup_shutdown``'s
+minimum uptime/downtime: it holds a **continuous** process variable steady, not
+a unit's on/off status.
+
+Bypass and implications
+-----------------------
+
+.. currentmodule:: flexops.logic.bypass
+
+.. autofunction:: add_bypass
+
+.. currentmodule:: flexops.logic.conditional
+
+.. autofunction:: add_conditional
+
+Parallel trains and degeneracy
+------------------------------
+
+.. currentmodule:: flexops.logic.degeneracy
+
+Symmetry among identical parallel trains creates solver-time degeneracy: many
+equal-objective solutions differ only in *which* interchangeable unit is on, or
+in how a shared duty is split between them. A unit cannot see its siblings, so
+this is handled **outside the unit level** (decision R8): the caller declares
+the group, never a unit's own ``build()``.
+
+The group is listed in priority order and ordered **descending** along that
+list::
+
+    group[0].status[t] >= group[1].status[t] >= ... >= group[-1].status[t]
+
+so a train may not run unless its predecessor runs, and the first-listed unit
+is the first one on. The same ordering applies to any continuous Vars named in
+``variables``.
+
+.. autofunction:: register_parallel_group
