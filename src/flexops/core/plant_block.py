@@ -3,7 +3,8 @@
 A thin ``FlowsheetBlockData`` subclass, always ``dynamic=False``, whose time
 domain **is** the ``TimeBlock``'s ordered integer set (never Pyomo.DAE): all
 dynamics are hand-written difference equations. It holds the arcs between its
-units and aggregates their registered power draws.
+units and aggregates their registered power draws, fuel usage, and boundary
+(feed/product) flows.
 
 ``PlantBlock`` composes **units** only. A plant containing plants is a
 :class:`~flexops.core.network_block.NetworkBlock` — this block is deliberately
@@ -30,7 +31,7 @@ from pyomo.environ import units as pyunits
 
 from flexcore import nomenclature as nm
 from flexcore.exceptions import FlexConfigError
-from flexops.core.registration import IORegistry
+from flexops.core.registration import BoundaryKind, IORegistry
 from flexops.core.time_block import TimeBlockData, find_time_block
 
 
@@ -154,6 +155,14 @@ class _AggregatingFlowsheet(FlowsheetBlockData):
         """
         raise NotImplementedError
 
+    def _feed_terms(self) -> dict[str, list]:
+        """Return the terms this block's feed total sums, by resource. Override this.
+
+        Raises:
+            NotImplementedError: Always, on this shared base.
+        """
+        raise NotImplementedError
+
     def _product_terms(self) -> dict[str, list]:
         """Return ``{product name: [getters]}``, each ``getter(t) -> flow``.
 
@@ -202,6 +211,16 @@ class _AggregatingFlowsheet(FlowsheetBlockData):
                     for get in _f[fuel]
                 )
                 + 0 * pyunits.m**3 / pyunits.hr,
+            )
+
+        feed_terms = self._feed_terms()
+        if feed_terms:
+            _refresh_expression(
+                self,
+                nm.TOTAL_FEED,
+                (sorted(feed_terms), time_index),
+                "Sum of the registered feed flows, by resource name.",
+                lambda resource, t, _f=feed_terms: sum(get(t) for get in _f[resource]),
             )
 
         products = self._product_terms()
@@ -273,4 +292,55 @@ class PlantBlockData(_AggregatingFlowsheet):
                     terms.setdefault(rec.fuel_name, []).append(
                         lambda t, _var=rec.var: _var[t]
                     )
+        return terms
+
+    def _boundary_terms(self, kind: BoundaryKind) -> dict[str, list]:
+        """Return every child unit's registered boundary flows of ``kind``.
+
+        Discovery goes through the ``_io_registry``, never an ``isinstance``
+        check against ``Feed``/``Product``: those live in
+        ``flexops.unit_models``, which imports this module, so importing them
+        back here would be circular.
+
+        Args:
+            kind: The :class:`~flexops.core.registration.BoundaryKind` to
+                collect.
+
+        Returns:
+            ``{resource: [getters]}``, each ``getter(t) -> flow``, for this
+            plant's units.
+        """
+        terms: dict[str, list] = {}
+        for block in self.component_data_objects(pyo.Block, descend_into=True):
+            registry = getattr(block, "_io_registry", None)
+            if isinstance(registry, IORegistry):
+                for rec in registry.boundary:
+                    if rec.kind is kind:
+                        terms.setdefault(rec.resource, []).append(
+                            lambda t, _var=rec.var: _var[t]
+                        )
+        return terms
+
+    def _feed_terms(self) -> dict[str, list]:
+        """Return every child unit's registered feed flows, by resource name.
+
+        Returns:
+            ``{resource: [getters]}``, each ``getter(t) -> flow``.
+        """
+        return self._boundary_terms(BoundaryKind.FEED)
+
+    def _product_terms(self) -> dict[str, list]:
+        """Return the explicitly registered products merged with the discovered ones.
+
+        Both routes land in ``total_product``: the explicit
+        :meth:`~_AggregatingFlowsheet.register_product` registry, and every
+        child unit that registered a
+        :attr:`~flexops.core.registration.BoundaryKind.PRODUCT` boundary flow.
+
+        Returns:
+            ``{product name: [getters]}``, each ``getter(t) -> flow``.
+        """
+        terms = super()._product_terms()
+        for resource, getters in self._boundary_terms(BoundaryKind.PRODUCT).items():
+            terms.setdefault(resource, []).extend(getters)
         return terms

@@ -1376,3 +1376,71 @@ def test_prorating_leaves_the_energy_charge_alone():
     energy = 100.0 * (5 * 0.18 + 19 * 0.09)
     expected = energy + (150.0 + 40.5 * 100.0) * scale
     assert m.costing.report_cost(m).operating.electricity == pytest.approx(expected)
+
+
+# -- boundary blocks: priced feed and product credits ------------------------
+
+
+def _boundary_costing(feed_price: float, product_price: float):
+    """A plant with a priced Feed and a priced Product, costed and propagated."""
+    from flexops.unit_models import Feed, Product
+
+    m = _time_model()
+    m.costing = FlexCosting(time_block=m.time_block, tariff_file=str(_TARIFF_JSON))
+    m.plant = fo.PlantBlock(time_block=m.time_block)
+    m.plant.raw_water = Feed(
+        property_package=m.properties,
+        resource_name="raw_water",
+        price=feed_price,
+        costing_package=m.costing,
+    )
+    m.plant.potable = Product(
+        property_package=m.properties,
+        resource_name="potable_water",
+        price=product_price,
+        costing_package=m.costing,
+    )
+    for t in m.time_block.time_index:
+        m.plant.raw_water.withdrawal[t].fix(4.0)
+        m.plant.potable.delivery[t].fix(3.0)
+    m.costing.cost_process()
+    _propagate(m.costing)
+    return m
+
+
+@pytest.mark.unit
+def test_priced_boundary_blocks_bill_as_scalar_costs():
+    """A Feed price is a cost and a Product price is a credit, to the cent."""
+    m = _boundary_costing(feed_price=0.5, product_price=-2.0)
+    dt_hours = pyo.value(pyunits.convert(m.time_block.dt, pyunits.hr))
+    n = m.time_block.n_points
+
+    expected_feed = 0.5 * 4.0 * dt_hours * n
+    expected_product = -2.0 * 3.0 * dt_hours * n
+    report = m.costing.report_cost(m)
+    assert report.operating.scalar == pytest.approx(
+        expected_feed + expected_product, abs=0.01
+    )
+    assert expected_product < 0
+
+
+@pytest.mark.unit
+def test_priced_boundary_blocks_get_their_own_opex_line_items():
+    """Each block's cost is named from its dotted Pyomo name and attributed to it."""
+    m = _boundary_costing(feed_price=0.5, product_price=-2.0)
+    opex = m.costing.opex
+    assert opex.find_component("scalar_cost_plant_raw_water") is not None
+    assert opex.find_component("scalar_cost_plant_potable") is not None
+
+    specs = m.costing._registered_scalar_costs
+    assert specs["plant_raw_water"].unit is m.plant.raw_water
+    assert specs["plant_potable"].unit is m.plant.potable
+
+    dt_hours = pyo.value(pyunits.convert(m.time_block.dt, pyunits.hr))
+    n = m.time_block.n_points
+    assert pyo.value(opex.scalar_cost_plant_raw_water) == pytest.approx(
+        0.5 * 4.0 * dt_hours * n, abs=0.01
+    )
+    assert pyo.value(opex.scalar_cost_plant_potable) == pytest.approx(
+        -2.0 * 3.0 * dt_hours * n, abs=0.01
+    )

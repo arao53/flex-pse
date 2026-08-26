@@ -4,6 +4,7 @@ from flexcore.nomenclature import PowerKind
 from flexops.core.build import build_model
 from flexops.core.network_block import NetworkBlock
 from flexops.core.plant_block import PlantBlock
+from flexops.core.registration import BoundaryKind
 from flexops.core.time_block import TimeBlock
 from flexops.costing import FlexCosting
 from flexops.properties.simple_aqueous import SimpleAqueousFlow
@@ -14,8 +15,10 @@ from flexops.unit_models import (
     ConstantEnergyIntensityModel,
     DIDOBlock,
     Exchanger,
+    Feed,
     GenericRenewables,
     Mixer,
+    Product,
     Pump,
     ReverseOsmosis,
     SIDOBlock,
@@ -28,11 +31,13 @@ from flexops.unit_models.powergeneration.combustor import CombustorPowerRelation
 
 __all__ = [
     "BatteryModel",
+    "BoundaryKind",
     "Combustor",
     "CombustorPowerRelation",
     "ConstantEnergyIntensityModel",
     "DIDOBlock",
     "Exchanger",
+    "Feed",
     "FlexCosting",
     "GenericRenewables",
     "Mixer",
@@ -40,6 +45,7 @@ __all__ = [
     "NetworkBlock",
     "PlantBlock",
     "PowerKind",
+    "Product",
     "Pump",
     "ReverseOsmosis",
     "SIDOBlock",

@@ -194,8 +194,29 @@ class NetworkBlockData(_AggregatingFlowsheet):
                 )
         return terms
 
+    def _feed_terms(self) -> dict[str, list]:
+        """Return each resource's child-plant feed totals (never its units' flows).
+
+        Returns:
+            ``{resource: [one total per contributing plant]}``.
+        """
+        terms: dict[str, list] = {}
+        for plant in self.plants:
+            total = plant.component(nm.TOTAL_FEED)
+            if total is None:
+                continue
+            for resource in plant._feed_terms():
+                terms.setdefault(resource, []).append(
+                    lambda t, _total=total, _r=resource: _total[_r, t]
+                )
+        return terms
+
     def _product_terms(self) -> dict[str, list]:
         """Return each product's child-plant totals, plus this network's own.
+
+        A plant's products come from its own ``_product_terms()`` — the
+        explicit ``register_product`` registry merged with the boundary flows
+        its units registered — so both routes reach the network total.
 
         Returns:
             ``{product name: [one total per contributing plant]}``.
@@ -205,7 +226,7 @@ class NetworkBlockData(_AggregatingFlowsheet):
             total = plant.component(nm.TOTAL_PRODUCT)
             if total is None:
                 continue
-            for product in plant.products:
+            for product in plant._product_terms():
                 terms.setdefault(product, []).append(
                     lambda t, _total=total, _product=product: _total[_product, t]
                 )
