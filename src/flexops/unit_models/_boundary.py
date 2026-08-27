@@ -22,8 +22,8 @@ The limits are mutable ``Param``\\ s, not ``Var.setlb``/``setub``, for three
 reasons: ``set_value`` is the approved way to update a value in place
 (conventions §9); Params keep working even after
 :meth:`~flexops.core.ops_block.OpsBlockData.set_external_dispatch` fixes the
-bounded ``Var``; and Params carry duals, so after solving you can read the
-shadow price of a resource limit.
+bounded ``Var``; and the ``Constraint`` that references the ``Param`` carries
+a dual, so after solving you can read the shadow price of a resource limit.
 """
 
 import enum
