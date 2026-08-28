@@ -228,37 +228,18 @@ is never the user-facing cost. Concretely:
   committed-step aggregate-power numpy array). This is the default, user-facing
   number and the comparison metric for the monolithic-vs-rolling check below
   (multi-stage / iterative comparison uses this post-hoc cost — no duals needed).
+  - *Sub-horizon charge scaling (`demand-charges` branch).* A window shorter than
+    the billing period must scale the monthly-assessed charges to its fraction, or
+    summing windows over-bills. This is wired: `report_cost`/`evaluate_cost` pass
+    EECO `demand_scale_factor`/`fixed_scale_factor` (per-horizon proration) plus a
+    `prev_demand_dict` carry so the monthly demand *peak* is not recounted each
+    window.
 - The **raw solver objective is surfaced only behind an explicit debug flag** —
   e.g. `solve_rolling_horizon(..., debug_objective=False)` (implementer's choice
   of flag name/location). When off (the default), `ScheduleResult` does **not**
   expose the objective value; when on, an `objective_committed: float | None`
   field carries the committed-step objective contribution for debugging only.
   Document that it is a relaxed internal quantity, not the reported cost.
-
-**Billing-period-aware demand + fixed charges (do not naively sum
-`report_cost` across windows).** A demand charge is a *peak assessed over a
-billing period* — monthly or daily, per the tariff's `assessed` column — and the
-customer/fixed charge is a flat per-period charge. Summing each window's
-`report_cost` over windows shorter than that period recounts the charge in every
-window, overstating the bill. `FlexCosting.report_cost(model, *,
-prev_demand_dict=..., scale_fixed_charges=...)` already threads both controls
-into the EECO evaluation (the plumbing landed on the `demand-charges` branch):
-the prior-demand carry makes EECO bill only the demand *incremental* above the
-running peak, and `scale_fixed_charges` spreads the customer charge per timestep
-so it stays additive. This milestone must:
-- carry a `prev_demand_dict` across the windows of each billing period, seeded
-  `None` at the first window and updated after each committed window from the
-  realized demand — using a demand-carry builder from a future EECO release
-  (so this milestone is gated on bumping EECO), and
-- set `scale_fixed_charges=True` so each window's committed prefix pays only its
-  share of the fixed charge and the windows sum to one charge.
-
-Proration *within* a single sub-billing-period window is already EECO's, not
-flex-pse's: the `demand-charges` branch delegated it to `get_charge_dict` —
-monthly-assessed demand scaled by its assessed-aware `demand_scale_factor`
-(daily-assessed demand, billed per day, is left unscaled) and the fixed charge
-spread by `scale_fixed_charges` — and dropped flex-pse's own rate-level proration
-helpers.
 
 ## Pitfalls
 

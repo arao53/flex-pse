@@ -821,9 +821,6 @@ def _charge_dict(
     tariff: pd.DataFrame,
     time_index: pd.DatetimeIndex,
     dt_hours: float,
-    *,
-    prorate: bool = False,
-    scale_fixed_charges: bool = False,
 ) -> dict:
     """Build EECO's charge dictionary for a horizon (delegates to EECO).
 
@@ -831,11 +828,6 @@ def _charge_dict(
         tariff: An EECO rate_data DataFrame.
         time_index: The horizon's naive datetime index.
         dt_hours: Timestep length in hours.
-        prorate: Scale monthly-assessed demand and fixed charges to the horizon
-            horizon length; implies spreading the fixed charge.
-        scale_fixed_charges: Spread each fixed (customer) charge evenly across the
-            horizon's timesteps even when not prorating, so it is additive per
-            timestep for a rolling horizon that commits a prefix.
 
     Returns:
         EECO's charge-array dictionary.
@@ -846,14 +838,8 @@ def _charge_dict(
     end = (
         time_index[0] + len(time_index) * pd.Timedelta(hours=dt_hours)
     ).to_pydatetime()
-    scale = monthly_scale_factor(time_index, dt_hours) if prorate else 1.0
     return _eeco_costs.get_charge_dict(
-        start,
-        end,
-        tariff,
-        resolution=_resolution_str(dt_hours),
-        scale_fixed_charges=scale_fixed_charges or prorate,
-        demand_scale_factor=scale,
+        start, end, tariff, resolution=_resolution_str(dt_hours)
     )
 
 
@@ -898,7 +884,7 @@ def _add_utility_cost(
             breaking the LP/relaxable character.
     """
     n = len(time_index)
-    charge_dict = _charge_dict(tariff, time_index, dt_hours, prorate=prorate)
+    charge_dict = _charge_dict(tariff, time_index, dt_hours)
     scale = monthly_scale_factor(time_index, dt_hours) if prorate else 1.0
 
     # EECO's Pyomo helpers (eeco.utils) build indexed vars/constraints against
@@ -913,6 +899,8 @@ def _add_utility_cost(
         {utility: power},
         resolution=_resolution_str(dt_hours),
         desired_utility=utility,
+        demand_scale_factor=scale,
+        fixed_scale_factor=scale,
         model=block,
         **_eeco_consumption_units(),
     )
@@ -1214,7 +1202,6 @@ def _itemized_cost(
     time_index: "pd.DatetimeIndex | None" = None,
     prorate: bool = True,
     prev_demand_dict: "dict | None" = None,
-    scale_fixed_charges: bool = False,
 ) -> dict:
     """Evaluate EECO's itemized cost on a fixed, realized usage array.
 
@@ -1225,14 +1212,13 @@ def _itemized_cost(
         utility: ``"electric"`` or ``"gas"``.
         by_charge_key: Pass through to EECO to itemize by individual charge key.
         time_index: Calendar index aligning ``usage`` to the tariff's windows.
-        prorate: Prorate monthly demand and fixed charges to the horizon. Must
-            match what the in-objective leg used, or the reported bill will not
-            reconcile with the objective.
-        prev_demand_dict: Optional prior demand carry-over for billing this horizon as
+        prorate: Prorate the monthly-assessed demand and fixed charges to the
+            horizon. Must match what the in-objective leg used for the reported
+            bill to reconcile with the objective. Demand scaling is
+            monthly-assessed only.
+        prev_demand_dict: Optional prior demand carry for billing this horizon as
             one slice of a longer billing period (see :func:`evaluate_cost`).
             ``None`` (default) bills the horizon standalone.
-        scale_fixed_charges: Spread the fixed (customer) charge across timesteps
-            (see :func:`evaluate_cost`).
 
     Returns:
         EECO's per-utility itemized-cost dict (``itemized[utility]``), plus a
@@ -1240,13 +1226,8 @@ def _itemized_cost(
     """
     array = np.asarray(usage, dtype=float)
     index = _evaluation_index(len(array), dt_hours, time_index)
-    charge_dict = _charge_dict(
-        tariff,
-        index,
-        dt_hours,
-        prorate=prorate,
-        scale_fixed_charges=scale_fixed_charges,
-    )
+    scale = monthly_scale_factor(index, dt_hours) if prorate else 1.0
+    charge_dict = _charge_dict(tariff, index, dt_hours)
     itemized, _ = _eeco_costs.calculate_itemized_cost(
         charge_dict,
         {utility: array},
@@ -1254,12 +1235,12 @@ def _itemized_cost(
         desired_utility=utility,
         by_charge_key=by_charge_key,
         prev_demand_dict=prev_demand_dict,
+        demand_scale_factor=scale,
+        fixed_scale_factor=scale,
         **_eeco_consumption_units(),
     )
     util_costs = itemized[utility]
-    util_costs["scale_factor"] = (
-        monthly_scale_factor(index, dt_hours) if prorate else 1.0
-    )
+    util_costs["scale_factor"] = scale
     return util_costs
 
 
@@ -1299,7 +1280,6 @@ def evaluate_cost(
     time_index: "pd.DatetimeIndex | None" = None,
     prorate: bool = True,
     prev_demand_dict: "dict | None" = None,
-    scale_fixed_charges: bool = False,
 ) -> float:
     """Compute the TRUE (de-relaxed) electricity cost on a fixed realized load.
 
@@ -1320,15 +1300,10 @@ def evaluate_cost(
         prorate: Prorate monthly demand and fixed charges to the horizon length.
             Leave at the default so the reported bill matches the objective; pass
             ``False`` only to reproduce a full un-prorated monthly bill.
-        prev_demand_dict: Optional prior-demand carry-over for billing this horizon as
+        prev_demand_dict: Optional prior-demand carry for billing this horizon as
             one slice of a longer billing period; EECO then bills only the
             incremental demand above the carry. ``None`` (the default) bills the
             horizon standalone.
-        scale_fixed_charges: Spread the fixed (customer) charge across the
-            horizon's timesteps rather than billing it whole (EECO's
-            ``get_charge_dict`` spread). Additive per timestep so a rolling horizon
-            (M12) that commits a prefix pays only its share; the standalone total
-            is unchanged. ``False`` (the default) bills it whole.
 
     Returns:
         The horizon-total electricity cost in dollars.
@@ -1342,7 +1317,6 @@ def evaluate_cost(
             time_index=time_index,
             prorate=prorate,
             prev_demand_dict=prev_demand_dict,
-            scale_fixed_charges=scale_fixed_charges,
         )["total"]
     )
 
@@ -1357,7 +1331,6 @@ def evaluate_fuel_cost(
     time_index: "pd.DatetimeIndex | None" = None,
     prorate: bool = True,
     prev_demand_dict: "dict | None" = None,
-    scale_fixed_charges: bool = False,
 ) -> float:
     """Compute the TRUE (de-relaxed) fuel cost on a fixed realized usage array.
 
@@ -1374,11 +1347,9 @@ def evaluate_fuel_cost(
             :func:`evaluate_cost`); omit only for a flat tariff.
         prorate: Prorate monthly demand and fixed charges to the horizon length
             (see :func:`evaluate_cost`).
-        prev_demand_dict: Optional prior-demand carry-over for billing this horizon as
+        prev_demand_dict: Optional prior-demand carry for billing this horizon as
             one slice of a longer billing period (see :func:`evaluate_cost`).
             ``None`` (default) bills the horizon standalone.
-        scale_fixed_charges: Spread the fixed (customer) charge across timesteps
-            (see :func:`evaluate_cost`).
 
     Returns:
         The horizon-total fuel cost in dollars.
@@ -1402,6 +1373,5 @@ def evaluate_fuel_cost(
             time_index=time_index,
             prorate=prorate,
             prev_demand_dict=prev_demand_dict,
-            scale_fixed_charges=scale_fixed_charges,
         )["total"]
     )
