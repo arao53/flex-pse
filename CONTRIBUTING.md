@@ -1,4 +1,4 @@
-# Contributing to [PROJECT_NAME]
+# Contributing to flex-pse
 
 Thanks for your interest in contributing! This project welcomes issues, pull requests, and discussion from anyone. To keep things maintainable and trustworthy for everyone, please read through these guidelines before submitting.
 
@@ -28,8 +28,8 @@ Thanks for your interest in contributing! This project welcomes issues, pull req
 ## Getting Started
 
 1. Fork the repository and clone it locally.
-2. Install dependencies: `[INSTALL_COMMAND]`
-3. Run the test suite to confirm a clean baseline: `[TEST_COMMAND]`
+2. Install dependencies.
+3. Run the test suite to confirm a clean baseline.
 4. Create a branch for your work: `git checkout -b your-short-branch-name`
 
 ## Human Readability Standards
@@ -48,7 +48,7 @@ By submitting a contribution, **you are personally vouching for it**. Specifical
 - You wrote or meaningfully reviewed the content — you are not simply relaying output you don't understand and asking maintainers to check it for you.
 - You have tested the change yourself, locally, before opening the PR.
 - You have the right to submit the contribution (it's your own work, or appropriately licensed/attributed).
-- You will respond to review feedback on your own submission. Contributions that go unanswered for [10] days after requested changes may be closed.
+- You will respond to review feedback on your own submission. Contributions that go unanswered for 10 days after requested changes may be closed.
 
 Maintainers are volunteers reviewing in good faith. Submitting content you can't explain or defend shifts your verification burden onto them, which isn't a fair trade and will typically result in the PR being closed.
 
@@ -77,7 +77,6 @@ All contributions are subject to maintainer review before merging. This is a ver
 - Maintainers may request changes, ask clarifying questions, or ask the contributor to explain specific parts of the change — please respond rather than resubmitting silently.
 - Automated checks (tests, linting, security scanning) must pass, but passing CI does not guarantee merge — human review of correctness, readability, and intent is still required.
 - Maintainers reserve the right to decline contributions that don't meet the standards above, even if functionally correct, if they harm long-term readability or maintainability.
-- For security-sensitive areas (`[LIST_SENSITIVE_PATHS]`), expect additional scrutiny and possibly a second reviewer.
 
 ## Code of Conduct
 
