@@ -2,18 +2,27 @@
 
 Every :class:`~flexops.core.ops_block.OpsBlockData` holds an :class:`IORegistry`
 of what it exposes to FlexParameterize and the docs generator: its process IO
-variables, its regressable parameters, its power-draw variables (kW), and its
-fuel-usage variables (volumetric flows, m³/hr). The record
+variables, its regressable parameters, its power-draw variables (kW), its
+fuel-usage variables (volumetric flows, m³/hr), and the boundary flows it meters
+into or out of the facility. The record
 dataclasses hold **live** Pyomo references (typed ``Any`` — a Pyomo component
 has no useful static type here). :func:`iter_io_registry` walks a whole model to
 find every block that registered something.
 """
 
+import enum
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
 from flexcore.nomenclature import PowerKind
+
+
+class BoundaryKind(enum.StrEnum):
+    """Which side of a facility boundary a registered flow crosses."""
+
+    FEED = "feed"
+    PRODUCT = "product"
 
 
 @dataclass
@@ -123,6 +132,27 @@ class RelationRecord:
 
 
 @dataclass
+class BoundaryRecord:
+    """A registered boundary flow — a resource entering or leaving a facility.
+
+    Attributes:
+        var: The live Pyomo ``Var`` carrying the total flow across the
+            boundary, indexed over the time set.
+        name: The variable's local name on its unit block.
+        resource: The resource's name (e.g. ``"raw_water"``, ``"brine"``), the
+            key its flow aggregates under. Two blocks sharing one name sum into
+            a single row.
+        kind: Whether the flow enters (``BoundaryKind.FEED``) or leaves
+            (``BoundaryKind.PRODUCT``) the facility.
+    """
+
+    var: Any
+    name: str
+    resource: str
+    kind: BoundaryKind
+
+
+@dataclass
 class IORegistry:
     """Container for everything a unit block registers.
 
@@ -138,6 +168,7 @@ class IORegistry:
             a unit with several flows would have to be guessed at.
         relations: Registered swappable relationships (see
             :class:`RelationRecord`).
+        boundary: Registered boundary flows (feeds and products).
     """
 
     io_variables: list[IOVariableRecord] = field(default_factory=list)
@@ -146,6 +177,7 @@ class IORegistry:
     fuel: list[FuelUsageRecord] = field(default_factory=list)
     intensity_basis: dict[PowerKind, str] = field(default_factory=dict)
     relations: list[RelationRecord] = field(default_factory=list)
+    boundary: list[BoundaryRecord] = field(default_factory=list)
 
     def is_empty(self) -> bool:
         """Return True if nothing has been registered on this block."""
@@ -155,6 +187,7 @@ class IORegistry:
             or self.power
             or self.fuel
             or self.relations
+            or self.boundary
         )
 
 

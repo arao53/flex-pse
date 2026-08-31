@@ -312,3 +312,80 @@ def test_add_subset_aggregate_replace_false_warns_and_keeps_existing(caplog):
         assert pyo.value(
             m.network.aggregate_total_electrical_power[t]
         ) == pytest.approx(_POWER_KW["plant_a"], rel=1e-6)
+
+
+# -- boundary (feed/product) aggregation ------------------------------------
+
+
+def _network_with_boundaries(n: int = 3):
+    """Build a two-plant network, each plant bracketed by a Feed and a Product."""
+    from flexops.unit_models import Feed, Product
+
+    m = dummy_time_block(n)
+    m.network = NetworkBlock(time_block=m.time_block)
+    for name in _POWER_KW:
+        m.network.add_component(name, PlantBlock(time_block=m.time_block))
+        plant = m.network.find_component(name)
+        plant.raw_water = Feed(property_package=m.properties, resource_name="raw_water")
+        plant.potable = Product(
+            property_package=m.properties, resource_name="potable_water"
+        )
+    m.network._build_aggregates()
+    return m
+
+
+@pytest.mark.unit
+def test_network_sums_each_plant_boundary_total():
+    """The network's total_feed/total_product are the sums of the plants' own."""
+    m = _network_with_boundaries()
+    for name in _POWER_KW:
+        plant = m.network.find_component(name)
+        for t in m.time_block.time_index:
+            plant.raw_water.withdrawal[t].fix(3.0)
+            plant.potable.delivery[t].fix(2.0)
+
+    for t in m.time_block.time_index:
+        assert pyo.value(m.network.total_feed["raw_water", t]) == pytest.approx(
+            6.0, rel=1e-6
+        )
+        assert pyo.value(m.network.total_product["potable_water", t]) == pytest.approx(
+            4.0, rel=1e-6
+        )
+
+
+@pytest.mark.unit
+def test_network_feed_total_sums_plant_totals_not_units():
+    """A network sums each plant's own total, never re-walking its units (R7)."""
+    m = _network_with_boundaries()
+    plant_totals = [
+        m.network.find_component(name).total_feed["raw_water", 0] for name in _POWER_KW
+    ]
+    repn = generate_standard_repn(
+        m.network.total_feed["raw_water", 0].expr, compute_values=True
+    )
+    contributors = sorted(id(v) for v in repn.linear_vars)
+    unit_withdrawals = [
+        m.network.find_component(name).raw_water.withdrawal[0] for name in _POWER_KW
+    ]
+    # The plant totals are Expressions, so the standard repn resolves them down
+    # to each unit's withdrawal exactly once -- no double counting.
+    assert contributors == sorted(id(v) for v in unit_withdrawals)
+    assert list(repn.linear_coefs) == [pytest.approx(1.0)] * len(unit_withdrawals)
+    assert all(total is not None for total in plant_totals)
+
+
+@pytest.mark.unit
+def test_add_link_ties_one_plants_product_to_another_plants_feed():
+    """A cross-plant hook needs no new API: add_link takes the two totals."""
+    m = _network_with_boundaries()
+    m.network.add_link(
+        "north_product_to_south_feed",
+        pyo.Reference(m.network.plant_a.total_product["potable_water", :]),
+        m.network.plant_b.raw_water.withdrawal,
+    )
+    for t in m.time_block.time_index:
+        m.network.plant_a.potable.delivery[t].fix(5.0)
+        m.network.plant_b.raw_water.withdrawal[t].fix(4.0)
+    assert pyo.value(m.network.north_product_to_south_feed[0].body) == pytest.approx(
+        4.0 - 5.0, rel=1e-6
+    )

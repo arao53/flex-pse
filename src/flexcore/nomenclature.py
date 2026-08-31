@@ -62,6 +62,9 @@ INTENSITY_VARS = {
 }
 """dict: per-``PowerKind`` name of a unit's constant-intensity Param."""
 
+TOTAL_FEED = "total_feed"
+"""str: name of the feed-flow aggregation Expression, indexed (resource, t)."""
+
 TOTAL_PRODUCT = "total_product"
 """str: name of the product-flow aggregation Expression, indexed (product, t)."""
 

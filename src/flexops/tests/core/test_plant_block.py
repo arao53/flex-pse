@@ -188,3 +188,118 @@ def test_time_block_autodiscovery():
     )
     with pytest.raises(FlexConfigError):
         m2.plant = PlantBlock()
+
+
+# -- boundary (feed/product) aggregation ------------------------------------
+
+
+def _plant_with_feeds(*feeds):
+    """Build a plant carrying one ``Feed`` per ``(block name, resource)`` pair."""
+    from flexops.unit_models import Feed
+
+    m = dummy_time_block(3)
+    m.plant = PlantBlock(time_block=m.time_block)
+    for block_name, resource in feeds:
+        m.plant.add_component(
+            block_name,
+            Feed(property_package=m.properties, resource_name=resource),
+        )
+    m.plant._build_aggregates()
+    return m
+
+
+@pytest.mark.unit
+def test_feed_aggregation_keeps_distinct_resources_separate():
+    """Two Feeds with different resource names give two total_feed rows."""
+    m = _plant_with_feeds(("raw_water", "raw_water"), ("citric_acid", "citric_acid"))
+
+    assert {resource for resource, _ in m.plant.total_feed} == {
+        "raw_water",
+        "citric_acid",
+    }
+    for t in m.time_block.time_index:
+        m.plant.raw_water.withdrawal[t].fix(4.0)
+        m.plant.citric_acid.withdrawal[t].fix(0.5)
+    for t in m.time_block.time_index:
+        assert pyo.value(m.plant.total_feed["raw_water", t]) == pytest.approx(4.0)
+        assert pyo.value(m.plant.total_feed["citric_acid", t]) == pytest.approx(0.5)
+
+
+@pytest.mark.unit
+def test_feed_aggregation_sums_blocks_sharing_one_resource_name():
+    """Two Feeds under one resource_name sum into a single total_feed row."""
+    from pyomo.repn import generate_standard_repn
+
+    m = _plant_with_feeds(("north_tap", "city_water"), ("south_tap", "city_water"))
+
+    assert {resource for resource, _ in m.plant.total_feed} == {"city_water"}
+    repn = generate_standard_repn(
+        m.plant.total_feed["city_water", 0].expr, compute_values=True
+    )
+    contributors = sorted(id(v) for v in repn.linear_vars)
+    assert contributors == sorted(
+        id(v)
+        for v in (m.plant.north_tap.withdrawal[0], m.plant.south_tap.withdrawal[0])
+    )
+    assert list(repn.linear_coefs) == [pytest.approx(1.0)] * 2
+
+
+@pytest.mark.unit
+def test_plant_merges_explicit_and_discovered_products_without_double_counting():
+    """register_product and a discovered Product both land in total_product."""
+    from flexops.unit_models import Product
+
+    m = dummy_time_block(3)
+    m.plant = PlantBlock(time_block=m.time_block)
+    m.plant.potable = Product(
+        property_package=m.properties, resource_name="potable_water"
+    )
+    m.plant.surrogate = ConstantEnergyIntensityModel(property_package=m.properties)
+    m.plant.register_product(m.plant.surrogate.flow_out, name="permeate")
+    m.plant._build_aggregates()
+
+    assert {product for product, _ in m.plant.total_product} == {
+        "potable_water",
+        "permeate",
+    }
+    for t in m.time_block.time_index:
+        m.plant.potable.delivery[t].fix(3.0)
+        m.plant.surrogate.flow_out[t].fix(7.0)
+    for t in m.time_block.time_index:
+        assert pyo.value(m.plant.total_product["potable_water", t]) == pytest.approx(
+            3.0
+        )
+        assert pyo.value(m.plant.total_product["permeate", t]) == pytest.approx(7.0)
+
+
+@pytest.mark.unit
+def test_feeds_and_products_aggregate_into_disjoint_totals():
+    """A Feed never leaks into total_product, nor a Product into total_feed."""
+    from flexops.unit_models import Feed, Product
+
+    m = dummy_time_block(3)
+    m.plant = PlantBlock(time_block=m.time_block)
+    m.plant.raw_water = Feed(property_package=m.properties)
+    m.plant.brine = Product(property_package=m.properties)
+    m.plant._build_aggregates()
+
+    assert {resource for resource, _ in m.plant.total_feed} == {"raw_water"}
+    assert {product for product, _ in m.plant.total_product} == {"brine"}
+
+
+@pytest.mark.unit
+def test_feed_aggregation_survives_units_added_after_the_first_call():
+    """Aggregating before the Feed exists, then again after, still sums it."""
+    from flexops.unit_models import Feed
+
+    m = dummy_time_block(3)
+    m.plant = PlantBlock(time_block=m.time_block)
+    m.plant._build_aggregates()
+    assert m.plant.component(nm.TOTAL_FEED) is None
+
+    m.plant.raw_water = Feed(property_package=m.properties)
+    m.plant._build_aggregates()
+    for t in m.time_block.time_index:
+        m.plant.raw_water.withdrawal[t].fix(2.0)
+    for t in m.time_block.time_index:
+        assert pyo.value(m.plant.total_feed["raw_water", t]) == pytest.approx(2.0)
