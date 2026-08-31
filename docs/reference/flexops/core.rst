@@ -30,17 +30,14 @@ flex-pse never deletes model components; a built model is updated in place via
    RelaxationPolicy
 
 A unit's own relationships are swapped in place from a
-:class:`~flexcore.config.schema.SurrogateSpec` via
-:meth:`OpsBlockData.swap_relation` — not only its energy draw: any relationship
-the unit declared swappable with :meth:`OpsBlockData.register_relation` (an RO
-skid's recovery, a tank's level-to-volume geometry). Conservation constraints
-are never registered, so they can never be swapped. Every polynomial form
-shares one builder and differs only in the term degree it admits, but the
-builder registry is not limited to polynomials — see
-:doc:`../../explanation/config_schema` for the coefficient-term grammar and the
-builder contract.
-
-.. autodata:: POLYNOMIAL_FORMS
+:class:`~flexops.surrogates.base.Surrogate` via :meth:`OpsBlockData.swap_relation`
+— not only its energy draw: any relationship the unit declared swappable with
+:meth:`OpsBlockData.register_relation` (an RO skid's recovery, a tank's
+level-to-volume geometry). Conservation constraints are never registered, so
+they can never be swapped. The predefined surrogate classes themselves —
+which one a :class:`~flexcore.config.schema.SurrogateSpec` names and how each
+validates and builds its own data — are documented on
+:doc:`surrogates`.
 
 Composition: PlantBlock and NetworkBlock
 ----------------------------------------

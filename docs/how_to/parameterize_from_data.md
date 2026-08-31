@@ -135,12 +135,15 @@ directly. No data, no sufficiency check, and no regressor are involved for that
 unit:
 
 ```python
-from flexcore.config.schema import SurrogateSpec
+from flexcore.config.schema import SurrogateSpec, SurrogateType
 
 vendor = SurrogateSpec(
-    functional_form="linear",
-    input_variables=["flow_out"],
-    coefficients={"flow_out": 0.38, "intercept": 12.0},
+    surrogate_type=SurrogateType.MULTILINEAR,
+    data={
+        "input_variables": {"flow_out": "m^3/hr"},
+        "output_variables": {"power_electrical": "kW"},
+        "coefficients": {"flow_out": 0.38, "intercept": 12.0},
+    },
     provenance={"source": "vendor_datasheet"},
 )
 
@@ -148,42 +151,39 @@ apply_to_model(m, raw, tagmap, surrogates={"facility.skid": vendor})
 emit_model_config(m.facility.skid, vendor, {"source": "vendor_datasheet"})
 ```
 
-Each coefficient key names the **term** it multiplies — a `*`-separated product
-of input variable names, each optionally raised to a power with `^`, plus the
-reserved `intercept`. A curved power draw is the same call with more terms:
+`surrogate_type` names a predefined surrogate class
+({class}`~flexops.surrogates.multilinear.MultilinearSurrogate` here); `data` is
+that class's own contract, validated when the surrogate is realized. A
+coefficient key names the **term** it multiplies — a `*`-separated product of
+distinct names from `input_variables`, plus the reserved `intercept` — and a
+draw that depends on outlet flow *and* outlet pressure together adds their
+cross term:
 
 ```python
-quadratic = SurrogateSpec(
-    functional_form="quadratic",
-    input_variables=["flow_out"],
-    coefficients={"intercept": 12.0, "flow_out": 0.38, "flow_out^2": 0.004},
-)
-```
-
-and a draw that depends on outlet flow *and* outlet pressure together is an
-expanded bilinear form — the two inputs plus their cross term:
-
-```python
-bilinear = SurrogateSpec(
-    functional_form="bilinear",
-    input_variables=["flow_out", "outlet_state.pressure"],
-    coefficients={
-        "intercept": 12.0,
-        "flow_out": 0.38,
-        "outlet_state.pressure": 1.1e-5,
-        "flow_out*outlet_state.pressure": 2.3e-6,
+multilinear = SurrogateSpec(
+    surrogate_type=SurrogateType.MULTILINEAR,
+    data={
+        "input_variables": {"flow_out": "m^3/hr", "outlet_state.pressure": "Pa"},
+        "output_variables": {"power_electrical": "kW"},
+        "coefficients": {
+            "intercept": 12.0,
+            "flow_out": 0.38,
+            "outlet_state.pressure": 1.1e-5,
+            "flow_out*outlet_state.pressure": 2.3e-6,
+        },
     },
 )
-apply_to_model(m, raw, tagmap, surrogates={"facility.skid": bilinear})
+apply_to_model(m, raw, tagmap, surrogates={"facility.skid": multilinear})
 ```
 
-Naming pressure needs a property package built with `has_pressure=True`. Every
-factor is resolved on the unit — dotted paths into a state block work — and
-normalized by its own units, so each coefficient is read in the relationship's
-own units over the product of its factors' units (kW for a power draw). See
-[the config schema](../explanation/config_schema.md) for the full grammar, and
-for `source`, which points a relationship at a JSON sidecar instead of inlining
-it.
+Naming pressure needs a property package built with `has_pressure=True`. Each
+name in `input_variables`/`output_variables` is resolved on the unit — dotted
+paths into a state block work — and declares the units the relationship was
+fitted or written in, which need not match the model's own: every factor is
+converted from its actual unit into its declared one before use, and the whole
+body is converted into the registered target's own units. See [the config
+schema](../explanation/config_schema.md) for the full contract, and for
+`source`, which points a relationship at a JSON sidecar instead of inlining it.
 
 The two paths mix freely across units in one call: units named in
 `surrogates=` are skipped for fitting, and every other unit is still fit from
@@ -201,12 +201,16 @@ passing a `{relation_name: spec}` mapping instead of a bare spec:
 
 ```python
 recovery = SurrogateSpec(
-    functional_form="quadratic",
-    input_variables=["inlet_state.pressure"],
-    coefficients={
-        "intercept": 0.3,
-        "inlet_state.pressure": 1e-6,
-        "inlet_state.pressure^2": 1e-12,
+    surrogate_type=SurrogateType.MULTILINEAR,
+    data={
+        "input_variables": {"feed": "m^3/hr", "inlet_state.pressure": "Pa"},
+        "output_variables": {"permeate": "m^3/hr"},
+        "coefficients": {
+            "intercept": 0.3,
+            "feed": 0.01,
+            "inlet_state.pressure": 1e-6,
+            "feed*inlet_state.pressure": 1e-7,
+        },
     },
 )
 apply_to_model(m, raw, tagmap, surrogates={"facility.ro": {"split_definition": recovery}})

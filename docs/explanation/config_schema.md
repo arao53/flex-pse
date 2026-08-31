@@ -66,59 +66,58 @@ down to individual variables:
 
 ## How a surrogate describes its function
 
-{class}`~flexcore.config.schema.SurrogateSpec` has to carry relationships this
-build has never heard of, so its `functional_form` is an **open string**, not a
-fixed list of allowed values. It names a *builder*, and builders are registered
-in code (`flexops.core.ops_block._RELATION_BUILDERS`). A form with no
-registered builder is rejected when the model is built — with the known forms
-listed — rather than when the config is validated. That is deliberate: a new
-relationship shape should never force a schema revision, and a config written
-by an external tool should survive being read by a build that cannot construct
-every form in it.
+{class}`~flexcore.config.schema.SurrogateSpec` names a **predefined surrogate
+class** — one of {class}`~flexcore.config.schema.SurrogateType`'s members —
+and carries an opaque `data` mapping in the shape that class defines. The
+class (`flexops.surrogates`) validates `data` and builds the Pyomo
+relationship; a type not yet implemented raises `NotImplementedError` when the
+model is built, not when the config is validated (`quadratic`, `exponential`,
+`arima`, and `neural_network` are reserved names today with no implementation
+yet — see {doc}`../reference/flexops/surrogates`).
 
-Coefficients describe the function itself. Each key names the **term** its
-coefficient multiplies: a `*`-separated product of input variable names, each
-optionally raised to an integer power with `^`, plus the reserved key
-`intercept` for the constant term. One grammar therefore spans every polynomial
-relationship:
+The only implemented class, `multilinear`
+({class}`~flexops.surrogates.multilinear.MultilinearSurrogate`), is a constant
+plus a sum of `coefficient * (product of distinct declared inputs)` — the
+expanded form that covers what an earlier milestone called `linear` (no cross
+terms) and `bilinear` (one cross term). A coefficient key is a
+`*`-separated product of names from `input_variables`, each appearing at most
+once (no `^` exponent, no repeated factor); the reserved key `intercept` is the
+constant term:
 
 ```json
 {
-  "functional_form": "bilinear",
-  "input_variables": ["flow_out", "outlet_state.pressure"],
-  "coefficients": {
-    "intercept": 5.0,
-    "flow_out": 0.42,
-    "outlet_state.pressure": 1.1e-5,
-    "flow_out*outlet_state.pressure": 2.3e-6
+  "surrogate_type": "multilinear",
+  "data": {
+    "input_variables": {"flow_out": "m^3/hr", "outlet_state.pressure": "Pa"},
+    "output_variables": {"power_electrical": "kW"},
+    "coefficients": {
+      "intercept": 5.0,
+      "flow_out": 0.42,
+      "outlet_state.pressure": 1.1e-5,
+      "flow_out*outlet_state.pressure": 2.3e-6
+    }
   }
 }
 ```
 
-Every factor is resolved on the unit — dotted paths into a state block work —
-and normalized by its own units, so each coefficient is read in **the
-relationship's target's own units** over the product of its factors' units (a
-power draw's coefficients read in kW; a recovery relation's read in whatever
-its target — say a flow — is in). The registered polynomial forms differ only
-in the degree they admit (`linear` 1, `quadratic` and `bilinear` 2,
-`polynomial` any), which is what makes a mislabelled relationship an error
-instead of a silent surprise. `bilinear` is the *expanded* form: a constant,
-each input on its own, and their cross term.
+`input_variables` and `output_variables` are `{name: units}` mappings, each
+name resolved on the unit (dotted paths into a state block work). The declared
+units are **the basis the relationship was fitted or written in** — not
+whatever units the model happens to carry — so each factor is converted from
+its actual unit into its declared one before the coefficient multiplies it,
+and the whole body is converted from its declared output units into the
+registered target's own units. Both conversions double as validation: a
+declared unit dimensionally incompatible with the model's variable raises a
+`FlexConfigError` naming the mismatch, rather than silently rescaling.
 
-The builder registry is not limited to polynomials, either: a builder is
-`(unit, surrogate, target) -> body`, where `body(t)` is any
-Pyomo-expressible, dimensionless function of the unit's own variables — a
-ratio, a softplus/ICNN forward pass, a lag polynomial that returns
-`pyomo.environ.Constraint.Skip` for the horizon points its lag does not reach.
-Registering another form is an entry in
-`flexops.core.ops_block._RELATION_BUILDERS`, never a config-schema change.
+Registering another surrogate class is a new class in `flexops.surrogates`,
+never a config-schema change — see {doc}`../reference/flexops/surrogates` for
+the base class every one implements.
 
-When a relationship is too large to inline — or is not a set of coefficients at
-all — `source` names a JSON sidecar supplying `coefficients`,
-`input_variables` and `output_variables`. A relative path resolves against the
-config file's own directory, and
-{func}`~flexcore.config.io.load_model_config` fills it in at the boundary, so
-nothing downstream ever sees a half-loaded relationship.
+When a relationship is too large to inline, `source` names a JSON sidecar
+supplying `data`. A relative path resolves against the config file's own
+directory, and {func}`~flexcore.config.io.load_model_config` fills it in at
+the boundary, so nothing downstream ever sees a half-loaded relationship.
 
 ## Which relationships are swappable
 

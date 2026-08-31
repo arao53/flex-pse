@@ -16,9 +16,13 @@ from pyomo.network import Port
 from pyomo.util.check_units import assert_units_consistent
 
 from flexcore import nomenclature as nm
-from flexcore.config.schema import ExternalDispatchSpec, SurrogateSpec, UnitConfig
+from flexcore.config.schema import (
+    ExternalDispatchSpec,
+    SurrogateSpec,
+    SurrogateType,
+    UnitConfig,
+)
 from flexcore.exceptions import FlexConfigError
-from flexops.core import ops_block
 from flexops.core.ops_block import (
     OpsBlock,
     OpsBlockData,
@@ -35,6 +39,35 @@ from flexops.core.registration import (
 )
 from flexops.core.time_block import TimeBlock
 from flexops.properties.simple_aqueous import SimpleAqueousFlow
+from flexops.surrogates import MultilinearSurrogate
+from flexops.surrogates.base import Surrogate
+
+
+def _multilinear(coefficients, input_variables=None, output_variables=None):
+    """A MultilinearSurrogate over ``coefficients``, with sensible defaults.
+
+    Args:
+        coefficients: The ``data['coefficients']`` mapping.
+        input_variables: ``{name: units}``; defaults to every non-intercept
+            factor named in ``coefficients``, in m^3/hr.
+        output_variables: ``{name: units}``; defaults to
+            ``{"power_electrical": "kW"}``.
+    """
+    if input_variables is None:
+        names = {
+            factor
+            for key in coefficients
+            if key != "intercept"
+            for factor in key.split("*")
+        }
+        input_variables = {name: "m^3/hr" for name in names or {"flow_out"}}
+    return MultilinearSurrogate(
+        {
+            "input_variables": input_variables,
+            "output_variables": output_variables or {"power_electrical": "kW"},
+            "coefficients": coefficients,
+        }
+    )
 
 
 @declare_process_block_class("DummyOps")
@@ -659,13 +692,13 @@ def test_swap_relation_unregistered_relation_raises():
     m.unit = OpsBlock(property_package=m.props)
     with pytest.raises(FlexConfigError, match="not a registered relation"):
         m.unit.swap_relation(
-            "power_electrical_relation", SurrogateSpec(functional_form="linear")
+            "power_electrical_relation", _multilinear({"flow_out": 1.0})
         )
 
 
 @pytest.mark.unit
 def test_swap_relation_unknown_input_variable_raises():
-    """A fitted input variable not found on the unit is a config error."""
+    """A declared input variable not found on the unit is a config error."""
     m = _model(4)
     m.unit = OpsBlock(property_package=m.props)
     m.unit.add_stream_ports()
@@ -676,48 +709,14 @@ def test_swap_relation_unknown_input_variable_raises():
     with pytest.raises(FlexConfigError, match="not a variable"):
         m.unit.swap_relation(
             "power_electrical_relation",
-            SurrogateSpec(functional_form="linear", input_variables=["nope"]),
+            _multilinear({"intercept": 1.0}, input_variables={"nope": "m^3/hr"}),
         )
 
 
-@pytest.mark.unit
-def test_swap_relation_builds_linear_fit():
-    """A linear surrogate deactivates the old relation and adds the fitted one."""
-    m = _model(4)
-    m.unit = OpsBlock(property_package=m.props)
-    m.unit.add_stream_ports()
-    flow = pyo.Reference(m.unit.outlet_state.flow_vol_phase[:, "Liq"])
-    m.unit.add_constant_intensity_relation(
-        flow, intensity=0.5 * pyunits.kWh / pyunits.m**3
-    )
-    old_relation = m.unit.power_electrical_relation
-
-    m.unit.swap_relation(
-        "power_electrical_relation",
-        SurrogateSpec(
-            functional_form="linear",
-            input_variables=["power_electrical"],
-            coefficients={"power_electrical": 2.0, "intercept": 1.0},
-        ),
-    )
-
-    assert m.unit.power_electrical_relation is old_relation
-    assert old_relation[0].active is False
-    fitted = m.unit.power_electrical_relation_fitted
-    m.unit.power_electrical[0].fix(3.0)
-    # power - (intercept + 2*power) = 3.0 - (1.0 + 6.0) == -4.0
-    assert pyo.value(fitted[0].body) == pytest.approx(-4.0)
-
-
-def _unit_with_relation(has_pressure: bool = False):
+def _unit_with_relation():
     """Build a bare unit carrying ``flow_out`` and a constant-intensity relation."""
     m = _model(4)
-    if has_pressure:
-        m.pressure_props = SimpleAqueousFlow(has_pressure=True)
-    m.unit = OpsBlock(
-        property_package=m.pressure_props if has_pressure else m.props,
-        allow_pass_through=False,
-    )
+    m.unit = OpsBlock(property_package=m.props, allow_pass_through=False)
     m.unit.add_stream_ports()
     m.unit.add_component(
         "flow_out", pyo.Reference(m.unit.outlet_state.flow_vol_phase[:, "Liq"])
@@ -726,97 +725,6 @@ def _unit_with_relation(has_pressure: bool = False):
         m.unit.flow_out, intensity=0.5 * pyunits.kWh / pyunits.m**3
     )
     return m, m.unit
-
-
-@pytest.mark.unit
-def test_swap_relation_builds_quadratic_fit():
-    """A squared term is a coefficient key, not a new builder."""
-    _, unit = _unit_with_relation()
-
-    unit.swap_relation(
-        "power_electrical_relation",
-        SurrogateSpec(
-            functional_form="quadratic",
-            input_variables=["flow_out"],
-            coefficients={"intercept": 1.0, "flow_out": 2.0, "flow_out^2": 0.5},
-        ),
-    )
-
-    unit.flow_out[0].set_value(3.0)
-    unit.power_electrical[0].fix(0.0)
-    # power - (1.0 + 2*3 + 0.5*9) == -11.5
-    assert pyo.value(unit.power_electrical_relation_fitted[0].body) == pytest.approx(
-        -11.5
-    )
-
-
-@pytest.mark.unit
-def test_swap_relation_builds_expanded_bilinear_fit():
-    """Outlet flow, outlet pressure, and their cross term in one relationship."""
-    _, unit = _unit_with_relation(has_pressure=True)
-
-    unit.swap_relation(
-        "power_electrical_relation",
-        SurrogateSpec(
-            functional_form="bilinear",
-            input_variables=["flow_out", "outlet_state.pressure"],
-            coefficients={
-                "intercept": 1.0,
-                "flow_out": 2.0,
-                "outlet_state.pressure": 1e-3,
-                "flow_out*outlet_state.pressure": 5e-4,
-            },
-        ),
-    )
-
-    unit.flow_out[0].set_value(3.0)
-    unit.outlet_state.pressure[0].set_value(2.0e5)
-    unit.power_electrical[0].fix(0.0)
-    # power - (1 + 2*3 + 1e-3*2e5 + 5e-4*3*2e5) == -(1 + 6 + 200 + 300)
-    assert pyo.value(unit.power_electrical_relation_fitted[0].body) == pytest.approx(
-        -507.0
-    )
-
-
-@pytest.mark.unit
-def test_swap_relation_unknown_functional_form_raises():
-    """A form with no registered builder names itself and the known forms."""
-    _, unit = _unit_with_relation()
-    with pytest.raises(FlexConfigError, match="vendor_curve_v3"):
-        unit.swap_relation(
-            "power_electrical_relation",
-            SurrogateSpec(functional_form="vendor_curve_v3"),
-        )
-
-
-@pytest.mark.unit
-def test_swap_relation_rejects_a_term_above_the_forms_degree():
-    """A squared term under functional_form='linear' is a mislabelled spec."""
-    _, unit = _unit_with_relation()
-    with pytest.raises(FlexConfigError, match=r"flow_out\^2"):
-        unit.swap_relation(
-            "power_electrical_relation",
-            SurrogateSpec(
-                functional_form="linear",
-                input_variables=["flow_out"],
-                coefficients={"flow_out^2": 1.0},
-            ),
-        )
-
-
-@pytest.mark.unit
-def test_swap_relation_unknown_coefficient_factor_raises():
-    """A coefficient naming a factor that is not on the unit is a config error."""
-    _, unit = _unit_with_relation()
-    with pytest.raises(FlexConfigError, match="not a variable"):
-        unit.swap_relation(
-            "power_electrical_relation",
-            SurrogateSpec(
-                functional_form="bilinear",
-                input_variables=["flow_out"],
-                coefficients={"flow_out*nope": 1.0},
-            ),
-        )
 
 
 def _flow_relation_unit():
@@ -878,10 +786,9 @@ def test_swap_relation_replaces_a_registered_relation():
 
     unit.swap_relation(
         "flow_relation",
-        SurrogateSpec(
-            functional_form="linear",
-            input_variables=["flow_out"],
-            coefficients={"flow_out": 2.0, "intercept": 1.0},
+        _multilinear(
+            {"flow_out": 2.0, "intercept": 1.0},
+            output_variables={"flow_out": "m^3/hr"},
         ),
     )
 
@@ -893,15 +800,14 @@ def test_swap_relation_replaces_a_registered_relation():
 
 @pytest.mark.unit
 def test_swap_relation_takes_units_from_its_target():
-    """The fitted constraint carries the target's own units, not kW."""
+    """The fitted constraint carries the target's own units, not the surrogate's."""
     _, unit = _flow_relation_unit()
 
     unit.swap_relation(
         "flow_relation",
-        SurrogateSpec(
-            functional_form="linear",
-            input_variables=["flow_out"],
-            coefficients={"flow_out": 2.0, "intercept": 1.0},
+        _multilinear(
+            {"flow_out": 2.0, "intercept": 1.0},
+            output_variables={"flow_out": "m^3/hr"},
         ),
     )
 
@@ -914,11 +820,38 @@ def test_swap_relation_takes_units_from_its_target():
 
 
 @pytest.mark.unit
+def test_swap_relation_reads_a_coefficient_in_its_declared_basis():
+    """A coefficient fitted in one unit basis attaches to a model in another.
+
+    ``flow_out`` is m^3/hr on the model; declaring the surrogate's own input
+    basis as m^3/s means each factor is converted before the coefficient
+    multiplies it, not read in whatever units the model happens to carry.
+    """
+    _, unit = _flow_relation_unit()
+
+    unit.swap_relation(
+        "flow_relation",
+        _multilinear(
+            {"flow_out": 1.0, "intercept": 0.0},
+            input_variables={"flow_out": "m^3/s"},
+            output_variables={"flow_out": "m^3/hr"},
+        ),
+    )
+
+    unit.flow_out[0].set_value(36.0)
+    # 36 m^3/hr -> 0.01 m^3/s; 1.0 * 0.01 == 0.01 m^3/hr (output already
+    # matches the target, so no further conversion). Naively reading 36.0 as
+    # if it were already in m^3/s (no conversion) would give 36.0, not 0.01.
+    fitted = unit.flow_relation_fitted
+    assert pyo.value(fitted[0].body) == pytest.approx(36.0 - 0.01)
+
+
+@pytest.mark.unit
 def test_swap_relation_unknown_name_lists_registered_relations():
     """An unregistered relation name is refused, listing what is registered."""
     _, unit = _unit_with_relation()
     with pytest.raises(FlexConfigError, match="power_electrical_relation"):
-        unit.swap_relation("nope", SurrogateSpec(functional_form="linear"))
+        unit.swap_relation("nope", _multilinear({"intercept": 1.0}))
 
 
 @pytest.mark.unit
@@ -933,38 +866,46 @@ def test_conservation_constraints_are_not_registered():
     assert "pass_through_flow_vol_phase_eq" not in registered
     with pytest.raises(FlexConfigError, match="not a registered relation"):
         m.unit.swap_relation(
-            "pass_through_flow_vol_phase_eq", SurrogateSpec(functional_form="linear")
+            "pass_through_flow_vol_phase_eq", _multilinear({"intercept": 1.0})
         )
 
 
 @pytest.mark.unit
-def test_swap_relation_accepts_a_non_polynomial_builder(monkeypatch):
-    """The builder registry is not limited to polynomials.
+def test_swap_relation_accepts_a_non_multilinear_surrogate():
+    """swap_relation is not limited to MultilinearSurrogate.
 
-    Any Pyomo-expressible function works -- here a softplus (ICNN-style)
-    forward pass, verified against a hand computation.
+    Any Surrogate subclass works -- here a softplus (ICNN-style) forward
+    pass, verified against a hand computation.
     """
 
-    def _softplus_body(unit, surrogate, target):
-        q = unit.find_component("flow_out")
-        c = surrogate.coefficients
+    class _SoftplusSurrogate(Surrogate):
+        def _validate(self):
+            pass
 
-        def body(t):
-            x = q[t] / pyunits.get_units(q[t])
-            return c["wz"] * pyo.log(1 + pyo.exp(c["w"] * x + c["b"])) + c["c"]
+        @property
+        def input_variables(self):
+            return {"flow_out": "m^3/hr"}
 
-        return body
+        @property
+        def output_variables(self):
+            return {"power_electrical": "kW"}
 
-    monkeypatch.setitem(ops_block._RELATION_BUILDERS, "softplus", _softplus_body)
+        def build(self, unit, target):
+            q = unit.resolve_variable("flow_out", field="input_variables")
+            c = self.data
+
+            def body(t):
+                x = q[t] / pyunits.get_units(q[t])
+                value = c["wz"] * pyo.log(1 + pyo.exp(c["w"] * x + c["b"])) + c["c"]
+                return value * pyunits.get_units(target[t])
+
+            return body
+
     _, unit = _unit_with_relation()
 
     unit.swap_relation(
         "power_electrical_relation",
-        SurrogateSpec(
-            functional_form="softplus",
-            input_variables=["flow_out"],
-            coefficients={"w": 0.3, "b": -1.0, "wz": 2.0, "c": 5.0},
-        ),
+        _SoftplusSurrogate({"w": 0.3, "b": -1.0, "wz": 2.0, "c": 5.0}),
     )
 
     unit.flow_out[0].set_value(10.0)
@@ -975,26 +916,37 @@ def test_swap_relation_accepts_a_non_polynomial_builder(monkeypatch):
     )
 
 
+class _LaggedSurrogate(Surrogate):
+    """A surrogate whose body skips the horizon point where its lag is undefined."""
+
+    def _validate(self):
+        pass
+
+    @property
+    def input_variables(self):
+        return {}
+
+    @property
+    def output_variables(self):
+        return {"power_electrical": "kW"}
+
+    def build(self, unit, target):
+        def body(t):
+            return pyo.Constraint.Skip if t < 1 else 2.0 * pyunits.get_units(target[t])
+
+        return body
+
+
 @pytest.mark.unit
-def test_swap_relation_skips_indices_a_body_declines(monkeypatch):
+def test_swap_relation_skips_indices_a_body_declines():
     """A body returning Constraint.Skip omits that index from the fitted relation.
 
     This is what lets a lagged/state-space form skip the horizon points where
     its lag does not exist, rather than raising a KeyError.
     """
-
-    def _lagged_body(unit, surrogate, target):
-        def body(t):
-            return pyo.Constraint.Skip if t < 1 else 2.0
-
-        return body
-
-    monkeypatch.setitem(ops_block._RELATION_BUILDERS, "lagged", _lagged_body)
     _, unit = _unit_with_relation()
 
-    unit.swap_relation(
-        "power_electrical_relation", SurrogateSpec(functional_form="lagged")
-    )
+    unit.swap_relation("power_electrical_relation", _LaggedSurrogate({}))
 
     fitted = unit.power_electrical_relation_fitted
     assert 0 not in fitted
@@ -1002,39 +954,44 @@ def test_swap_relation_skips_indices_a_body_declines(monkeypatch):
 
 
 @pytest.mark.unit
-def test_reswapping_deactivates_a_builders_auxiliary_constraints(monkeypatch):
+def test_reswapping_deactivates_a_builders_auxiliary_constraints():
     """A second swap deactivates whatever the first builder's own attached.
 
     Without this, a ReLU big-M or ARIMA-innovations builder's auxiliary
     equality would stay active alongside the new one, double-counting.
     """
 
-    def _aux_body(unit, surrogate, target):
-        tag = surrogate.coefficients["tag"]
-        tb = unit.model().time_block
-        suffix = f"_{tag:.0f}"
-        unit.add_component(f"aux_z{suffix}", pyo.Var(tb.time_index, initialize=0.0))
-        z = unit.find_component(f"aux_z{suffix}")
-        unit.add_component(
-            f"aux_eq{suffix}",
-            pyo.Constraint(tb.time_index, rule=lambda b, t: z[t] == tag),
-        )
-        return lambda t: z[t]
+    class _AuxSurrogate(Surrogate):
+        def _validate(self):
+            pass
 
-    monkeypatch.setitem(ops_block._RELATION_BUILDERS, "aux", _aux_body)
+        @property
+        def input_variables(self):
+            return {}
+
+        @property
+        def output_variables(self):
+            return {"power_electrical": "kW"}
+
+        def build(self, unit, target):
+            tag = self.data["tag"]
+            tb = unit.model().time_block
+            suffix = f"_{tag:.0f}"
+            unit.add_component(f"aux_z{suffix}", pyo.Var(tb.time_index, initialize=0.0))
+            z = unit.find_component(f"aux_z{suffix}")
+            unit.add_component(
+                f"aux_eq{suffix}",
+                pyo.Constraint(tb.time_index, rule=lambda b, t: z[t] == tag),
+            )
+            return lambda t: z[t] * pyunits.get_units(target[t])
+
     _, unit = _unit_with_relation()
 
-    unit.swap_relation(
-        "power_electrical_relation",
-        SurrogateSpec(functional_form="aux", coefficients={"tag": 1.0}),
-    )
+    unit.swap_relation("power_electrical_relation", _AuxSurrogate({"tag": 1.0}))
     first_eq = unit.aux_eq_1
     assert first_eq[0].active
 
-    unit.swap_relation(
-        "power_electrical_relation",
-        SurrogateSpec(functional_form="aux", coefficients={"tag": 2.0}),
-    )
+    unit.swap_relation("power_electrical_relation", _AuxSurrogate({"tag": 2.0}))
 
     assert not first_eq[0].active
     assert unit.aux_eq_2[0].active
@@ -1058,14 +1015,7 @@ def test_iter_swapped_relations_reports_only_swapped_relations():
 
     assert list(iter_swapped_relations(m)) == []
 
-    m.unit_a.swap_relation(
-        "power_electrical_relation",
-        SurrogateSpec(
-            functional_form="linear",
-            input_variables=["flow_out"],
-            coefficients={"flow_out": 1.0},
-        ),
-    )
+    m.unit_a.swap_relation("power_electrical_relation", _multilinear({"flow_out": 1.0}))
 
     swapped = list(iter_swapped_relations(m))
     assert len(swapped) == 1
@@ -1090,7 +1040,12 @@ def test_add_constant_intensity_relation_auto_swaps_from_surrogate():
     cfg = UnitConfig(
         unit_model_class="OpsBlock",
         surrogate=SurrogateSpec(
-            functional_form="linear", input_variables=["power_electrical"]
+            surrogate_type=SurrogateType.MULTILINEAR,
+            data={
+                "input_variables": {"power_electrical": "kW"},
+                "output_variables": {"power_electrical": "kW"},
+                "coefficients": {"power_electrical": 1.0},
+            },
         ),
     )
     m.unit = OpsBlock(property_package=m.props, flexops_config=cfg)

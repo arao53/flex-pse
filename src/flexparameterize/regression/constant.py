@@ -5,12 +5,13 @@ import math
 import pandas as pd
 
 from flexcore import nomenclature as nm
-from flexcore.config.schema import SurrogateSpec
+from flexcore.config.schema import SurrogateSpec, SurrogateType
 from flexcore.exceptions import FlexConfigError, FlexDataError
 
 COEFFICIENT_NAME = nm.INTENSITY_VARS[nm.PowerKind.ELECTRICAL]
-"""str: key the fitted coefficient is stored under in a ``SurrogateSpec``; it
-is also the name of the process parameter the fit determines on a unit."""
+"""str: key the fitted coefficient is stored under in a ``SurrogateSpec``'s
+``data['coefficients']``; it is also the name of the process parameter the fit
+determines on a unit."""
 
 
 def constant_intensity_coefficient(surrogate: SurrogateSpec) -> float:
@@ -20,7 +21,7 @@ def constant_intensity_coefficient(surrogate: SurrogateSpec) -> float:
     so a spec that a fit did not produce is rejected the same way in both.
 
     Args:
-        surrogate: A ``constant_intensity``
+        surrogate: A ``SurrogateType.CONSTANT_INTENSITY``
             :class:`~flexcore.config.schema.SurrogateSpec`.
 
     Returns:
@@ -30,14 +31,16 @@ def constant_intensity_coefficient(surrogate: SurrogateSpec) -> float:
         FlexConfigError: If the spec carries no coefficient under
             :data:`COEFFICIENT_NAME`.
     """
-    if COEFFICIENT_NAME not in surrogate.coefficients:
+    coefficients = surrogate.data.get("coefficients", {})
+    if COEFFICIENT_NAME not in coefficients:
         raise FlexConfigError(
             f"A 'constant_intensity' relationship must carry its coefficient "
-            f"under {COEFFICIENT_NAME!r}; got {sorted(surrogate.coefficients)}.",
-            field="coefficients",
-            value=sorted(surrogate.coefficients),
+            f"under data['coefficients'][{COEFFICIENT_NAME!r}]; got "
+            f"{sorted(coefficients)}.",
+            field="data",
+            value=sorted(coefficients),
         )
-    return surrogate.coefficients[COEFFICIENT_NAME]
+    return coefficients[COEFFICIENT_NAME]
 
 
 def _single_column(frame, role: str) -> pd.Series:
@@ -156,19 +159,30 @@ class ConstantIntensityRegressor:
         self.output_variable = str(power.name)
         return self
 
-    def to_surrogate_spec(self) -> SurrogateSpec:
+    def to_surrogate_spec(
+        self, *, input_units: str = "", output_units: str = ""
+    ) -> SurrogateSpec:
         """Return the fit as a persistable ``SurrogateSpec``.
 
         The one place a constant-intensity fit becomes a spec: both
         FlexParameterize directions
         (:func:`~flexparameterize.apply.apply_to_model` and
         :func:`~flexparameterize.emit.emit_model_config`) consume this, so the
-        two can never disagree about what was fitted.
+        two can never disagree about what was fitted. ``constant_intensity``
+        has no surrogate class (it fixes a process parameter rather than
+        swapping a Constraint), so unlike a real surrogate's declared units,
+        these are recorded for documentation, not enforced by a build.
+
+        Args:
+            input_units: Units of the fitted input column, as a string (the
+                caller reads them off the model's registered variable).
+            output_units: Units of the fitted output column.
 
         Returns:
-            A ``constant_intensity`` :class:`~flexcore.config.schema.SurrogateSpec`
-            carrying the coefficient under
-            :data:`COEFFICIENT_NAME` and the fitted column names.
+            A ``SurrogateType.CONSTANT_INTENSITY``
+            :class:`~flexcore.config.schema.SurrogateSpec` carrying the
+            coefficient under :data:`COEFFICIENT_NAME` and the fitted column
+            names.
 
         Raises:
             FlexDataError: If :meth:`fit` has not been called.
@@ -179,8 +193,10 @@ class ConstantIntensityRegressor:
                 "before to_surrogate_spec()."
             )
         return SurrogateSpec(
-            functional_form="constant_intensity",
-            coefficients={COEFFICIENT_NAME: self.coefficient},
-            input_variables=[self.input_variable],
-            output_variables=[self.output_variable],
+            surrogate_type=SurrogateType.CONSTANT_INTENSITY,
+            data={
+                "coefficients": {COEFFICIENT_NAME: self.coefficient},
+                "input_variables": {self.input_variable: input_units},
+                "output_variables": {self.output_variable: output_units},
+            },
         )

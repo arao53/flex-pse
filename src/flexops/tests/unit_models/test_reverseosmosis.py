@@ -4,9 +4,10 @@ import pyomo.environ as pyo
 import pytest
 from pyomo.environ import units as pyunits
 
-from flexcore.config.schema import SurrogateSpec
+from flexcore.config.schema import SurrogateSpec, SurrogateType
 from flexcore.exceptions import FlexConfigError
 from flexops import SimpleAqueousFlow, TimeBlock
+from flexops.surrogates import surrogate_from_spec
 from flexops.testing import UnitModelTestHarness, dummy_time_block
 from flexops.unit_models import ReverseOsmosis
 
@@ -75,14 +76,23 @@ def test_recovery_relation_is_swappable():
 
     m.unit.swap_relation(
         "split_definition",
-        SurrogateSpec(
-            functional_form="quadratic",
-            input_variables=["inlet_state.pressure"],
-            coefficients={
-                "intercept": 0.3,
-                "inlet_state.pressure": 1e-6,
-                "inlet_state.pressure^2": 1e-12,
-            },
+        surrogate_from_spec(
+            SurrogateSpec(
+                surrogate_type=SurrogateType.MULTILINEAR,
+                data={
+                    "input_variables": {
+                        "feed": "m^3/hr",
+                        "inlet_state.pressure": "Pa",
+                    },
+                    "output_variables": {"permeate": "m^3/hr"},
+                    "coefficients": {
+                        "intercept": 0.3,
+                        "feed": 0.01,
+                        "inlet_state.pressure": 1e-6,
+                        "feed*inlet_state.pressure": 1e-7,
+                    },
+                },
+            )
         ),
     )
 
@@ -92,8 +102,8 @@ def test_recovery_relation_is_swappable():
 
     assert m.unit.split_definition[0].active is False
     assert m.unit.split_mass_balance[0].active is True
-    # permeate - (0.3 + 1e-6*3e5 + 1e-12*(3e5)^2) == -(0.3 + 0.3 + 0.09) == -0.69
-    assert pyo.value(m.unit.split_definition_fitted[0].body) == pytest.approx(-0.69)
+    # permeate - (0.3 + 0.01*10 + 1e-6*3e5 + 1e-7*10*3e5) == -(0.3+0.1+0.3+0.3)
+    assert pyo.value(m.unit.split_definition_fitted[0].body) == pytest.approx(-1.0)
 
 
 @pytest.mark.unit

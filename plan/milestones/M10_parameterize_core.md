@@ -32,6 +32,42 @@ vendor curve, a datasheet coefficient, a physics-derived expression), both
 directly and attach it exactly as they would a fitted one — no data, no
 `check_sufficiency`, no regressor involved for that unit.
 
+### Deviations from spec (post-implementation revision)
+
+Everything above — the pipeline shape, the two directions, the round-trip and
+agree invariants, and hand-built-spec acceptance — shipped as specified and is
+unchanged. What changed, before release, was `SurrogateSpec`'s internal shape
+and where relationship builders live, in a follow-up revision to this
+milestone's own work:
+
+- `SurrogateSpec.functional_form` (an open string) and `coefficients`/
+  `input_variables`/`output_variables` (bare-name lists) are replaced by
+  `surrogate_type` (a `SurrogateType` enum member) and an opaque `data`
+  mapping in the shape that type's class defines — `input_variables`/
+  `output_variables` are now `{name: units}` mappings, since the relationship's
+  declared basis need not match the model's own.
+- The builder registry moves from `flexops.core.ops_block._RELATION_BUILDERS`
+  (an open dict keyed by `functional_form`) to `flexops.surrogates` (a leaf
+  subpackage of `flexops`: `Surrogate` ABC, `SURROGATES: dict[SurrogateType,
+  type[Surrogate]]`, `surrogate_from_spec`). This is what makes a config's
+  surrogate realizable at unit construction time with no `flexparameterize`
+  import anywhere in `flexops` — `OpsBlockData.swap_relation` now takes a live
+  `Surrogate` instance, not a `SurrogateSpec`.
+- `quadratic`, `polynomial`, and any `^`-exponent coefficient term are gone.
+  `multilinear` (the only implemented class) covers what were `linear` and
+  `bilinear`; `QuadraticSurrogate`/`ExponentialSurrogate`/`ArimaSurrogate`/
+  `NeuralNetworkSurrogate` are reserved stub classes raising
+  `NotImplementedError`, replacing the M11 sketch of reserved
+  `functional_form` names below.
+- `constant_intensity` has no class in `flexops.surrogates` — it fixes a
+  process parameter rather than swapping a Constraint, so `apply_to_model`
+  still handles it directly, as this milestone always specified.
+
+See `docs/explanation/config_schema.md` and `docs/reference/flexops/surrogates.rst`
+for the current contract; every `SurrogateSpec`/coefficient example below this
+point describes the **original** (superseded) shape and should be read for
+pipeline structure, not literal field names.
+
 FlexParameterize is data-source agnostic: the input DataFrame may come from a
 historian, a spreadsheet export, a one-off CSV, or any other tabular source.
 Nothing downstream of `TagMap` — `check_sufficiency`, the regressors, `emit.py`,

@@ -5,7 +5,7 @@ import pytest
 from idaes.core.util.model_statistics import degrees_of_freedom
 from pyomo.environ import units as pyunits
 
-from flexcore.config.schema import SurrogateSpec
+from flexcore.config.schema import SurrogateSpec, SurrogateType
 from flexcore.exceptions import FlexDataError
 from flexops.unit_models import ConstantEnergyIntensityModel, ReverseOsmosis
 from flexparameterize.apply import apply_to_model
@@ -16,12 +16,15 @@ ALIASED = TagMap({})
 """An empty TagMap: the fixture data already carries model aliases."""
 
 
-def _linear_spec(coefficient: float) -> SurrogateSpec:
-    """A hand-built linear relationship on the unit's ``flow_in`` reference."""
+def _multilinear_spec(coefficient: float) -> SurrogateSpec:
+    """A hand-built multilinear relationship on the unit's ``flow_in`` reference."""
     return SurrogateSpec(
-        functional_form="linear",
-        input_variables=["flow_in"],
-        coefficients={"flow_in": coefficient, "intercept": 0.0},
+        surrogate_type=SurrogateType.MULTILINEAR,
+        data={
+            "input_variables": {"flow_in": "m^3/hr"},
+            "output_variables": {"power_electrical": "kW"},
+            "coefficients": {"flow_in": coefficient, "intercept": 0.0},
+        },
     )
 
 
@@ -58,7 +61,7 @@ def test_apply_swaps_energy_relation_in_place():
     components_before = set(unit.component_map())
 
     report = apply_to_model(
-        m, data, ALIASED, surrogates={unit.name: _linear_spec(INTENSITY)}
+        m, data, ALIASED, surrogates={unit.name: _multilinear_spec(INTENSITY)}
     )
 
     relation = unit.power_electrical_relation
@@ -74,43 +77,21 @@ def test_apply_swaps_energy_relation_in_place():
 
 
 @pytest.mark.component
-def test_apply_swaps_energy_relation_to_quadratic():
-    """A quadratic power curve replaces the unit's constant-intensity relation."""
-    m, unit = build_plant()
-    data = evaluate_data(unit)
-    spec = SurrogateSpec(
-        functional_form="quadratic",
-        input_variables=["flow_out"],
-        coefficients={"intercept": 1.0, "flow_out": 0.4, "flow_out^2": 0.02},
-    )
-
-    report = apply_to_model(m, data, ALIASED, surrogates={unit.name: spec})
-
-    assert report.swapped_relations == {unit.name: ["power_electrical_relation"]}
-    assert all(
-        not unit.power_electrical_relation[t].active for t in m.time_block.time_index
-    )
-    unit.flow_out[0].set_value(10.0)
-    unit.power_electrical[0].set_value(0.0)
-    # power - (1.0 + 0.4*10 + 0.02*100) == -7.0
-    assert pyo.value(unit.power_electrical_relation_fitted[0].body) == pytest.approx(
-        -7.0
-    )
-
-
-@pytest.mark.component
-def test_apply_swaps_energy_relation_to_expanded_bilinear():
+def test_apply_swaps_energy_relation_to_multilinear():
     """Net draw as a function of outlet flow, outlet pressure and their product."""
     m, unit = build_plant(has_pressure=True)
     data = evaluate_data(unit)
     spec = SurrogateSpec(
-        functional_form="bilinear",
-        input_variables=["flow_out", "outlet_state.pressure"],
-        coefficients={
-            "intercept": 1.0,
-            "flow_out": 0.4,
-            "outlet_state.pressure": 1e-5,
-            "flow_out*outlet_state.pressure": 2e-6,
+        surrogate_type=SurrogateType.MULTILINEAR,
+        data={
+            "input_variables": {"flow_out": "m^3/hr", "outlet_state.pressure": "Pa"},
+            "output_variables": {"power_electrical": "kW"},
+            "coefficients": {
+                "intercept": 1.0,
+                "flow_out": 0.4,
+                "outlet_state.pressure": 1e-5,
+                "flow_out*outlet_state.pressure": 2e-6,
+            },
         },
     )
 
@@ -152,7 +133,7 @@ def test_apply_with_supplied_surrogate_skips_fit():
     fitted_unit.energy_intensity.unfix()
 
     report = apply_to_model(
-        m, data, ALIASED, surrogates={vendor.name: _linear_spec(2.0)}
+        m, data, ALIASED, surrogates={vendor.name: _multilinear_spec(2.0)}
     )
 
     assert report.swapped_relations == {vendor.name: ["power_electrical_relation"]}
@@ -175,9 +156,12 @@ def test_apply_swaps_a_named_relation():
     m.facility.ro = ReverseOsmosis(property_package=m.properties)
     ro = m.facility.ro
     recovery_spec = SurrogateSpec(
-        functional_form="linear",
-        input_variables=["feed"],
-        coefficients={"feed": 0.01, "intercept": 0.4},
+        surrogate_type=SurrogateType.MULTILINEAR,
+        data={
+            "input_variables": {"feed": "m^3/hr"},
+            "output_variables": {"permeate": "m^3/hr"},
+            "coefficients": {"feed": 0.01, "intercept": 0.4},
+        },
     )
 
     report = apply_to_model(

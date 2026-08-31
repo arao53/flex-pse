@@ -68,6 +68,7 @@ schema authority; :data:`CURRENT_SCHEMA_VERSION` tags what this build writes.
    UnitConfig
    IOVariableSpec
    SurrogateSpec
+   SurrogateType
    ExternalDispatchSpec
    UnitCommitmentConfig
    ArcSpec

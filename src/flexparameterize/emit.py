@@ -26,6 +26,7 @@ from flexcore.config.schema import (
     PlantConfig,
     PriceSpec,
     SurrogateSpec,
+    SurrogateType,
     TimeConfig,
     UnitConfig,
 )
@@ -33,6 +34,7 @@ from flexcore.exceptions import FlexConfigError
 from flexops.core.ops_block import OpsBlockData
 from flexops.core.registration import IORegistry, iter_io_registry
 from flexops.core.time_block import find_time_block
+from flexops.surrogates import surrogate_from_spec
 from flexparameterize.regression import (
     COEFFICIENT_NAME,
     constant_intensity_coefficient,
@@ -99,12 +101,37 @@ def _unit_model_class_name(unit_or_class) -> str:
     )
 
 
+def _surrogate_variables(
+    surrogate: SurrogateSpec,
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Return a surrogate's declared ``(input, output)`` name -> units mappings.
+
+    ``constant_intensity`` has no surrogate class (see
+    :mod:`flexops.surrogates`), so its ``data`` is read directly; every other
+    type is realized through :func:`~flexops.surrogates.surrogate_from_spec`,
+    which validates it in the same step.
+
+    Args:
+        surrogate: The relationship being emitted.
+
+    Returns:
+        ``(input_variables, output_variables)``.
+    """
+    if surrogate.surrogate_type is SurrogateType.CONSTANT_INTENSITY:
+        return (
+            dict(surrogate.data.get("input_variables", {})),
+            dict(surrogate.data.get("output_variables", {})),
+        )
+    built = surrogate_from_spec(surrogate)
+    return built.input_variables, built.output_variables
+
+
 def _io_variable_specs(unit_or_class, surrogate: SurrogateSpec) -> list[IOVariableSpec]:
     """Describe the unit's process IO variables.
 
     A built unit supplies them from its registry (with real units); a bare
-    class has none, so the fit's own column names stand in and their units are
-    left empty.
+    class has none, so the surrogate's own declared variables and units stand
+    in.
 
     Args:
         unit_or_class: A built unit or a unit-model class.
@@ -125,13 +152,11 @@ def _io_variable_specs(unit_or_class, surrogate: SurrogateSpec) -> list[IOVariab
             )
             for record in registry.io_variables
         ]
+    inputs, outputs = _surrogate_variables(surrogate)
     return [
-        IOVariableSpec(name=name, role=role, units="")
-        for role, names in (
-            ("input", surrogate.input_variables),
-            ("output", surrogate.output_variables),
-        )
-        for name in names
+        IOVariableSpec(name=name, role=role, units=units)
+        for role, mapping in (("input", inputs), ("output", outputs))
+        for name, units in mapping.items()
     ]
 
 
@@ -233,7 +258,7 @@ def emit_model_config(
     )
 
     options = dict(construction_options or {})
-    if surrogate.functional_form == "constant_intensity":
+    if surrogate.surrogate_type is SurrogateType.CONSTANT_INTENSITY:
         options[COEFFICIENT_NAME] = {
             "value": constant_intensity_coefficient(surrogate),
             "units": INTENSITY_UNITS,

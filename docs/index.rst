@@ -34,6 +34,7 @@ design and operations optimization.
 
    reference/flexcore/index
    reference/flexops/core
+   reference/flexops/surrogates
    reference/flexops/logic
    reference/flexops/properties
    reference/flexops/costing

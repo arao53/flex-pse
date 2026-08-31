@@ -28,12 +28,14 @@ from collections.abc import Sequence
 import pyomo.environ as pyo
 from idaes.core import UnitModelBlockData, declare_process_block_class
 from pyomo.common.config import ConfigValue
+from pyomo.core.base.units_container import UnitsError
 from pyomo.environ import units as pyunits
 from pyomo.network import Port
 
 from flexcore import nomenclature as nm
 from flexcore.config.schema import (
     ExternalDispatchSpec,
+    SurrogateType,
     UnitCommitmentConfig,
     UnitConfig,
 )
@@ -47,6 +49,7 @@ from flexops.core.registration import (
     RelationRecord,
 )
 from flexops.core.time_block import TimeBlockData, find_time_block
+from flexops.surrogates import Surrogate, surrogate_from_spec
 
 
 class RelaxationPolicy(enum.StrEnum):
@@ -123,76 +126,6 @@ def _relaxation_domain(value):
             field="relaxation",
             value=value,
         ) from exc
-
-
-_INTERCEPT = "intercept"
-"""str: reserved coefficient key naming a relationship's constant term."""
-
-POLYNOMIAL_FORMS: dict[str, int | None] = {
-    "linear": 1,
-    "quadratic": 2,
-    "bilinear": 2,
-    "polynomial": None,
-}
-"""dict: functional-form name -> highest term degree it admits (None: any).
-
-Every one of these is built by the same polynomial rule; the names differ only
-in what they promise, and the degree bound is what makes a mislabelled
-relationship an error rather than a silent surprise. ``"bilinear"`` is the
-*expanded* form -- a constant, each input on its own, and their cross term.
-"""
-
-
-def _polynomial_body(unit, surrogate, target):
-    """Return ``body(t)`` evaluating a polynomial relationship at time ``t``.
-
-    Args:
-        unit: The unit the relationship is built on.
-        surrogate: The :class:`~flexcore.config.schema.SurrogateSpec`.
-        target: The Var/Reference the relationship determines. Unused here —
-            a polynomial reads its own units from each factor — but part of
-            every builder's signature (see ``_RELATION_BUILDERS``), since a
-            builder for a different functional form may need it.
-
-    Returns:
-        A callable taking a time index and returning a **dimensionless**
-        expression; :meth:`OpsBlockData.swap_relation` multiplies it by
-        ``target``'s own units.
-    """
-    terms = unit._polynomial_terms(
-        surrogate, POLYNOMIAL_FORMS[surrogate.functional_form]
-    )
-    intercept = surrogate.coefficients.get(_INTERCEPT, 0.0)
-
-    def body(t):
-        total = intercept
-        for coefficient, factors in terms:
-            term = coefficient
-            for var, exponent in factors:
-                term = term * (var[t] / pyunits.get_units(var[t])) ** exponent
-            total = total + term
-        return total
-
-    return body
-
-
-_RELATION_BUILDERS = {name: _polynomial_body for name in POLYNOMIAL_FORMS}
-"""dict: functional-form name -> the builder that turns a spec into a body.
-
-The extension point for a new relationship shape: register a builder here and
-the config can name it immediately, because
-:class:`~flexcore.config.schema.SurrogateSpec.functional_form` is an open
-string rather than a fixed schema enumeration. A builder is
-``(unit, surrogate, target) -> body``, where ``body(t)`` returns either a
-**dimensionless** expression for that time point or ``pyomo.environ.Constraint
-.Skip`` to omit it (a lagged/state-space form uses this to skip the horizon
-points where its lag does not exist). A builder may attach its own components
-to ``unit`` (an auxiliary Var/Constraint a big-M or state-space form needs);
-:meth:`OpsBlockData.swap_relation` finds and tracks them itself, so nothing
-needs to be returned besides ``body``. Nothing here is polynomial-specific:
-a softplus/ICNN forward pass, a ratio, or any other Pyomo-expressible function
-registers exactly the same way.
-"""
 
 
 @declare_process_block_class("OpsBlock")
@@ -835,16 +768,21 @@ class OpsBlockData(UnitModelBlockData):
         )
         self.register_relation(self.find_component(relation_name), target=power)
 
-        surrogate = getattr(self.config.flexops_config, "surrogate", None)
-        if surrogate is not None and surrogate.functional_form != "constant_intensity":
-            self.swap_relation(relation_name, surrogate)
+        spec = getattr(self.config.flexops_config, "surrogate", None)
+        if spec is not None and (
+            spec.surrogate_type is not SurrogateType.CONSTANT_INTENSITY
+        ):
+            self.swap_relation(relation_name, surrogate_from_spec(spec))
 
-    def _resolve_input(self, name: str, field: str):
+    def resolve_variable(self, name: str, *, field: str):
         """Return the variable ``name`` refers to on this unit.
 
+        Part of the documented contract a :class:`~flexops.surrogates.base.Surrogate`
+        uses to resolve its declared input variables at build time (dotted
+        names into a sub-block, e.g. ``"outlet_state.pressure"``, resolve too).
+
         Args:
-            name: A component name, possibly dotted into a sub-block (e.g.
-                ``"outlet_state.pressure"``).
+            name: A component name, possibly dotted into a sub-block.
             field: The surrogate field the name came from, for the error.
 
         Returns:
@@ -862,59 +800,6 @@ class OpsBlockData(UnitModelBlockData):
                 value=name,
             )
         return var
-
-    def _polynomial_terms(self, surrogate, max_degree: int | None):
-        """Parse ``surrogate.coefficients`` into resolved polynomial terms.
-
-        A coefficient key is a ``*``-separated product of input-variable names,
-        each optionally raised to an integer power with ``^``, so one grammar
-        spans every polynomial relationship: ``"flow_out"`` is linear,
-        ``"flow_out^2"`` quadratic, ``"flow_out*outlet_state.pressure"`` the
-        cross term of an expanded bilinear form.
-
-        Args:
-            surrogate: The :class:`~flexcore.config.schema.SurrogateSpec`.
-            max_degree: Highest total degree the functional form allows, or
-                None for no bound.
-
-        Returns:
-            ``[(coefficient, [(var, exponent), ...]), ...]``, excluding the
-            constant ``"intercept"`` term.
-
-        Raises:
-            FlexConfigError: If a term's exponent is not a positive integer, a
-                factor is not a variable on this unit, or a term's total degree
-                exceeds ``max_degree``.
-        """
-        terms = []
-        for key, coefficient in surrogate.coefficients.items():
-            if key == _INTERCEPT:
-                continue
-            factors = []
-            for token in key.split("*"):
-                name, _, exponent = token.strip().partition("^")
-                if exponent and not exponent.isdigit():
-                    raise FlexConfigError(
-                        f"Coefficient term {key!r} has exponent {exponent!r}; "
-                        "write a term as 'a', 'a^2', or 'a*b'.",
-                        field="coefficients",
-                        value=key,
-                    )
-                factors.append(
-                    (self._resolve_input(name, "coefficients"), int(exponent or 1))
-                )
-            degree = sum(exponent for _, exponent in factors)
-            if max_degree is not None and degree > max_degree:
-                raise FlexConfigError(
-                    f"Term {key!r} is degree {degree}, but functional form "
-                    f"{surrogate.functional_form!r} allows at most "
-                    f"{max_degree}. Label the relationship with a form that "
-                    "admits it (e.g. 'polynomial').",
-                    field="coefficients",
-                    value=key,
-                )
-            terms.append((coefficient, factors))
-        return terms
 
     def register_relation(self, constraint, target) -> None:
         """Declare ``constraint`` swappable: a relationship determining ``target``.
@@ -956,8 +841,8 @@ class OpsBlockData(UnitModelBlockData):
             )
         )
 
-    def swap_relation(self, relation_name: str, surrogate) -> None:
-        """Replace a registered relationship in place, from a fitted spec.
+    def swap_relation(self, relation_name: str, surrogate: Surrogate) -> None:
+        """Replace a registered relationship in place, from a surrogate.
 
         Deactivates the named relation (never deletes it — conventions §9),
         deactivates whatever an earlier swap's builder attached, and adds
@@ -968,41 +853,32 @@ class OpsBlockData(UnitModelBlockData):
         ``SurrogateSpec``), runtime (``flexparameterize.apply_to_model``), and
         any unit that hand-builds and registers its own relationship.
 
-        Every polynomial form shares one builder:
-
-        .. math::
-
-            y[t] = c_0 + \\sum_k c_k \\prod_j x_{kj}[t]^{n_{kj}}
-
-        where ``y`` is the registered target and each term comes from a
-        coefficient key — :data:`POLYNOMIAL_FORMS` lists the names that select
-        it and the degree each admits, so ``"linear"`` takes
-        ``{"intercept": 5, "flow_out": 0.4}`` and ``"bilinear"`` additionally
-        takes ``{"outlet_state.pressure": 1e-5,
-        "flow_out*outlet_state.pressure": 2e-6}``. But the builder registry is
-        not limited to polynomials: a builder is
-        ``(unit, surrogate, target) -> body``, where ``body(t)`` is any
-        Pyomo-expressible, dimensionless function of the unit's own variables
-        (a ratio, a softplus/ICNN forward pass, a lag polynomial) — see
-        ``_RELATION_BUILDERS``'s own docstring for the full contract. Every
-        factor a body reads is normalized by its own units, and the
-        result is multiplied by ``target``'s own units here, so a coefficient
-        is read in the target's units over the product of its factors' units.
-        Registering another form is an entry in ``_RELATION_BUILDERS``, never
-        a config-schema change.
+        ``surrogate`` (a :class:`~flexops.surrogates.base.Surrogate`, e.g.
+        :class:`~flexops.surrogates.multilinear.MultilinearSurrogate`) is
+        already validated; :meth:`~flexops.surrogates.base.Surrogate.build`
+        does the rest — it returns ``body(t)``, a units-carrying Pyomo
+        expression in the surrogate's own declared output units for that time
+        point, or ``pyomo.environ.Constraint.Skip`` to omit it (a
+        lagged/state-space form uses this to skip horizon points where its lag
+        does not exist). ``body`` is converted into the registered target's
+        own units here, so a surrogate fitted in one unit basis attaches
+        cleanly to a target carrying another. A builder may attach its own
+        components to ``unit`` (an auxiliary Var/Constraint a big-M or
+        state-space form needs); this method finds and tracks them itself, so
+        nothing needs to be returned besides ``body``. Registering another
+        relationship shape is a new class in ``flexops.surrogates``, never a
+        config-schema change.
 
         Args:
             relation_name: Local name of a relation this unit registered via
                 :meth:`register_relation` (e.g. ``"power_electrical_relation"``,
                 ``"split_definition"``).
-            surrogate: The fitted
-                :class:`~flexcore.config.schema.SurrogateSpec`.
+            surrogate: The :class:`~flexops.surrogates.base.Surrogate` to
+                attach (see :func:`~flexops.surrogates.surrogate_from_spec`).
 
         Raises:
-            FlexConfigError: If ``relation_name`` was never registered, no
-                builder is registered for the functional form, a named input
-                variable is not found on the unit, or a term exceeds the
-                form's degree.
+            FlexConfigError: If ``relation_name`` was never registered, or a
+                declared input variable is not found on the unit.
         """
         record = next(
             (r for r in self._io_registry.relations if r.name == relation_name), None
@@ -1017,17 +893,8 @@ class OpsBlockData(UnitModelBlockData):
                 field="relation_name",
                 value=relation_name,
             )
-        build = _RELATION_BUILDERS.get(surrogate.functional_form)
-        if build is None:
-            known_forms = ", ".join(repr(name) for name in sorted(_RELATION_BUILDERS))
-            raise FlexConfigError(
-                f"No relationship builder is registered for functional form "
-                f"{surrogate.functional_form!r}. Known forms: {known_forms}.",
-                field="functional_form",
-                value=surrogate.functional_form,
-            )
         for name in surrogate.input_variables:
-            self._resolve_input(name, "input_variables")
+            self.resolve_variable(name, field="input_variables")
 
         (record.fitted if record.fitted is not None else record.constraint).deactivate()
         for component in record.components:
@@ -1036,7 +903,7 @@ class OpsBlockData(UnitModelBlockData):
                 deactivate()
 
         before = set(self.component_map())
-        body = build(self, surrogate, record.target)
+        body = surrogate.build(self, record.target)
         record.components = [
             self.find_component(name) for name in set(self.component_map()) - before
         ]
@@ -1050,17 +917,25 @@ class OpsBlockData(UnitModelBlockData):
             expr = _body(t)
             if expr is pyo.Constraint.Skip:
                 return pyo.Constraint.Skip
-            return _target[t] == expr * pyunits.get_units(_target[t])
+            try:
+                converted = pyunits.convert(expr, pyunits.get_units(_target[t]))
+            except UnitsError as exc:
+                raise FlexConfigError(
+                    f"{type(surrogate).__name__}'s output units are "
+                    f"incompatible with {_target.local_name!r}'s "
+                    f"({pyunits.get_units(_target[t])!s}).",
+                    field="output_variables",
+                ) from exc
+            return _target[t] == converted
 
         self.add_component(
             fitted_name,
             pyo.Constraint(
                 target.index_set(),
                 rule=_rule,
-                doc=f"Fitted relationship ({surrogate.functional_form}), "
-                f"replacing the deactivated {relation_name}. Coefficients are "
-                f"read in {target.local_name!r}'s own units over the product "
-                "of each term's factors' own units.",
+                doc=f"Fitted relationship ({type(surrogate).__name__}), "
+                f"replacing the deactivated {relation_name}. The surrogate's "
+                f"own output units are converted into {target.local_name!r}'s.",
             ),
         )
         record.fitted = self.find_component(fitted_name)

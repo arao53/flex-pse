@@ -30,11 +30,14 @@ from dataclasses import dataclass, field
 
 import pandas as pd
 from idaes.core.util.model_statistics import degrees_of_freedom
+from pyomo.environ import units as pyunits
 
 from flexcore import nomenclature as nm
+from flexcore.config.schema import SurrogateSpec, SurrogateType
 from flexcore.exceptions import FlexConfigError, FlexDataError
 from flexops.core.registration import iter_io_registry
 from flexops.core.time_block import find_time_block
+from flexops.surrogates import surrogate_from_spec
 from flexparameterize.regression import (
     COEFFICIENT_NAME,
     ConstantIntensityRegressor,
@@ -129,7 +132,13 @@ def _basis_aliases(unit, registry) -> list[str]:
     ]
 
 
-def _fit_unit(unit, registry, data: pd.DataFrame) -> ConstantIntensityRegressor:
+def _var_units(var) -> str:
+    """Return a Pyomo Var's units as a string (first data object if indexed)."""
+    ref = next(iter(var.values())) if var.is_indexed() else var
+    return str(pyunits.get_units(ref))
+
+
+def _fit_unit(unit, registry, data: pd.DataFrame) -> SurrogateSpec:
     """Fit ``unit``'s energy intensity from its own columns of ``data``.
 
     Args:
@@ -138,7 +147,9 @@ def _fit_unit(unit, registry, data: pd.DataFrame) -> ConstantIntensityRegressor:
         data: The aliased data frame.
 
     Returns:
-        The fitted regressor.
+        The fit, as a ``constant_intensity``
+        :class:`~flexcore.config.schema.SurrogateSpec` carrying the fitted
+        column names and the model's own units for each.
 
     Raises:
         FlexDataError: If the unit does not present exactly one basis flow and
@@ -146,11 +157,10 @@ def _fit_unit(unit, registry, data: pd.DataFrame) -> ConstantIntensityRegressor:
             is a one-in, one-out problem.
     """
     basis = _basis_aliases(unit, registry)
-    powers = [
-        model_alias(record.var)
-        for record in registry.power
-        if record.kind is nm.PowerKind.ELECTRICAL
+    power_records = [
+        record for record in registry.power if record.kind is nm.PowerKind.ELECTRICAL
     ]
+    powers = [model_alias(record.var) for record in power_records]
     if len(basis) != 1 or len(powers) != 1:
         raise FlexDataError(
             f"The constant-intensity fit needs exactly one basis flow and one "
@@ -159,7 +169,12 @@ def _fit_unit(unit, registry, data: pd.DataFrame) -> ConstantIntensityRegressor:
             "surrogates= instead.",
             field=unit.name,
         )
-    return ConstantIntensityRegressor().fit(data[[basis[0]]], data[[powers[0]]])
+    regressor = ConstantIntensityRegressor().fit(data[[basis[0]]], data[[powers[0]]])
+    basis_var = unit.model().find_component(basis[0])
+    return regressor.to_surrogate_spec(
+        input_units=_var_units(basis_var),
+        output_units=_var_units(power_records[0].var),
+    )
 
 
 POWER_ELECTRICAL_RELATION = f"{nm.POWER_ELECTRICAL}_relation"
@@ -190,8 +205,8 @@ def _attach_surrogate(unit, registry, surrogate) -> tuple[bool, dict[str, float]
             coefficient under that name, or the unit does not register one as a
             regressable process parameter.
     """
-    if surrogate.functional_form != "constant_intensity":
-        unit.swap_relation(POWER_ELECTRICAL_RELATION, surrogate)
+    if surrogate.surrogate_type is not SurrogateType.CONSTANT_INTENSITY:
+        unit.swap_relation(POWER_ELECTRICAL_RELATION, surrogate_from_spec(surrogate))
         return True, {}
 
     coefficient = constant_intensity_coefficient(surrogate)
@@ -300,12 +315,12 @@ def apply_to_model(
         supplied_for_unit = supplied.get(unit.name)
         if isinstance(supplied_for_unit, dict):
             for relation_name, spec in supplied_for_unit.items():
-                unit.swap_relation(relation_name, spec)
+                unit.swap_relation(relation_name, surrogate_from_spec(spec))
                 report.swapped_relations.setdefault(unit.name, []).append(relation_name)
             continue
         surrogate = supplied_for_unit
         if surrogate is None:
-            surrogate = _fit_unit(unit, registry, aliased).to_surrogate_spec()
+            surrogate = _fit_unit(unit, registry, aliased)
         swapped, fixed = _attach_surrogate(unit, registry, surrogate)
         if swapped:
             report.swapped_relations.setdefault(unit.name, []).append(

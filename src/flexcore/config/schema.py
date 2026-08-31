@@ -17,11 +17,12 @@ JSON Schema, so keep them plain text: no section signs, RST markup, or manual
 line-break art — rendering is the documentation builder's job.
 """
 
+import enum
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
-CURRENT_SCHEMA_VERSION = "0.0.2"
+CURRENT_SCHEMA_VERSION = "0.0.3"
 """str: the semantic schema version this build writes and validates against."""
 
 
@@ -49,43 +50,47 @@ class IOVariableSpec(_StrictModel):
     )
 
 
+class SurrogateType(enum.StrEnum):
+    """Which predefined surrogate class a SurrogateSpec's data describes.
+
+    Each member names a class in flexops.surrogates that validates and builds
+    the relationship; CONSTANT_INTENSITY is the one exception -- it has no
+    class, since it fixes a process parameter rather than swapping a
+    Constraint (see flexops.core.ops_block.OpsBlockData.swap_relation).
+    """
+
+    CONSTANT_INTENSITY = "constant_intensity"
+    MULTILINEAR = "multilinear"
+    QUADRATIC = "quadratic"
+    EXPONENTIAL = "exponential"
+    ARIMA = "arima"
+    NEURAL_NETWORK = "neural_network"
+
+
 class SurrogateSpec(_StrictModel):
     """A fitted (or default) energy/IO relationship for a unit."""
 
-    functional_form: str = Field(
-        description="Name of the relationship builder to use, e.g. "
-        "'constant_intensity', 'linear', 'quadratic', 'bilinear'. Deliberately "
-        "an open string rather than a fixed list: builders are registered in "
-        "code, so a new functional form never needs a schema revision. A name "
-        "no builder is registered for is rejected when the model is built, not "
-        "when the config is validated."
+    surrogate_type: SurrogateType = Field(
+        description="Which predefined surrogate class this relationship is. "
+        "The class (flexops.surrogates) validates and builds data; a class "
+        "not yet implemented raises NotImplementedError when the model is "
+        "built, not when the config is validated."
     )
-    coefficients: dict[str, float] = Field(
+    data: dict[str, Any] = Field(
         default_factory=dict,
-        description="Coefficients of the relationship, keyed by the term each "
-        "multiplies. A term is a '*'-separated product of input variable names, "
-        "each optionally raised to an integer power with '^': 'flow_out', "
-        "'flow_out^2', 'flow_out*outlet_state.pressure'. The reserved key "
-        "'intercept' is the constant term. Each coefficient is read in kW over "
-        "the product of its factors' own units.",
+        description="The relationship's data, in the shape surrogate_type's "
+        "class defines and validates (e.g. a multilinear surrogate's "
+        "coefficients and its input/output variables with their units). "
+        "Opaque to the schema; see the flexops.surrogates reference page for "
+        "each class's data contract.",
     )
     source: str | None = Field(
         default=None,
         description="Optional path to a JSON file supplying this "
-        "relationship's coefficients, input_variables, and output_variables, "
-        "for a relationship too large to inline or not expressible as "
-        "coefficients at all. A relative path resolves against the directory of "
-        "the config file that names it. Anything the file supplies replaces "
-        "what is written inline here.",
-    )
-    input_variables: list[str] = Field(
-        default_factory=list,
-        description="Names of the relationship's input variables, each "
-        "resolvable on the unit; the coefficient terms name these.",
-    )
-    output_variables: list[str] = Field(
-        default_factory=list,
-        description="Names of the relationship's output variables.",
+        "relationship's data, for a relationship too large to inline or not "
+        "expressible inline at all. A relative path resolves against the "
+        "directory of the config file that names it. Anything the file "
+        "supplies replaces what is written inline here.",
     )
     provenance: dict[str, Any] = Field(
         default_factory=dict,

@@ -37,7 +37,64 @@ def _to_0_0_2(data: dict) -> dict:
     return {**data, "schema_version": "0.0.2"}
 
 
-MIGRATIONS: dict[str, Callable[[dict], dict]] = {"0.0.1": _to_0_0_2}
+def _iter_unit_configs(data: dict):
+    """Yield every unit config dict in a raw (pre-validation) config document.
+
+    Args:
+        data: The parsed config document.
+
+    Yields:
+        Each unit's raw config mapping, wherever it sits (a bare plant, or
+        every plant of a network).
+    """
+    network = data.get("network")
+    plants = (
+        network.get("plants", {}).values()
+        if network is not None
+        else [data.get("plant") or {}]
+    )
+    for plant in plants:
+        yield from (plant or {}).get("units", {}).values()
+
+
+def _to_0_0_3(data: dict) -> dict:
+    """Reject a 0.0.2 config carrying a surrogate; re-stamp the rest.
+
+    0.0.3 reshaped ``SurrogateSpec``: ``functional_form``/``coefficients``/
+    ``input_variables``/``output_variables`` were replaced by a
+    ``surrogate_type`` enum and an opaque ``data`` mapping (see
+    ``flexops.surrogates``). The old shape cannot be mechanically translated
+    into the new one (a coefficient key's units are no longer implicit), so a
+    config naming a surrogate is rejected rather than guessed at.
+
+    Args:
+        data: The parsed 0.0.2 config.
+
+    Returns:
+        The same mapping, stamped 0.0.3, when it names no legacy-shaped
+        surrogate.
+
+    Raises:
+        FlexConfigError: If any unit carries a surrogate in the old
+            (``functional_form``) shape.
+    """
+    for unit in _iter_unit_configs(data):
+        surrogate = unit.get("surrogate")
+        if surrogate is not None and "surrogate_type" not in surrogate:
+            raise FlexConfigError(
+                "This 0.0.2 config carries a surrogate, which 0.0.3 cannot "
+                "migrate automatically (the coefficient grammar was replaced "
+                "by predefined, unit-declared surrogate classes). Re-emit "
+                "this config with the current emit_model_config.",
+                field="surrogate",
+            )
+    return {**data, "schema_version": "0.0.3"}
+
+
+MIGRATIONS: dict[str, Callable[[dict], dict]] = {
+    "0.0.1": _to_0_0_2,
+    "0.0.2": _to_0_0_3,
+}
 """Source version -> upgrade hook, applied in sequence on load. Each hook must
 set the new ``schema_version`` on the dict it returns."""
 
@@ -111,7 +168,7 @@ def _read(path: Path) -> dict:
     return data
 
 
-_SURROGATE_SOURCE_FIELDS = ("coefficients", "input_variables", "output_variables")
+_SURROGATE_SOURCE_FIELDS = ("data",)
 
 
 def load_surrogate_source(spec: SurrogateSpec, base_dir=None) -> SurrogateSpec:
@@ -119,10 +176,9 @@ def load_surrogate_source(spec: SurrogateSpec, base_dir=None) -> SurrogateSpec:
 
     Lets a relationship live beside the config rather than inside it — a fitted
     curve with hundreds of terms, or one a tool wrote separately. The file is a
-    JSON object holding any of ``coefficients``, ``input_variables`` and
-    ``output_variables``; whatever it supplies replaces what the spec wrote
-    inline. ``source`` is kept on the result, so the config still points at
-    where the relationship came from.
+    JSON object holding ``data``, in the shape ``surrogate_type``'s class
+    expects; it replaces what the spec wrote inline. ``source`` is kept on the
+    result, so the config still points at where the relationship came from.
 
     Args:
         spec: The :class:`~flexcore.config.schema.SurrogateSpec` to fill in;

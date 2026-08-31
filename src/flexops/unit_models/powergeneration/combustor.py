@@ -75,8 +75,10 @@ from pyomo.common.config import ConfigValue
 from pyomo.environ import units as pyunits
 
 from flexcore import nomenclature as nm
+from flexcore.config.schema import SurrogateType
 from flexcore.exceptions import FlexConfigError
 from flexops.core.ops_block import OpsBlockData
+from flexops.surrogates import surrogate_from_spec
 
 _HEATING_VALUE_UNITS = pyunits.kWh / pyunits.m**3
 
@@ -541,6 +543,8 @@ class CombustorData(OpsBlockData):
                 )
 
         self.register_relation(self.power_electrical_relation, target=power)
-        surrogate = getattr(self.config.flexops_config, "surrogate", None)
-        if surrogate is not None and surrogate.functional_form != "constant_intensity":
-            self.swap_relation("power_electrical_relation", surrogate)
+        spec = getattr(self.config.flexops_config, "surrogate", None)
+        if spec is not None and (
+            spec.surrogate_type is not SurrogateType.CONSTANT_INTENSITY
+        ):
+            self.swap_relation("power_electrical_relation", surrogate_from_spec(spec))
