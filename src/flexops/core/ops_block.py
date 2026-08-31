@@ -7,7 +7,8 @@ registration API that FlexParameterize and the docs generator consume
 (:meth:`OpsBlockData.register_io_variable`,
 :meth:`~OpsBlockData.register_process_parameter`,
 :meth:`~OpsBlockData.register_power`,
-:meth:`~OpsBlockData.register_fuel_usage`), the base power Vars
+:meth:`~OpsBlockData.register_fuel_usage`,
+:meth:`~OpsBlockData.register_boundary_flow`), the base power Vars
 (:meth:`~OpsBlockData.declare_power`), the external-dispatch hook
 (:meth:`~OpsBlockData.set_external_dispatch`), and the config slots
 (``unit_commitment``, ``relaxation``, ``allow_bypass``, ``external_dispatch``)
@@ -39,6 +40,8 @@ from flexcore.config.schema import (
 )
 from flexcore.exceptions import FlexConfigError
 from flexops.core.registration import (
+    BoundaryKind,
+    BoundaryRecord,
     FuelUsageRecord,
     IORegistry,
     IOVariableRecord,
@@ -518,6 +521,44 @@ class OpsBlockData(UnitModelBlockData):
             )
         self._io_registry.fuel.append(
             FuelUsageRecord(var=var, name=var.local_name, fuel_name=fuel_name)
+        )
+
+    def register_boundary_flow(self, var, *, resource: str, kind: BoundaryKind) -> None:
+        """Register a total flow crossing the facility boundary, for aggregation.
+
+        A boundary block (a source or a sink) meters the whole resource it
+        withdraws or delivers, and the enclosing
+        :class:`~flexops.core.plant_block.PlantBlockData` discovers those flows
+        through this registry rather than by importing the unit-model classes,
+        summing them into ``total_feed[resource, t]`` /
+        ``total_product[resource, t]``. Any unit may call it, not only
+        :class:`~flexops.unit_models.feed.Feed` and
+        :class:`~flexops.unit_models.product.Product`.
+
+        ``resource`` is the aggregation key and is independent of the Pyomo
+        block name: two blocks sharing one ``resource`` sum into a single row
+        (the same resource entering at two points), and two blocks with
+        different ones give two rows.
+
+        Args:
+            var: The time-indexed Pyomo ``Var``/``Reference`` carrying the total
+                flow across the boundary.
+            resource: The resource's name (e.g. ``"raw_water"``), the key its
+                flow aggregates under.
+            kind: Whether the flow enters or leaves the facility.
+
+        Raises:
+            FlexConfigError: If ``resource`` is empty.
+        """
+        if not resource:
+            raise FlexConfigError(
+                "register_boundary_flow requires a non-empty resource (e.g. "
+                "'raw_water'); it is the key the flow aggregates under.",
+                field="resource",
+                value=resource,
+            )
+        self._io_registry.boundary.append(
+            BoundaryRecord(var=var, name=var.local_name, resource=resource, kind=kind)
         )
 
     # -- stream state blocks + ports (property package, §3.7) --------------
