@@ -1,6 +1,6 @@
 """Mixer(OpsBlockData): N named inlets joined into one outlet (§3.2, §3.4)."""
 
-import warnings
+import logging
 
 import pyomo.environ as pyo
 import pytest
@@ -9,6 +9,7 @@ from pyomo.environ import units as pyunits
 from pyomo.network import Port
 
 from flexcore.exceptions import FlexConfigError
+from flexcore.logger import CONFIGURATION_SIMPLIFICATIONS, DedupHandler
 from flexops.properties.simple_aqueous import SimpleAqueousFlow, SimpleAqueousFlowData
 from flexops.properties.simple_gas import SimpleGasFlowData
 from flexops.testing import (
@@ -19,6 +20,24 @@ from flexops.testing import (
 from flexops.testing.harness import _fix_registered_inputs
 from flexops.unit_models import Mixer
 from flexops.unit_models.mixer import MixerTemperatureRule
+
+
+@pytest.fixture(autouse=True)
+def _reset_mixer_logger_dedup():
+    logger = logging.getLogger("flexops.unit_models.mixer")
+    for handler in logger.handlers:
+        if isinstance(handler, DedupHandler):
+            handler._deque.clear()
+            handler._map.clear()
+            handler.dedup_enabled[logging.WARNING] = False
+            handler.dedup_enabled[CONFIGURATION_SIMPLIFICATIONS] = False
+    yield
+    for handler in logger.handlers:
+        if isinstance(handler, DedupHandler):
+            handler._deque.clear()
+            handler._map.clear()
+            handler.dedup_enabled[logging.WARNING] = False
+            handler.dedup_enabled[CONFIGURATION_SIMPLIFICATIONS] = False
 
 
 @declare_process_block_class("_TwoPhaseMixerFlow")
@@ -372,64 +391,95 @@ def test_mixer_accepts_the_temperature_rule_as_a_plain_string():
 # -- physical-simplification warnings ---------------------------------------
 
 
-def _warning_messages(build) -> list[str]:
-    """Return every warning message ``build()`` emits, as strings.
+class _LogCapture(logging.Handler):
+    def __init__(self):
+        super().__init__()
+        self.records = []
 
-    Recorded rather than turned into errors so an unrelated Pyomo or IDAES
-    warning raised during construction cannot masquerade as one of the mixer's.
+    def emit(self, record):
+        self.records.append(record)
+
+
+def _warning_messages(build, capture) -> list[str]:
+    """Return every configuration-simplification message ``build()`` emits, as strings.
+
+    Recorded via a direct handler so an unrelated Pyomo or IDAES warning
+    raised during construction cannot masquerade as one of the mixer's.
     """
-    with warnings.catch_warnings(record=True) as caught:
-        warnings.simplefilter("always")
+    logger = logging.getLogger("flexops.unit_models.mixer")
+    logger.addHandler(capture)
+    old_level = logger.level
+    logger.setLevel(logging.DEBUG)
+    try:
         build()
-    return [str(w.message) for w in caught]
+    finally:
+        logger.removeHandler(capture)
+        logger.setLevel(old_level)
+    return [record.getMessage() for record in capture.records]
 
 
 @pytest.mark.unit
 def test_mixer_warns_on_a_multi_component_property_package():
     """Volumetric mixing tracks no composition, so extra components are flagged."""
-    m = dummy_time_block(3)
-    m.multi_component_properties = _MultiComponentMixerFlow()
-    with pytest.warns(UserWarning, match="multiple components"):
+
+    def build():
+        m = dummy_time_block(3)
+        m.multi_component_properties = _MultiComponentMixerFlow()
         m.unit = Mixer(
             property_package=m.multi_component_properties, inlet_names=("a", "b")
         )
+
+    messages = _warning_messages(build, _LogCapture())
+    assert any("multiple components" in msg for msg in messages)
 
 
 @pytest.mark.unit
 def test_mixer_multi_component_warning_names_the_components():
     """The message lists what the package carries, so the gap is actionable."""
-    m = dummy_time_block(3)
-    m.multi_component_properties = _MultiComponentMixerFlow()
-    with pytest.warns(UserWarning) as caught:
+    capture = _LogCapture()
+
+    def build():
+        m = dummy_time_block(3)
+        m.multi_component_properties = _MultiComponentMixerFlow()
         m.unit = Mixer(
             property_package=m.multi_component_properties, inlet_names=("a", "b")
         )
-    text = " ".join(str(w.message) for w in caught)
+
+    messages = _warning_messages(build, capture)
+    text = " ".join(messages)
     assert "H2O" in text and "TDS" in text
 
 
 @pytest.mark.unit
 def test_mixer_does_not_warn_on_a_single_component_property_package():
     """Both shipped packages carry one component -- the common case stays quiet."""
-    messages = _warning_messages(lambda: _mixer(3, inlet_names=("a", "b")))
+    messages = _warning_messages(
+        lambda: _mixer(3, inlet_names=("a", "b")), _LogCapture()
+    )
     assert not [msg for msg in messages if "multiple components" in msg]
 
 
 @pytest.mark.unit
 def test_mixer_warns_when_a_gas_is_blended_at_unequal_temperatures():
     """Vapour inlets at different temperatures need an equation of state."""
-    with pytest.warns(UserWarning, match="vapor-phase"):
+
+    def build():
         _gas_mixer(
             3,
             inlet_names=("a", "b"),
             temperature_mixing=MixerTemperatureRule.FLOW_WEIGHTED,
         )
 
+    messages = _warning_messages(build, _LogCapture())
+    assert any("vapor-phase" in msg for msg in messages)
+
 
 @pytest.mark.unit
 def test_mixer_does_not_warn_for_a_gas_under_the_equal_temperature_rule():
     """``EQUAL`` ties every inlet temperature, so volumes really are additive."""
-    messages = _warning_messages(lambda: _gas_mixer(3, inlet_names=("a", "b")))
+    messages = _warning_messages(
+        lambda: _gas_mixer(3, inlet_names=("a", "b")), _LogCapture()
+    )
     assert not [msg for msg in messages if "vapor-phase" in msg]
 
 
@@ -446,7 +496,8 @@ def test_mixer_does_not_warn_for_a_liquid_under_the_flow_weighted_rule():
             temperature_mixing=MixerTemperatureRule.FLOW_WEIGHTED,
         )
 
-    assert not [msg for msg in _warning_messages(build) if "vapor-phase" in msg]
+    messages = _warning_messages(build, _LogCapture())
+    assert not [msg for msg in messages if "vapor-phase" in msg]
 
 
 # -- integration with the rest of the library -------------------------------

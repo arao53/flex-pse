@@ -52,7 +52,6 @@ so the DR file format is a flex-pse placeholder loaded into the container only.
 import calendar
 import dataclasses
 import json
-import logging
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 from typing import Any
@@ -75,8 +74,9 @@ except ImportError:  # pragma: no cover - exercised by monkeypatching _HAS_EECO
 
 import flexcore.nomenclature as nm
 from flexcore.exceptions import FlexConfigError, FlexDataError
+from flexcore.logger import get_logger
 
-_log = logging.getLogger(__name__)
+_log = get_logger(__name__)
 
 _HAS_EECO = _eeco_costs is not None
 
