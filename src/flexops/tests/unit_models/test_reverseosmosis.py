@@ -2,6 +2,7 @@
 
 import pyomo.environ as pyo
 import pytest
+from pyomo.environ import units as pyunits
 
 from flexcore.exceptions import FlexConfigError
 from flexops.testing import UnitModelTestHarness, dummy_time_block
@@ -109,3 +110,22 @@ def test_reverseosmosis_registers_its_naming_convention_at_build():
         "flow_out_b": "brine",
         "split_fraction": "recovery",
     }
+
+
+@pytest.mark.unit
+def test_reverseosmosis_energy_intensity_is_per_permeate():
+    """``energy_intensity`` is per m^3 of permeate, not of feed."""
+    m = dummy_time_block(3)
+    m.unit = ReverseOsmosis(
+        property_package=m.properties,
+        recovery=0.5,
+        energy_intensity=4.0 * pyunits.kWh / pyunits.m**3,
+    )
+    t = m.time_block.time_index.first()
+    m.unit.feed[t].fix(100.0)
+    m.unit.permeate[t].fix(50.0)
+    m.unit.power_electrical[t].fix(200.0)  # 4.0 * permeate, not 4.0 * feed
+
+    assert pyo.value(m.unit.power_electrical_relation[t].body) == pytest.approx(
+        0.0, abs=1e-9
+    )
