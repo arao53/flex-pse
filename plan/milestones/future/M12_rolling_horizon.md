@@ -228,6 +228,35 @@ is never the user-facing cost. Concretely:
   committed-step aggregate-power numpy array). This is the default, user-facing
   number and the comparison metric for the monolithic-vs-rolling check below
   (multi-stage / iterative comparison uses this post-hoc cost — no duals needed).
+  - *Sub-horizon charge scaling (`demand-charges` branch).* A window shorter than
+    the billing period must scale the monthly-assessed charges to its fraction, or
+    summing windows over-bills. This is wired: `report_cost`/`evaluate_cost` pass
+    EECO `demand_scale_factor`/`fixed_scale_factor` (per-horizon proration) plus a
+    `prev_demand_dict` carry so the monthly demand *peak* is not recounted each
+    window.
+  - *Switch the scale factor to EECO's and delete flex-pse's.* Replace
+    `flexops.costing.monthly_scale_factor` with `eeco.costs.get_billing_period_scale_factor`
+    (new in EECO 0.4.0) and **remove** the flex-pse function — a breaking removal of
+    a public, documented symbol, so it needs its own CHANGELOG entry and a
+    `docs/reference/flexops/costing.rst` update. The two are **identical for any
+    horizon inside one calendar month** (every case the current tests cover), so
+    this is safe for today's usage, but they diverge exactly where M12 operates:
+    - `monthly_scale_factor` divides the whole horizon by the *starting* month's
+      length; EECO sums each month's overlap over that month's own length. A
+      Jan 25 -> Feb 5 window scores 0.354839 vs. 0.368664.
+    - `monthly_scale_factor` clamps to `1.0`; EECO does not. A two-month horizon
+      scores 1.0 vs. 2.0 — EECO is right for the *customer* charge (two months
+      genuinely owe two of them), and flex-pse's clamp under-bills.
+    - **Decide the demand-charge policy when you make the switch.** The same
+      factor multiplies the demand charge, and `2 x` the horizon-wide peak is not
+      the true two-month bill (that is month-1 peak + month-2 peak, which is
+      `<=` it). EECO's own `get_charge_df` accepts that over-estimate; record
+      whether flex-pse does, or whether multi-month horizons must be split per
+      billing period.
+    - Signature note: EECO takes `(start_dt, end_dt)` with an **exclusive** end,
+      so the call is
+      `get_billing_period_scale_factor(index[0], index[-1] + Timedelta(hours=dt_hours))`.
+      Dropping the `+ dt_hours` silently loses one timestep.
 - The **raw solver objective is surfaced only behind an explicit debug flag** —
   e.g. `solve_rolling_horizon(..., debug_objective=False)` (implementer's choice
   of flag name/location). When off (the default), `ScheduleResult` does **not**
@@ -314,6 +343,7 @@ All in `src/flexschedule/tests/`. Exactly one tier marker each.
 - [ ] `solve_rolling_horizon` returns a `ScheduleResult` with committed-trajectory DataFrame
 - [ ] `ScheduleResult` reports the EECO post-hoc cost (`reported_cost` via `FlexCosting.report_cost`), never the raw solver objective by default; the objective is surfaced only behind an explicit debug flag (arch §6, R9)
 - [ ] Monolithic-vs-rolling comparison uses the post-hoc EECO cost on both sides (no duals)
+- [ ] `monthly_scale_factor` replaced by `eeco.costs.get_billing_period_scale_factor` and removed from `flexops.costing`; multi-month demand-charge policy recorded
 - [ ] All tests above written, correctly tier-marked; unit tests pass with no solver installed
 - [ ] Integration test (PR CI `integration` job): 7-day windowed vs. monolithic within 2 %
 - [ ] `docs/explanation/relaxation_policies.md` written; flexschedule reference pages build with `sphinx-build -W`

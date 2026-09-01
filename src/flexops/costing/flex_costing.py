@@ -1383,7 +1383,7 @@ class FlexCostingData(FlowsheetCostingBlockData):
         total = priced * quantity_units * dt_hours * pyunits.hr
         return float(pyo.value(pyunits.convert(total, self._currency)))
 
-    def report_cost(self, model) -> CostReport:
+    def report_cost(self, model, *, prev_demand_dict=None) -> CostReport:
         """Return the reported, categorized cost, evaluated **post-solve**.
 
         The user-facing cost (§6 reporting rule; M13 surfaces it). Operating
@@ -1396,6 +1396,10 @@ class FlexCostingData(FlowsheetCostingBlockData):
         Args:
             model: The solved model (accepted for the documented API; the costing
                 block reads its own components).
+            prev_demand_dict: Optional prior-demand carry (M12 rolling horizon) so
+                EECO bills only the demand incremental above the running peak,
+                rather than recounting the peak in every window. ``None`` (default)
+                bills the horizon standalone.
 
         Returns:
             The :class:`CostReport` breakdown, whose ``currency`` names the basis
@@ -1420,6 +1424,7 @@ class FlexCostingData(FlowsheetCostingBlockData):
                 dr_config=self.dr,
                 time_index=tb.datetime_index,
                 prorate=self.config.prorate_monthly_charges,
+                prev_demand_dict=prev_demand_dict,
             )
 
         fuel = 0.0
@@ -1444,6 +1449,7 @@ class FlexCostingData(FlowsheetCostingBlockData):
                     dr_config=self.dr,
                     time_index=tb.datetime_index,
                     prorate=self.config.prorate_monthly_charges,
+                    prev_demand_dict=prev_demand_dict,
                 )
 
         fixed = float(pyo.value(self.opex.fixed_operating_cost))
