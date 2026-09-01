@@ -15,16 +15,16 @@ idaes an optional dependency (see :func:`_idaes_ipopt`).
 """
 
 import dataclasses
-import logging
 import os
 
 import pyomo.environ as pyo
 
 from flexcore.exceptions import FlexSolverError
+from flexcore.logger import get_logger
 from flexcore.solvers.classify import ProblemClass, classify
 from flexcore.solvers.registry import _solver_runtime_env, available_solvers
 
-_log = logging.getLogger(__name__)
+_log = get_logger(__name__)
 
 # Fixed fallback priority (implementer's choice): commercial first, then SCIP
 # (benchmark-preferred over HiGHS for MILP, and the default open-source MINLP
