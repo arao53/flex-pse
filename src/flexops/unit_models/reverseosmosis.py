@@ -27,7 +27,7 @@ class ReverseOsmosisData(SIDOBlockData):
     .. math::
 
         \dot{V}_{perm}[t] &= \text{recovery} \cdot \dot{V}_{feed}[t] \\
-        P_{elec}[t] &= \text{energy\_intensity} \cdot \dot{V}_{feed}[t]
+        P_{elec}[t] &= \text{energy\_intensity} \cdot \dot{V}_{perm}[t]
 
     ``recovery_min``/``recovery_max`` are the recovery Var's bounds, defaulted
     to the seawater-RO window. They bind once the Var is unfixed — by a design
@@ -45,7 +45,7 @@ class ReverseOsmosisData(SIDOBlockData):
         Inherits the SIDO/OpsBlock config with ``split_fraction`` renamed to
         ``recovery`` (default 0.45); adds ``recovery_min`` (0.3),
         ``recovery_max`` (0.6), and ``energy_intensity`` (default
-        3.0 kWh/m^3 of feed).
+        3.0 kWh/m^3 of permeate).
 
     Example:
         >>> from flexops.testing import dummy_time_block
@@ -88,7 +88,7 @@ class ReverseOsmosisData(SIDOBlockData):
         "energy_intensity",
         ConfigValue(
             default=3.0 * pyunits.kWh / pyunits.m**3,
-            description="Electrical energy per unit volume of product "
+            description="Electrical energy per unit volume of permeate "
             "(a fixed, regressable Var once built), kWh/m^3.",
         ),
     )
