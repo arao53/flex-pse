@@ -47,7 +47,6 @@ from the model (via :func:`~flexops.core.registration.iter_io_registry`).
 """
 
 import dataclasses
-import logging
 from collections.abc import Mapping, Sequence, Sized
 from typing import Any
 
@@ -61,6 +60,7 @@ from pyomo.util.check_units import assert_units_consistent, assert_units_equival
 
 from flexcore import nomenclature as nm
 from flexcore.exceptions import FlexConfigError
+from flexcore.logger import get_logger
 from flexops.core.registration import iter_io_registry
 from flexops.costing.opex import (
     EECO_GAS_USAGE_UNITS,
@@ -77,7 +77,7 @@ from flexops.costing.opex import (
     tariff_currency_units,
 )
 
-_log = logging.getLogger(__name__)
+_log = get_logger(__name__)
 
 
 def _is_multi_tariff_source(source) -> bool:
