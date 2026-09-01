@@ -24,14 +24,14 @@ def _con_satisfied(condata, tol: float = 1e-9) -> bool:
 
 @pytest.mark.unit
 def test_startup_delay_blocks_early_start():
-    """Downstream cannot be on until k steps after the upstream unit's status."""
+    """Downstream requires upstream on across the whole trailing k-step window."""
     k = 2
     m = dummy_time_block(6)
     m.up = Pump(property_package=m.properties)
     m.down = Pump(property_package=m.properties)
     up_status = add_status(m.up, m.up.power_electrical, 0.0, 100.0)
     down_status = add_status(m.down, m.down.power_electrical, 0.0, 100.0)
-    add_startup_delay(m.down, m.up, k)
+    add_startup_delay(m.down, m.up, k, initially_on=False)
 
     # Upstream: off for steps 0-2, on from step 3 onward.
     for t, val in enumerate((0, 0, 0, 1, 1, 1)):
@@ -39,22 +39,28 @@ def test_startup_delay_blocks_early_start():
 
     # t < k: down.status[t] == 0 is the only feasible value.
     down_status[0].set_value(0)
-    assert _con_satisfied(m.down.startup_delay[0])
+    assert _con_satisfied(m.down.startup_delay_cold[0])
     down_status[0].set_value(1)
-    assert not _con_satisfied(m.down.startup_delay[0])
+    assert not _con_satisfied(m.down.startup_delay_cold[0])
 
     down_status[1].set_value(0)
-    assert _con_satisfied(m.down.startup_delay[1])
+    assert _con_satisfied(m.down.startup_delay_cold[1])
 
-    # t=2: up.status[t-k] = up.status[0] = 0 -> down cannot be on yet.
+    # t=2: window is up.status[0:2] = [0, 0, 0] -> down cannot be on yet.
     down_status[2].set_value(1)
-    assert not _con_satisfied(m.down.startup_delay[2])
+    assert not all(_con_satisfied(m.down.startup_delay[2, lag]) for lag in range(k + 1))
     down_status[2].set_value(0)
-    assert _con_satisfied(m.down.startup_delay[2])
+    assert all(_con_satisfied(m.down.startup_delay[2, lag]) for lag in range(k + 1))
 
-    # t=5: up.status[t-k] = up.status[3] = 1 -> down may now be on.
+    # t=5: window is up.status[3:5] = [1, 1, 1] -> down may now be on.
     down_status[5].set_value(1)
-    assert _con_satisfied(m.down.startup_delay[5])
+    assert all(_con_satisfied(m.down.startup_delay[5, lag]) for lag in range(k + 1))
+
+    # Upstream restarts inside the window (off at t=4): the whole window must
+    # be on, so a single lag sampling only up.status[3] is not enough to catch
+    # this -- the disaggregated window must block on the failing lag.
+    up_status[4].set_value(0)
+    assert not all(_con_satisfied(m.down.startup_delay[5, lag]) for lag in range(k + 1))
 
 
 @pytest.mark.unit
