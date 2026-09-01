@@ -164,7 +164,9 @@ loggers obtained afterward:
        logging.INFO: True,
    })
 
+   # import additional flex-pse modules here, they will use above defaults
    _log = get_logger(__name__)
+
 
 Available levels (lowest to highest):
 
