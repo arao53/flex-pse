@@ -48,10 +48,10 @@ class FlexPseLogger(logging.Logger):
 logging.setLoggerClass(FlexPseLogger)
 
 
-class DedupHandler(logging.Handler):
+class DedupHandler(logging.StreamHandler):
     def __init__(self, target=None, window=10.0, dedup_enabled=None):
         super().__init__()
-        self.target = target
+        self._target = target
         self.window = window
         source = (
             dedup_enabled if dedup_enabled is not None else get_global_dedup_enabled()
@@ -64,8 +64,10 @@ class DedupHandler(logging.Handler):
     def emit(self, record):
         levelno = record.levelno
         if not self.dedup_enabled.get(levelno, False):
-            if self.target:
-                self.target.handle(record)
+            if self._target is not None:
+                self._target.handle(record)
+            else:
+                super().emit(record)
             return
 
         key = (record.getMessage(), record.pathname, record.lineno, levelno)
@@ -82,8 +84,10 @@ class DedupHandler(logging.Handler):
             self._deque.append((key, now))
             self._map[key] = now
 
-        if self.target:
-            self.target.handle(record)
+        if self._target is not None:
+            self._target.handle(record)
+        else:
+            super().emit(record)
 
 
 def get_logger(name=None, dedup_enabled=None):
@@ -94,17 +98,14 @@ def get_logger(name=None, dedup_enabled=None):
     logger.propagate = False
 
     if not any(isinstance(h, DedupHandler) for h in logger.handlers):
-        stream_handler = logging.StreamHandler()
-        formatter = logging.Formatter(
-            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
-        )
-        stream_handler.setFormatter(formatter)
         effective_dedup = (
             dedup_enabled if dedup_enabled is not None else get_global_dedup_enabled()
         )
-        dedup_handler = DedupHandler(
-            target=stream_handler, dedup_enabled=effective_dedup
+        dedup_handler = DedupHandler(dedup_enabled=effective_dedup)
+        formatter = logging.Formatter(
+            "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
         )
+        dedup_handler.setFormatter(formatter)
         logger.addHandler(dedup_handler)
 
     return logger
