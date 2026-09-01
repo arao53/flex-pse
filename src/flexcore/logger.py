@@ -5,7 +5,7 @@ level, and a deduplicating handler that suppresses repeated messages within a
 sliding time window. Global runtime controls allow the application to adjust the
 minimum log level and dedup behaviour without touching configuration files.
 
-Note: This module was were generated with AI.
+Note: This module was generated with AI assistance.
 """
 
 import logging
@@ -31,7 +31,7 @@ _GLOBAL_DEDUP_ENABLED: dict[int, bool] | None = None
 def get_global_level() -> int:
     """Return the current global minimum log level for flex-pse loggers.
 
-    Note: This module was were generated with AI.
+    Note: This module was generated with AI assistance.
 
     Returns
     -------
@@ -46,7 +46,7 @@ def get_global_level() -> int:
 def set_global_level(level: int) -> None:
     """Set the global minimum log level for subsequently created loggers.
 
-    Note: This module was were generated with AI.
+    Note: This module was generated with AI assistance.
 
     Parameters
     ----------
@@ -62,7 +62,7 @@ def set_global_level(level: int) -> None:
 def get_global_dedup_enabled() -> dict[int, bool]:
     """Return the global dedup configuration, keyed by log level.
 
-    Note: This module was were generated with AI.
+    Note: This module was generated with AI assistance.
 
     Returns
     -------
@@ -81,7 +81,7 @@ def get_global_dedup_enabled() -> dict[int, bool]:
 def set_global_dedup_enabled(dedup_enabled: dict[int, bool]) -> None:
     """Replace the global dedup configuration for subsequently created handlers.
 
-    Note: This module was were generated with AI.
+    Note: This module was generated with AI assistance.
 
     Parameters
     ----------
@@ -97,7 +97,7 @@ def set_global_dedup_enabled(dedup_enabled: dict[int, bool]) -> None:
 class FlexPseLogger(logging.Logger):
     """Project logger class that adds a ``configuration_simplifications`` method.
 
-    Note: This module was were generated with AI.
+    Note: This module was generated with AI assistance.
 
     Registered via ``logging.setLoggerClass`` so that ``logging.getLogger``
     returns an instance of this class when the name matches. The added method
@@ -109,7 +109,7 @@ class FlexPseLogger(logging.Logger):
     def configuration_simplifications(self, msg, *args, **kwargs):
         """Log a message at the ``CONFIGURATION_SIMPLIFICATIONS`` custom level.
 
-        Note: this module was generated with AI assistance.
+        Note: This module was generated with AI assistance.
 
         Parameters
         ----------
@@ -141,7 +141,7 @@ class DedupHandler(logging.StreamHandler):
     def __init__(self, target=None, window=10.0, dedup_enabled=None):
         """Initialise the dedup handler.
 
-        Note: This module was were generated with AI.
+        Note: This module was generated with AI assistance.
 
         Parameters
         ----------
@@ -170,7 +170,7 @@ class DedupHandler(logging.StreamHandler):
     def emit(self, record):
         """Process a log record, emitting it if it is not a recent duplicate.
 
-        Note: This module was were generated with AI.
+        Note: This module was generated with AI assistance.
 
         Parameters
         ----------
@@ -213,7 +213,7 @@ class DedupHandler(logging.StreamHandler):
 def get_logger(name=None, dedup_enabled=None):
     """Return a project logger with a ``DedupHandler`` attached.
 
-    Note: This module was were generated with AI.
+    Note: This module was generated with AI assistance.
 
     The logger is configured with the global log level and a single
     ``DedupHandler``. If the logger already has a ``DedupHandler``, no new
