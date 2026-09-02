@@ -161,6 +161,7 @@ Dependencies are strict unless marked ∥ (parallelizable with the previous one)
 | [M10](plan/milestones/M10_parameterize_core.md) | FlexParameterize core (2-way) | 3 | M09 | Tag aliasing; sufficiency; constant-EI round-trip; `apply_to_model` fixes params + replaces blocks in place |
 | ~~M10b~~ | ~~Multi-dimensional surrogates + multi-component properties~~ — **skipped**, see §4 | — | — | — |
 | [M11](plan/milestones/M11_regressor_protocol.md) | Regressor protocol + linear regression | 1.5 | M10 | Pluggable regressors; fit provenance in emitted configs |
+| [M11b](plan/milestones/M11b_native_nlp_estimation.md) | Native-constraint NLP parameter estimation | 3–4 | M10, M11 (loose) ∥ | `flexparameterize.estimation`: `pyomo.contrib.parmest`-backed fits for a unit's own nonlinear-in-parameter relation (e.g. `Pump`'s hydraulic law) |
 | [M12](plan/milestones/M12_rolling_horizon.md) | FlexSchedule: rolling horizon + solve sequences | 3 | M09 | 7-day windowed solve within 2 % of monolithic |
 | [M13](plan/milestones/M13_setpoints_smoothing.md) | Set-point extraction + smoothing + cost reporting | 1–2 | M12 | Tidy set-point schema; totals-preserving smoothing; reports EECO cost (never the objective) |
 | [M14](plan/milestones/M14_docs_notebooks.md) | Docs completion + example notebooks | 2–3 | M13 | `sphinx-build -W` clean; auto unit-model tables; 3 executed notebooks |
@@ -171,11 +172,14 @@ Dependency sketch:
 
 ```
 M00 ─ M01 ─ M02 ─ M03 ─ M04 ─┐
-  ├─ M05 ────────────────────┼─ M07 ─ M08 ─ M09 ─┬─ M10 ─── M11
+  ├─ M05 ────────────────────┼─ M07 ─ M08 ─ M09 ─┬─ M10 ─── M11 ─── M11b
   └─ M06 ────────────────────┘                   │
                                                   ├─ M12 ─ M13 ─ M14 ─ M15
                                                   └─ M16 (design wrapper)
 ```
+
+M11b is parallelizable with M12–M16 — it extends `flexparameterize` and does
+not touch `flexschedule`/`flexops.design`.
 
 ---
 
