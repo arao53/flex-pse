@@ -16,7 +16,7 @@ Pyomo), which is what lets ``flexops.core.ops_block`` realize a config's
 surrogate at construction time with no ``flexparameterize`` import anywhere in
 ``flexops``.
 
-.. currentmodule:: flexops.surrogates
+.. currentmodule:: flexops.surrogates.surrogates
 
 .. autosummary::
    :toctree: generated
@@ -69,7 +69,8 @@ constant term, read in the declared output units.
 Not yet implemented
 --------------------
 
-Each of these is registered in :data:`~flexops.surrogates.SURROGATES` and
+Each of these is registered in
+:data:`~flexops.surrogates.surrogates.SURROGATES` and
 raises ``NotImplementedError`` at construction, naming
 :class:`~flexops.surrogates.multilinear.MultilinearSurrogate` as the
 implemented alternative.

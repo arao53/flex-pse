@@ -108,7 +108,7 @@ def _surrogate_variables(
 
     ``constant_intensity`` has no surrogate class (see
     :mod:`flexops.surrogates`), so its ``data`` is read directly; every other
-    type is realized through :func:`~flexops.surrogates.surrogate_from_spec`,
+    type is realized through :func:`~flexops.surrogates.surrogates.surrogate_from_spec`,
     which validates it in the same step.
 
     Args:

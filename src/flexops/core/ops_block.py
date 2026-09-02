@@ -915,7 +915,8 @@ class OpsBlockData(UnitModelBlockData):
                 :meth:`register_relation` (e.g. ``"power_electrical_relation"``,
                 ``"split_definition"``).
             surrogate: The :class:`~flexops.surrogates.base.Surrogate` to
-                attach (see :func:`~flexops.surrogates.surrogate_from_spec`).
+                attach (see
+                :func:`~flexops.surrogates.surrogates.surrogate_from_spec`).
 
         Raises:
             FlexConfigError: If ``relation_name`` was never registered, or a
@@ -980,6 +981,7 @@ class OpsBlockData(UnitModelBlockData):
             ),
         )
         record.fitted = self.find_component(fitted_name)
+        assert record.fitted is not None, "Fitted constraint was not added to the unit."
 
     # -- in-place parameter updates (FlexParameterize 2-way, §5) -----------
 

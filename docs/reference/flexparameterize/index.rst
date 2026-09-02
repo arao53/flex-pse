@@ -64,7 +64,7 @@ The FlexParameterize → FlexOps direction of the two-way coupling (decision
 R10): fixes regressed parameters in place and, where the relationship is richer
 than the unit's default constant intensity, realizes the
 :class:`~flexcore.config.schema.SurrogateSpec` as a
-:class:`~flexops.surrogates.base.Surrogate` (:func:`~flexops.surrogates.surrogate_from_spec`)
+:class:`~flexops.surrogates.base.Surrogate` (:func:`~flexops.surrogates.surrogates.surrogate_from_spec`)
 and swaps it in for the unit's ``power_electrical_relation`` Constraint — or
 any other relation the unit registered (see ``surrogates=``) — same unit
 object, same ports and arcs.
