@@ -104,35 +104,11 @@ def test_ramp_both_directions():
 
 
 @pytest.mark.unit
-def test_ramp_initial_value_folds_t0_into_index():
-    """window=1 with initial_value: t=0 is included, bound against the init Param."""
-    m, unit, var = _unit_with_var()
-    tracked, up, _ = add_ramp_rate(
-        var,
-        ramp_up=4.0,
-        ramp_rate_units=_RATE_UNITS,
-        initial_value=0.0,
-        initial_value_units=pyunits.kW,
-    )
-    init_param = unit.find_component("power_electrical_ramp_init")
-
-    assert set(up.index_set()) == set(range(_N))
-    assert init_param in m.time_block.initial_state_params
-
-    tracked[0].set_value(2.0)  # +2 from init (0), exceeds the 1 kW limit
-    assert not _con_satisfied(up[0])
-
-    tracked[0].set_value(1.0)
-    assert _con_satisfied(up[0])
-
-
-@pytest.mark.unit
-def test_ramp_no_initial_value_excludes_t0():
-    """window=1 with no initial_value: t=0 is left out of the ramp index."""
+def test_ramp_excludes_t0():
+    """window=1: t=0 has no predecessor and is left out of the ramp index."""
     m, unit, var = _unit_with_var()
     _, up, _ = add_ramp_rate(var, ramp_up=4.0, ramp_rate_units=_RATE_UNITS)
     assert 0 not in set(up.index_set())
-    assert unit.find_component("power_electrical_ramp_init") is None
 
 
 @pytest.mark.unit
@@ -159,22 +135,6 @@ def test_ramp_window_is_a_net_change_check_not_a_smoothed_step_check():
 
     assert not _con_satisfied(up[3])  # tracked[3]-tracked[0] = 10 kW > 3 kW
     assert _con_satisfied(up[5])  # tracked[5]-tracked[2] = 0 kW, despite the spike
-
-
-@pytest.mark.unit
-def test_ramp_window_ignores_initial_value():
-    """window=w>1 still skips t < w even when initial_value is supplied."""
-    m, unit, var = _unit_with_var()
-    w = 3
-    _, up, _ = add_ramp_rate(
-        var,
-        ramp_up=4.0,
-        ramp_rate_units=_RATE_UNITS,
-        window=w,
-        initial_value=0.0,
-        initial_value_units=pyunits.kW,
-    )
-    assert set(up.index_set()) == {t for t in range(_N) if t >= w}
 
 
 @pytest.mark.unit
@@ -208,14 +168,6 @@ def test_ramp_up_without_units_raises():
     m, unit, var = _unit_with_var()
     with pytest.raises(FlexConfigError):
         add_ramp_rate(var, ramp_up=4.0)
-
-
-@pytest.mark.unit
-def test_ramp_initial_value_without_units_raises():
-    """initial_value given without initial_value_units raises FlexConfigError."""
-    m, unit, var = _unit_with_var()
-    with pytest.raises(FlexConfigError):
-        add_ramp_rate(var, ramp_up=4.0, ramp_rate_units=_RATE_UNITS, initial_value=0.0)
 
 
 @pytest.mark.unit

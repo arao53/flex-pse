@@ -29,8 +29,6 @@ def add_ramp_rate(
     ramp_up: float | None = None,
     ramp_down: float | None = None,
     ramp_rate_units: Any = None,
-    initial_value: float | None = None,
-    initial_value_units: Any = None,
     window: int = 1,
 ) -> tuple[pyo.Var, pyo.Constraint | None, pyo.Constraint | None]:
     """Attach a ramp-rate limit to a time-indexed Var.
@@ -40,20 +38,14 @@ def add_ramp_rate(
     Constraint bounding how much ``<name>`` may change between ``t`` and
     ``t - window``:
 
-    * ``<name>_ramp_up[t]``: ``tracked[t] - previous <= ramp_up *
-      ramp_rate_units * window * dt``.
-    * ``<name>_ramp_down[t]``: ``previous - tracked[t] <= ramp_down *
-      ramp_rate_units * window * dt``.
+    * ``<name>_ramp_up[t]``: ``tracked[t] - tracked[t - window] <= ramp_up
+      * ramp_rate_units * window * dt``.
+    * ``<name>_ramp_down[t]``: ``tracked[t - window] - tracked[t] <=
+      ramp_down * ramp_rate_units * window * dt``.
 
-    At ``window == 1`` (the default), ``previous`` is ``tracked[t - 1]``,
-    or -- when ``initial_value`` is given -- ``tracked[t - 1]`` for ``t >
-    0`` and the ``<name>_init`` Param for ``t == 0``, so the ramp
-    constraint spans every ``t`` (mirroring ``battery.py``'s
-    ``charge_balance``). Without ``initial_value``, ``t = 0`` is skipped
-    (mirroring ``add_startup_shutdown``'s untied ``t = 0``). At ``window >
-    1``, ``previous`` is always ``tracked[t - window]`` and every ``t <
-    window`` is skipped -- a single scalar ``initial_value`` cannot stand
-    in for ``window`` steps of pre-horizon history.
+    Every ``t < window`` is skipped: the horizon carries no pre-horizon
+    history to ramp against (mirroring ``add_startup_shutdown``'s untied
+    ``t = 0``).
 
     Attaching more than one ramp to the same ``var`` (e.g. a fast
     step-to-step check plus a slower windowed one) is allowed, but is more
@@ -70,10 +62,6 @@ def add_ramp_rate(
         ramp_rate_units: Pyomo unit expression (e.g. ``pyunits.kW /
             pyunits.hr``) that ``ramp_up``/``ramp_down`` are given in.
             Required whenever either is given.
-        initial_value: Value of the tracked quantity at ``t = -1``, in
-            ``initial_value_units``. Only meaningful at ``window == 1``.
-        initial_value_units: Pyomo unit expression ``initial_value`` is
-            given in. Required whenever ``initial_value`` is given.
         window: Number of steps the ramp is measured across. Must be
             ``>= 1``.
 
@@ -83,9 +71,8 @@ def add_ramp_rate(
 
     Raises:
         FlexConfigError: If ``window < 1``; if both ``ramp_up`` and
-            ``ramp_down`` are ``None``; if either is negative; if either is
-            given without ``ramp_rate_units``; or if ``initial_value`` is
-            given without ``initial_value_units``.
+            ``ramp_down`` are ``None``; if either is negative; or if either
+            is given without ``ramp_rate_units``.
     """
     if window < 1:
         raise FlexConfigError(
@@ -114,13 +101,6 @@ def add_ramp_rate(
                 field="ramp_rate_units",
                 value=None,
             )
-    if initial_value is not None and initial_value_units is None:
-        raise FlexConfigError(
-            "add_ramp_rate requires initial_value_units when initial_value "
-            "is given.",
-            field="initial_value_units",
-            value=None,
-        )
 
     unit = var.parent_block()
     tb = unit._find_time_block()
@@ -164,35 +144,7 @@ def add_ramp_rate(
         ),
     )
 
-    init_param = None
-    if initial_value is not None:
-        init_native = pyo.value(
-            pyunits.convert(initial_value * initial_value_units, to_units=var_units)
-        )
-        unit.add_component(
-            f"{name}_init",
-            pyo.Param(
-                initialize=init_native,
-                mutable=True,
-                units=var_units,
-                doc=f"Initial value of {name}[t] before the horizon starts "
-                "(rolling-horizon initial state).",
-            ),
-        )
-        init_param = unit.find_component(f"{name}_init")
-        tb.register_initial_state(init_param)
-        unit.register_process_parameter(init_param, regressable=False)
-
-    fold_initial = window == 1 and init_param is not None
-    if fold_initial:
-        ramp_index = list(tb.time_index)
-    else:
-        ramp_index = [t for t in tb.time_index if t >= window]
-
-    def _previous(t):
-        if fold_initial and t == 0:
-            return init_param
-        return tracked[t - window]
+    ramp_index = [t for t in tb.time_index if t >= window]
 
     ramp_up_constraint = None
     if ramp_up is not None:
@@ -201,7 +153,7 @@ def add_ramp_rate(
             limit = pyunits.convert(
                 ramp_up * ramp_rate_units * window * tb.dt, to_units=var_units
             )
-            return tracked[t] - _previous(t) <= limit
+            return tracked[t] - tracked[t - window] <= limit
 
         unit.add_component(
             f"{name}_ramp_up",
@@ -209,7 +161,7 @@ def add_ramp_rate(
                 ramp_index,
                 rule=_ramp_up_rule,
                 doc=f"Ramp-up limit ({window}-step window): {name}[t] - "
-                "previous <= ramp_up * window * dt.",
+                f"{name}[t - {window}] <= ramp_up * window * dt.",
             ),
         )
         ramp_up_constraint = unit.find_component(f"{name}_ramp_up")
@@ -221,15 +173,15 @@ def add_ramp_rate(
             limit = pyunits.convert(
                 ramp_down * ramp_rate_units * window * tb.dt, to_units=var_units
             )
-            return _previous(t) - tracked[t] <= limit
+            return tracked[t - window] - tracked[t] <= limit
 
         unit.add_component(
             f"{name}_ramp_down",
             pyo.Constraint(
                 ramp_index,
                 rule=_ramp_down_rule,
-                doc=f"Ramp-down limit ({window}-step window): previous - "
-                f"{name}[t] <= ramp_down * window * dt.",
+                doc=f"Ramp-down limit ({window}-step window): "
+                f"{name}[t - {window}] - {name}[t] <= ramp_down * window * dt.",
             ),
         )
         ramp_down_constraint = unit.find_component(f"{name}_ramp_down")
