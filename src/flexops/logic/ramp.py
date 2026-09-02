@@ -10,15 +10,15 @@ right-hand side (a windowed average, or a surrogate/composite expression of
 several Vars) without touching the ramp constraints themselves.
 """
 
-import logging
 from typing import Any
 
 import pyomo.environ as pyo
 from pyomo.environ import units as pyunits
 
 from flexcore.exceptions import FlexConfigError
+from flexcore.logger import get_logger
 
-_log = logging.getLogger(__name__)
+_log = get_logger(__name__)
 _RAMP_VARS_ATTR = "_flexops_ramp_vars"
 
 

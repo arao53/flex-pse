@@ -224,7 +224,7 @@ def test_ramp_reuse_on_same_var_logs_warning(caplog):
     m, unit, var = _unit_with_var()
     add_ramp_rate(var, ramp_up=4.0, ramp_rate_units=_RATE_UNITS)
 
-    with caplog.at_level(logging.WARNING):
+    with caplog.at_level(logging.WARNING, logger="flexops.logic.ramp"):
         add_ramp_rate(
             var,
             ramp_up=2.0,
