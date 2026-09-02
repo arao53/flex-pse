@@ -15,19 +15,18 @@ heating load, product out vs. feed in), and product aggregation decides whether
 two plants' streams may be mixed at all.
 """
 
-import logging
-
 import pyomo.environ as pyo
 from idaes.core import declare_process_block_class
 from pyomo.environ import units as pyunits
 
 from flexcore import nomenclature as nm
+from flexcore.logger import get_logger
 from flexops.core.plant_block import PlantBlockData, _AggregatingFlowsheet
 
 EQ_PRODUCT_QUALITY = "eq_product_quality"
 """str: name of the like-quality mixing Constraint, indexed (product, plant, t)."""
 
-_log = logging.getLogger(__name__)
+_log = get_logger(__name__)
 
 
 @declare_process_block_class("NetworkBlock")

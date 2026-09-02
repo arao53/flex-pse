@@ -1,4 +1,4 @@
-"""Customizable unit-commitment layer (M08, architecture §3.5).
+"""Customizable logic constraint layer.
 
 A composable set of optional constraint pieces applied per unit via its
 ``unit_commitment`` config: :func:`add_status` is the base (present whenever a

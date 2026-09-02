@@ -65,15 +65,17 @@ rather than failing:
 """
 
 import enum
-import warnings
 
 import pyomo.environ as pyo
 from idaes.core import declare_process_block_class
 from pyomo.common.config import ConfigValue
 
 from flexcore.exceptions import FlexConfigError
+from flexcore.logger import get_logger
 from flexops.core.ops_block import OpsBlockData
 from flexops.unit_models._multiport import single_flow_phase, validate_port_names
+
+_log = get_logger(__name__)
 
 
 class MixerTemperatureRule(enum.StrEnum):
@@ -189,12 +191,6 @@ class MixerData(OpsBlockData):
         self._build_mass_balance()
         self._build_outlet_state()
 
-    # -- simplification warnings --------------------------------------------
-    # TODO: these two warnings go through the standard library's `warnings`
-    # module because flex-pse has no logging facility of its own yet. Move them
-    # onto the project logging class when it lands (issue #61), so a caller can
-    # silence or route them alongside every other flex-pse diagnostic.
-
     def _warn_if_multicomponent(self) -> None:
         """Warn that a multi-component package's composition is not tracked.
 
@@ -207,14 +203,15 @@ class MixerData(OpsBlockData):
         components = list(self.config.property_package.component_list)
         if len(components) < 2:
             return
-        warnings.warn(
-            f"Mixer {self.name} was built on a property package carrying "
-            f"multiple components ({', '.join(components)}), but it models "
+        _log.configuration_simplifications(
+            "Mixer %s was built on a property package carrying "
+            "multiple components (%s), but it models "
             "simple volumetric mixing only: the balance sums total volumetric "
             "flow and writes no per-component mass balance, so the outlet "
             "composition is not tracked. Use it only where the inlet streams "
             "share one composition.",
-            stacklevel=2,
+            self.name,
+            ", ".join(components),
         )
 
     def _warn_if_gas_blended_at_unequal_temperature(self) -> None:
@@ -231,14 +228,14 @@ class MixerData(OpsBlockData):
         phase = self.config.property_package.get_phase(self._phase)
         if not (phase.is_vapor_phase() and self._blend_temperature):
             return
-        warnings.warn(
-            f"Mixer {self.name} blends a vapor-phase stream under "
+        _log.configuration_simplifications(
+            "Mixer %s blends a vapor-phase stream under "
             "temperature_mixing='flow_weighted', so its inlets may enter at "
             "different temperatures. This unit models simple volumetric "
             "mixing: volume is conserved directly and the equation of state is "
             "not applied, so the mixed volume is only approximate. Use "
             "temperature_mixing='equal' for an exact volumetric balance.",
-            stacklevel=2,
+            self.name,
         )
 
     # -- config resolution --------------------------------------------------

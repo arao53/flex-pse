@@ -29,11 +29,6 @@ class ReverseOsmosisData(SIDOBlockData):
         \dot{V}_{perm}[t] &= \text{recovery} \cdot \dot{V}_{feed}[t] \\
         P_{elec}[t] &= \text{energy\_intensity} \cdot \dot{V}_{perm}[t]
 
-    The draw is metered on **permeate**, not feed: ``energy_intensity`` is the
-    skid's specific energy consumption, the kWh per m^3 of product the
-    desalination industry quotes. At a recovery below one the same number
-    therefore means a smaller absolute draw than a feed-based reading would.
-
     ``recovery_min``/``recovery_max`` are the recovery Var's bounds, defaulted
     to the seawater-RO window. They bind once the Var is unfixed — by a design
     mode or a regression — where they keep the fitted recovery inside what the

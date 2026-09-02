@@ -13,7 +13,33 @@ import pyomo.environ as pyo
 import pytest
 
 from flexcore.exceptions import FlexSolverError
+from flexcore.logger import DedupHandler
 from flexcore.solvers import ProblemClass, SolverFacade, facade, get_solver
+
+
+@pytest.fixture(autouse=True)
+def _reset_facade_logger_dedup():
+    logger = logging.getLogger("flexcore.solvers.facade")
+    for handler in logger.handlers:
+        if isinstance(handler, DedupHandler):
+            handler._deque.clear()
+            handler._map.clear()
+            handler.dedup_enabled[logging.WARNING] = False
+    yield
+    for handler in logger.handlers:
+        if isinstance(handler, DedupHandler):
+            handler._deque.clear()
+            handler._map.clear()
+            handler.dedup_enabled[logging.WARNING] = False
+
+
+class _LogCapture(logging.Handler):
+    def __init__(self):
+        super().__init__()
+        self.records = []
+
+    def emit(self, record):
+        self.records.append(record)
 
 
 @pytest.mark.unit
@@ -37,7 +63,7 @@ def test_minlp_error_mentions_solve_sequence(monkeypatch):
 
 
 @pytest.mark.unit
-def test_prefer_respected_and_fallback(monkeypatch, caplog):
+def test_prefer_respected_and_fallback(monkeypatch):
     available = {
         "cbc": {ProblemClass.LP, ProblemClass.MILP},
         "ipopt": {ProblemClass.NLP},
@@ -50,10 +76,18 @@ def test_prefer_respected_and_fallback(monkeypatch, caplog):
     assert chosen.problem_class is ProblemClass.LP
 
     # prefer is incapable -> fall back to the priority list, log a warning.
-    with caplog.at_level(logging.WARNING, logger="flexcore.solvers.facade"):
+    capture = _LogCapture()
+    logger = logging.getLogger("flexcore.solvers.facade")
+    logger.addHandler(capture)
+    old_level = logger.level
+    logger.setLevel(logging.DEBUG)
+    try:
         fallback = get_solver(problem_class=ProblemClass.LP, prefer="ipopt")
+    finally:
+        logger.removeHandler(capture)
+        logger.setLevel(old_level)
     assert fallback.name == "cbc"
-    assert any("ipopt" in record.getMessage() for record in caplog.records)
+    assert any("ipopt" in record.getMessage() for record in capture.records)
 
 
 @pytest.mark.unit

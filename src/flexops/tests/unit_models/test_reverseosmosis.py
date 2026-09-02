@@ -40,24 +40,6 @@ def test_reverseosmosis_outlet_semantics():
         )
 
 
-@pytest.mark.unit
-def test_reverseosmosis_energy_intensity_is_per_permeate():
-    """RO's specific energy consumption is quoted per m^3 of permeate produced.
-
-    The skid's draw follows the product it makes, not the feed it takes, so at
-    recovery below one the same intensity means a smaller absolute draw than a
-    feed-based reading would.
-    """
-    m = dummy_time_block(3)
-    m.unit = ReverseOsmosis(property_package=m.properties)
-    m.unit.feed[0].set_value(10.0)
-    m.unit.permeate[0].set_value(4.5)
-    m.unit.power_electrical[0].set_value(0.0)
-
-    # power - 3.0 kWh/m^3 * 4.5 m^3/hr == -13.5 kW
-    assert pyo.value(m.unit.power_electrical_relation[0].body) == pytest.approx(-13.5)
-
-
 @pytest.mark.component
 def test_recovery_relation_is_swappable():
     """A richer recovery model replaces the split definition in place.
@@ -179,3 +161,22 @@ def test_reverseosmosis_registers_its_naming_convention_at_build():
         "flow_out_b": "brine",
         "split_fraction": "recovery",
     }
+
+
+@pytest.mark.unit
+def test_reverseosmosis_energy_intensity_is_per_permeate():
+    """``energy_intensity`` is per m^3 of permeate, not of feed."""
+    m = dummy_time_block(3)
+    m.unit = ReverseOsmosis(
+        property_package=m.properties,
+        recovery=0.5,
+        energy_intensity=4.0 * pyunits.kWh / pyunits.m**3,
+    )
+    t = m.time_block.time_index.first()
+    m.unit.feed[t].fix(100.0)
+    m.unit.permeate[t].fix(50.0)
+    m.unit.power_electrical[t].fix(200.0)  # 4.0 * permeate, not 4.0 * feed
+
+    assert pyo.value(m.unit.power_electrical_relation[t].body) == pytest.approx(
+        0.0, abs=1e-9
+    )
