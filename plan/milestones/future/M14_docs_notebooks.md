@@ -1,28 +1,32 @@
 # M14 — Docs completion + example notebooks
 
-**Effort:** 2–3 days · **Depends on:** M13 · **Parallelizable:** no
+**Note:** M12/M13 (FlexSchedule rolling horizon + set-point extraction) and M16
+(`flexops.design`) moved to the 0.2 milestone set (`PLAN.md` §4) before this
+milestone ran. Every mention of them below is historical context from when this
+work order was drafted alongside them — this milestone does **not** document
+`flexschedule` or `flexops.design`, since neither exists yet in 0.1.0.
+
+**Effort:** 2–3 days · **Depends on:** M11b · **Parallelizable:** no
 
 ## Goal
 
 Finish the documentation system: final `conf.py`, the `flexdoc` Sphinx extension
 that generates unit-model Variables/Constraints/DoF tables from built models (so
 docs cannot drift from code), the unit-model autosummary template, a sweep of all
-reference pages onto the generated directives, three executed example notebooks,
+reference pages onto the generated directives, two executed example notebooks,
 and the finalized `docs.yml` workflow. This milestone also lands
 **reference-page + flexdoc coverage for every public surface built in
-M08/M09/M16** — `NetworkBlock`, the SISO/SIDO/DIDO topology bases, the full
-physical unit zoo, the customizable unit-commitment logic modules,
-`flexops.design` (M16), the EECO post-hoc `evaluate_cost`/`report_cost`, and the
-config-driven `build_model` with its JSON config schema. Exit state:
-`sphinx-build -W` is clean in both execution modes and every public unit model
-page renders generated tables.
+M08/M09** — `NetworkBlock`, the SISO/SIDO/DIDO topology bases, the full
+physical unit zoo, the customizable unit-commitment logic modules, the EECO
+post-hoc `evaluate_cost`/`report_cost`, and the config-driven `build_model` with
+its JSON config schema. Exit state: `sphinx-build -W` is clean in both
+execution modes and every public unit model page renders generated tables.
 
 ## Read first
 
 - `plan/03_documentation.md` — ALL of it; this milestone implements §1–§6 to completion
 - `plan/01_architecture.md` §3.2 (IORegistry / registration API — flexdoc's data source), §3.4 (the unit-model table: **every** class needs a reference page — SISO/SIDO/DIDO bases and the physical zoo: Pump, Tank, Separator, Exchanger, ElectrolysisSeparator, ElectrolysisExchanger, ReverseOsmosis, Combustor, BatteryModel, ConstantEnergyIntensityModel)
 - `plan/01_architecture.md` §3.3 (`NetworkBlock`/`PlantBlock` composition — reference pages), §3.5 (the customizable unit-commitment logic modules), §3.6 (`report_cost`/post-hoc EECO evaluation; the reported cost is never the objective — R9), §2.3 (config-driven `build_model` + the JSON config schema)
-- `plan/01_architecture.md` §3.6 (`flexops.design` — the multi-period design wrapper documented in M16)
 - `plan/02_testing_and_ci.md` §3 (docs.yml and nightly.yml specs), §1 (tier markers for the flexdoc unit test)
 - `PLAN.md` §2 (the api_freeze script — notebook 01's source material)
 - `plan/00_conventions.md` §8 (docs summary rules)
@@ -32,11 +36,10 @@ page renders generated tables.
 - `docs/conf.py` — final configuration (see spec)
 - `docs/_ext/flexdoc.py` — `flexops-unit-tables` and `flexops-config-table` directives
 - `docs/_templates/autosummary/unit_model.rst` — per 03 §3
-- `docs/reference/**` — sweep every existing reference page onto the directives; remove TODO markers left by M02–M13; add pages for the SISO/SIDO/DIDO bases, the full physical zoo, `NetworkBlock`, the logic modules, `flexops.design` (§4a), and `FlexCosting.evaluate_cost`/`report_cost`
-- `docs/reference/flexops/design.rst` — new page for `flexops.design` (`DesignModel`, `merge_for_design`), added to the flexops reference index
+- `docs/reference/**` — sweep every existing reference page onto the directives; remove TODO markers left by M02–M11b; add pages for the SISO/SIDO/DIDO bases, the full physical zoo, `NetworkBlock`, the logic modules, and `FlexCosting.evaluate_cost`/`report_cost`
 - `docs/explanation/config_schema.md` — render pydantic models via `flexops-config-table`; document the JSON config schema driving `build_model`
 - `docs/explanation/reported_cost.md` (or a section in `energy_nomenclature.md`) — the reported cost is EECO post-hoc, never the objective (§4b, R9)
-- `examples/01_build_a_plant.ipynb`, `examples/02_parameterize_from_data.ipynb`, `examples/03_rolling_horizon.ipynb`
+- `examples/01_build_a_plant.ipynb`, `examples/02_parameterize_from_data.ipynb`
 - `.github/workflows/docs.yml` — finalize PR + deploy jobs
 - `.github/workflows/nightly.yml` — ensure a notebook-execution step exists (02 §3 requires it; add if missing)
 - `src/flexops/tests/docs/test_flexdoc_tables.py` — unit test for table generation
@@ -140,7 +143,7 @@ page under `docs/reference/` so that:
 - config-schema pages use `flexops-config-table`;
 - `grep -rn "TODO" docs/` returns nothing.
 
-### 4a. Reference coverage for the M08/M09/M16 public surfaces
+### 4a. Reference coverage for the M08/M09 public surfaces
 
 Beyond the unit zoo, add or complete reference pages (autodoc/autosummary; use
 generated directives where a directive fits) for:
@@ -153,12 +156,6 @@ generated directives where a directive fits) for:
   unit-commitment modules — `status`, `startup_shutdown`, `dwell`, `delays`,
   `conditional`, `bypass`, and the model-level `degeneracy` pass (architecture
   §3.5). State which pieces are optional (everything except `status`).
-- **`flexops.design`** (M16): a reference page for `DesignModel` /
-  `merge_for_design` (architecture §3.6) — new page
-  `docs/reference/flexops/design.rst`, added to the flexops reference index. If
-  M16 is not yet merged when M14 runs, stub the page and mark it `TODO(M16)` —
-  but the sweep's "no TODO" rule means M16 must clear it (note the ordering in
-  the PR); prefer landing M16 first (it depends only on M09/M07).
 - **Costing post-hoc evaluation** (`docs/reference/flexops/costing.rst`):
   document `FlexCosting.evaluate_cost`/`report_cost` — the post-solve EECO
   evaluation on the realized aggregate-power numpy array (architecture §3.6).
@@ -177,8 +174,7 @@ must be linkable) stating the reporting rule (architecture §6, decision R9): th
 user-facing electricity cost is always `FlexCosting.report_cost` — EECO evaluated
 post-solve on the realized aggregate-power array — because the in-objective cost
 is a convex-relaxed, possibly scalarized proxy. The raw solver objective is never
-the reported number; it appears only behind an explicit debug flag. Cross-ref the
-M12/M13 `ScheduleResult.reported_cost` / `report_setpoints` surfaces.
+the reported number; it appears only behind an explicit debug flag.
 
 ### 5. Notebooks (`/examples`)
 
@@ -201,10 +197,8 @@ network access; **every notebook ends with an assert cell** on a numeric result
   sufficiency validation → regression → emitted `ModelConfig` → rebuild the
   FlexOps model from the config → assert the rebuilt model's behavior matches
   the fit.
-- `03_rolling_horizon.ipynb` — M12's small case: tank + TOU over 1–2 days,
-  2–4 windows, `SolveSequence.canonical()` or a plain LP sequence,
-  `solve_rolling_horizon`, then `extract_setpoints` + `MinHoldSmoother` (M13);
-  plot committed trajectory across window boundaries; assert committed cost.
+
+A rolling-horizon notebook returns in 0.2 once M12/M13 land.
 
 ### 6. Workflows
 
@@ -237,7 +231,7 @@ nightly within a day even when PR builds hit warm caches).
    slow and flaky. ≤ 2 days at 15 min = ≤ 192 steps; check before committing.
 3. **PR docs CI re-executing unchanged notebooks.** The PR build executes
    notebooks (they gate the merge), but with a warm jupyter-cache only changed
-   notebooks should re-run; if every PR re-executes all three, the CI cache key
+   notebooks should re-run; if every PR re-executes both, the CI cache key
    is wrong.
 4. **`nitpick_ignore` as a dumping ground.** Every ignore is curated + commented.
    If you're ignoring your own project's references, fix the docstring instead.
@@ -250,7 +244,7 @@ nightly within a day even when PR builds hit warm caches).
    allowed here, this milestone says to sweep).
 7. **Notebook outputs committed stale.** With `cache` mode, stale caches hide
    breakage locally; nightly's forced execution is the safety net — make sure
-   the step actually runs all three notebooks.
+   the step actually runs both notebooks.
 8. **Intersphinx flakiness.** Network fetch of inventories can fail in CI; pin
    the URLs and, if flakiness appears, commit local inventory fallbacks
    (implementer's choice — note it in the PR).
@@ -278,7 +272,7 @@ installed-package run):
   `flexcore.config.schema.ModelConfig` include `schema_version` with its
   description.
 
-The PR docs build executes the three notebooks (merge gate); nightly
+The PR docs build executes both notebooks (merge gate); nightly
 re-executes them cache-free as the drift safety net. Their final assert cells
 are the pass/fail criterion in both.
 
@@ -288,9 +282,9 @@ This whole milestone is documentation; specifically also:
 
 - `docs/getting_started/ten_minutes.md` — verify it matches the final
   api_freeze walkthrough and links notebook 01.
-- `docs/how_to/build_a_plant.md`, `parameterize_from_data.md`,
-  `schedule_rolling_horizon.md` — each becomes a thin wrapper pointing at its
-  executed notebook (03 §1).
+- `docs/how_to/build_a_plant.md`, `parameterize_from_data.md` — each becomes a
+  thin wrapper pointing at its executed notebook (03 §1). (`schedule_rolling_horizon.md`
+  returns in 0.2 alongside M12/M13.)
 - `docs/explanation/config_schema.md` — rendered via `flexops-config-table`
   for the whole JSON config tree that drives `build_model` (§2.3): `ModelConfig`,
   `TimeConfig`, `CostingConfig`, `NetworkConfig`/`PlantConfig`, `UnitConfig`,
@@ -304,11 +298,11 @@ This whole milestone is documentation; specifically also:
 - [ ] `docs/conf.py` final: napoleon, autosummary generate, myst_nb, intersphinx (pyomo/idaes/pandas/pydantic), furo, nitpicky + curated ignore list, `NB_EXECUTION_MODE` switch
 - [ ] `flexdoc.py` provides `flexops-unit-tables` and `flexops-config-table`; failures are loud, never empty tables
 - [ ] `_templates/autosummary/unit_model.rst` in place; **every** public unit model renders generated Variables/Constraints/DoF tables — the SISO/SIDO/DIDO bases and the full physical zoo (Pump, Tank, Separator, Exchanger, ElectrolysisSeparator, ElectrolysisExchanger, ReverseOsmosis, Combustor, BatteryModel, ConstantEnergyIntensityModel); no `Electrolyzer` reference anywhere
-- [ ] Reference pages exist for `NetworkBlock` (§3.3), the unit-commitment logic modules (§3.5), `flexops.design` (M16), and `FlexCosting.evaluate_cost`/`report_cost` (§3.6)
+- [ ] Reference pages exist for `NetworkBlock` (§3.3), the unit-commitment logic modules (§3.5), and `FlexCosting.evaluate_cost`/`report_cost` (§3.6)
 - [ ] `build_model` documented and the JSON config schema (`ModelConfig` tree) rendered via `flexops-config-table` (§2.3)
-- [ ] Explanation note: reported cost is EECO post-hoc, never the objective (R9), linkable and cross-referenced from M12/M13 surfaces
+- [ ] Explanation note: reported cost is EECO post-hoc, never the objective (R9), linkable
 - [ ] Reference sweep complete: no hand-written variable tables, `grep -rn TODO docs/` is empty
-- [ ] Three notebooks committed, each ≤ 2-day horizon, fixed seeds, no network, ending in an assert cell; all execute clean
+- [ ] Two notebooks committed, each ≤ 2-day horizon, fixed seeds, no network, ending in an assert cell; both execute clean
 - [ ] `docs.yml` finalized (PR: cached notebook execution ON, required check; main: cached execution + GitHub Pages deploy); nightly cache-free notebook-execution step present
 - [ ] `sphinx-build -W --keep-going` clean in BOTH execution modes — zero warnings
 - [ ] `test_flexdoc_tables.py` unit tests pass

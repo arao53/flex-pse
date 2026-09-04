@@ -1,5 +1,12 @@
 # M15 — Hardening + 0.1.0 release
 
+**Note:** M12/M13 (FlexSchedule: rolling horizon + set-point extraction) and
+M16 (`flexops.design`) moved to the 0.2 milestone set (`PLAN.md` §4) before
+this milestone ran, so 0.1.0 ships `flexops`/`flexparameterize` plus an
+unpopulated `flexschedule` scaffold — no rolling-horizon scheduling and no
+multi-period design wrapper. Every mention of them below is historical
+context from when this work order was drafted alongside them.
+
 **Effort:** 2 days · **Depends on:** M14 · **Parallelizable:** no
 
 ## Goal
@@ -18,7 +25,7 @@ test isolation) so the "splittable monorepo" promise is verified, not assumed.
 
 - `PLAN.md` §2 (what we are building — README source material; the api_freeze script), §4 (post-v0 backlog — release notes link here)
 - `plan/01_architecture.md` §2.3 (R3: versioned schema — JSON canonical, pydantic authority, exported JSON Schema; config-driven `build_model` — the second release-gate path)
-- `plan/01_architecture.md` §3.6 (M16 `flexops.design` — decide "what works" vs. "deferred" in the release notes based on whether M16 merged)
+- `plan/01_architecture.md` §3.6 (`flexops.design`, rolling-horizon scheduling, and set-point extraction all list under "deferred to 0.2" in the release notes — M16/M12/M13 did not merge before 0.1.0)
 - `plan/00_conventions.md` §1 (single distribution `flex-pse`; repo layout), §5 (CHANGELOG: Keep a Changelog, "Unreleased" on top), §6 (import discipline — the split-later insurance this milestone audits)
 - `plan/02_testing_and_ci.md` §3 (PR-CI per-subpackage coverage reporting; ci/nightly/docs workflows — there is no upstream-canary workflow, R12), §4 (coverage policy: "M15 turns on gentle floors")
 - `plan/03_documentation.md` §1 (installation page)
@@ -75,15 +82,15 @@ anywhere else; `docs/conf.py` should read it the same way if it needs one.
 - Write **honest** release notes at the top of the 0.1.0 section: what works
   (build a plant — imperative and config-driven via `build_model`, tariff/DR
   costing with EECO post-hoc reported cost, on/off + dwell + bypass logic,
-  two-way parameterize round-trip + in-place apply, rolling-horizon scheduling,
-  set-point extraction), and what is explicitly deferred — link `PLAN.md` §4
-  (parallel-train replication, scenario sweeps, forecaster interface, etc.).
-- **M16 (design-mode multi-period wrapper, `flexops.design`):** if M16 is merged,
-  list it under "what works" (size across N representative months with
-  equality-linked sizing vars). If M16 is **not** merged at release time, list
-  multi-period design under **deferred** (single-period `set_design_mode` still
-  works; the multi-period wrapper follows) and note it in the notes — do not
-  claim it. Users trust honest notes; do not oversell v0.
+  two-way parameterize round-trip + in-place apply), and what is explicitly
+  deferred to 0.2 or later — link `PLAN.md` §4: rolling-horizon scheduling and
+  set-point extraction (M12/M13 — `flexschedule` ships as an unpopulated
+  scaffold in 0.1.0), the design-mode multi-period wrapper `flexops.design`
+  (M16 — single-period `set_design_mode` still works if it exists by 0.1.0;
+  the multi-period wrapper follows), multi-dimensional surrogates/
+  multi-component properties (M10b), plus the further backlog (parallel-train
+  replication, scenario sweeps, forecaster interface, etc.). Users trust honest
+  notes; do not oversell v0.
 - Surface the changelog in docs as a release-notes page (myst include of
   `CHANGELOG.md` is the smallest mechanism — implementer's choice).
 
