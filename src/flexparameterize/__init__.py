@@ -1,7 +1,7 @@
 """FlexParameterize: parameterize a FlexOps model from tabular plant data.
 
 The pipeline is **tabular data -> tag aliasing -> sufficiency validation ->
-regression -> {apply to model | emit config}** (architecture §5). The two
+regression -> {apply to model | emit config}**. The two
 terminal stages are the two directions of the FlexParameterize <-> FlexOps
 coupling and they agree by construction:
 

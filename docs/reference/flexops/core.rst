@@ -42,7 +42,7 @@ validates and builds its own data — are documented on
 Composition: PlantBlock and NetworkBlock
 ----------------------------------------
 
-Two levels of composition (architecture §3.3, R7): a ``PlantBlock`` is a
+Two levels of composition: a ``PlantBlock`` is a
 collection of **unit** blocks — one facility, holding the arcs between its
 units — and a ``NetworkBlock`` is a composition of **plant** blocks. Both are
 thin ``dynamic=False`` flowsheets whose time domain is the ``TimeBlock``'s
@@ -77,9 +77,9 @@ Config-driven build
 .. currentmodule:: flexops.core.build
 
 ``build_model`` is the single config-driven entry point: one validated
-:class:`~flexcore.config.schema.ModelConfig` yields the whole Pyomo model
-(architecture §2.3, R3). See :doc:`../../how_to/build_a_plant` for the
-imperative and config-driven paths side by side.
+:class:`~flexcore.config.schema.ModelConfig` yields the whole Pyomo model. See
+:doc:`../../how_to/build_a_plant` for the imperative and config-driven paths
+side by side.
 
 .. autofunction:: build_model
 

@@ -19,6 +19,7 @@ design and operations optimization.
    explanation/relaxation_policies
    explanation/config_schema
    explanation/energy_nomenclature
+   explanation/reported_cost
    explanation/pass_through_and_bypass
 
 .. toctree::
@@ -27,6 +28,12 @@ design and operations optimization.
 
    how_to/build_a_plant
    how_to/parameterize_from_data
+
+.. toctree::
+   :maxdepth: 2
+   :caption: Examples
+
+   examples/index
 
 .. toctree::
    :maxdepth: 2

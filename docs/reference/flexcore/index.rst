@@ -10,8 +10,8 @@ Solvers
 .. currentmodule:: flexcore.solvers
 
 The solver layer classifies a model, detects which solvers are installed, and
-selects one — erroring loudly rather than transforming the model (decision R5;
-see :doc:`../../explanation/relaxation_policies`).
+selects one — erroring loudly rather than transforming the model (see
+:doc:`../../explanation/relaxation_policies`).
 
 .. autofunction:: get_solver
 
@@ -54,9 +54,9 @@ Config schema
 
 .. currentmodule:: flexcore.config.schema
 
-The versioned, JSON-canonical config the whole model+run is built from
-(decision R3; see :doc:`../../explanation/config_schema`). Pydantic is the
-schema authority; :data:`CURRENT_SCHEMA_VERSION` tags what this build writes.
+The versioned, JSON-canonical config the whole model+run is built from (see
+:doc:`../../explanation/config_schema`). Pydantic is the schema authority;
+:data:`CURRENT_SCHEMA_VERSION` tags what this build writes.
 
 .. autosummary::
    :toctree: generated

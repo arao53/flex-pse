@@ -110,3 +110,5 @@ m = fo.build_model(load_model_config("api_freeze_config.json"))
 - [Time and dynamics](../explanation/time_and_dynamics.md) — why discrete time.
 - [Energy nomenclature](../explanation/energy_nomenclature.md) —
   `power_electrical` / `power_thermal` and why fuel is a volume.
+- [Examples](../examples/index.md) — solved, interactive walkthroughs built on
+  this API.

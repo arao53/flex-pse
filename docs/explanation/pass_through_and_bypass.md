@@ -32,7 +32,7 @@ relationship:
 Pass-through is **not** a physical stream. It is bookkeeping that copies
 otherwise-ungoverned properties across one unit so the unit closes.
 
-## Bypass — a flow-diversion stream (M08)
+## Bypass — a flow-diversion stream
 
 A **bypass** is a real physical stream: a fraction of a flow routed *around* a
 unit's energy relation instead of through it. `flexops.logic.bypass.add_bypass(unit,
@@ -43,25 +43,29 @@ flow_var, bypass_max)` attaches:
   place of the raw flow;
 - `treated_flow_eq[t]`: `treated_flow[t] == flow_var[t] - bypass_flow[t]`.
 
-This is genuinely different behavior — it changes what the unit processes. In
-v0 it only introduces the `treated_flow` quantity; rewiring Ports/Arcs for a
-physical bypass stream is out of scope (that is the arc layer, below).
+This is genuinely different behavior — it changes what the unit processes.
+`add_bypass` only introduces the `treated_flow` quantity; rewiring Ports/Arcs
+to physically route a stream around a *unit block* is a flowsheet-level
+concern, described next.
 
-## The arc/topology layer (M09, future)
+## The arc/topology layer
 
-Neither of the above connects one unit to another. Flowsheet-level connectivity
-— arcs between unit ports, network conservation, and any plant-scale routing —
-lives in the arc/topology layer introduced in M09. A flowsheet-level bypass
-(diverting a stream around a *unit block* by rewiring arcs) belongs there, not
-in the intra-unit pass-through of this page.
+Neither of the above connects one unit to another. Flowsheet-level
+connectivity — arcs between unit ports, network conservation, and any
+plant-scale routing — lives one level up, in `PlantBlock` (a collection of
+units) and `NetworkBlock` (a collection of plants): see
+{doc}`../reference/flexops/core` for how they compose units and plants over
+standard IDAES/Pyomo `Arc`s. A flowsheet-level bypass (diverting a stream
+around a whole unit block by rewiring arcs, rather than the intra-unit
+`treated_flow` substitution above) belongs there.
 
 ## Summary
 
-| Term | Scope | Builds | Milestone |
-| --- | --- | --- | --- |
-| Pass-through | Within one unit | `pass_through_{name}_eq` (`outlet == inlet`) | M04 (now) |
-| Bypass stream | Around one unit's energy relation | `bypass_flow` / `treated_flow` | M08 |
-| Arc layer | Between units (flowsheet) | Ports/Arcs, conservation | M09 (future) |
+| Term | Scope | Builds |
+| --- | --- | --- |
+| Pass-through | Within one unit | `pass_through_{name}_eq` (`outlet == inlet`) |
+| Bypass stream | Around one unit's energy relation | `bypass_flow` / `treated_flow` |
+| Arc layer | Between units (flowsheet) | Ports/Arcs, conservation |
 
 Reserve **bypass** for the flow-diversion stream; use **pass-through** for the
 intra-unit property copying.

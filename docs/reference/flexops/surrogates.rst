@@ -1,7 +1,7 @@
 flexops.surrogates
 ===================
 
-Predefined surrogate-structure classes (architecture §3.4/§5). A
+Predefined surrogate-structure classes. A
 :class:`~flexcore.config.schema.SurrogateSpec` names one by
 :class:`~flexcore.config.schema.SurrogateType` and carries an opaque ``data``
 mapping for it; the class validates that mapping in ``__init__`` and builds

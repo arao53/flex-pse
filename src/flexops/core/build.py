@@ -1,4 +1,4 @@
-"""build_model: construct a whole flex-pse model from one config (§2.3, R3).
+"""build_model: construct a whole flex-pse model from one config.
 
 The config-driven entry point. A single validated
 :class:`~flexcore.config.schema.ModelConfig` yields the TimeBlock, the property
@@ -82,7 +82,8 @@ def build_model(config) -> pyo.ConcreteModel:
         config: A :class:`~flexcore.config.schema.ModelConfig`, or a path or
             mapping round-tripped through
             :func:`~flexcore.config.io.load_model_config` first (never used
-            raw — conventions §4).
+            raw — anything a user configures must go through the validated
+            schema, not an ad hoc dict).
 
     Returns:
         The constructed ``ConcreteModel``, carrying ``time_block``,

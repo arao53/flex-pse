@@ -1,4 +1,4 @@
-"""Physical unit-model library (architecture §3.4).
+"""Physical unit-model library.
 
 ``__all__`` is the unit-model registry ``UnitConfig.unit_model_class`` resolves
 against, so it lists **only** constructible unit models; the enum-typed config

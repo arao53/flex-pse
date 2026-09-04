@@ -4,16 +4,15 @@ flex-pse is **config-driven**: the entire model and run — the TimeBlock, the
 property package, costing, and the network/plant/unit tree — are built from a
 single version-controlled config artifact. Hand-written Python (like the
 API-freeze script) stays a supported thin path, but nothing essential lives only
-in imperative code: if it can be configured, it is in the file (decision R3,
-`plan/01_architecture.md` §2.3).
+in imperative code: if it can be configured, it is in the file.
 
 ## Pydantic is the authority; JSON is canonical on disk
 
 The schema **authority** is the set of pydantic v2 models in
 `flexcore.config.schema`. They define every field, its type, and its
 one-line description (which renders into these docs), and they reject
-undocumented keys (`extra="forbid"` — an undocumented key does not get to exist,
-conventions §4).
+undocumented keys (`extra="forbid"` — an undocumented key does not get to
+exist).
 
 The **canonical on-disk format is JSON**: it round-trips losslessly, matches
 the exported JSON Schema that external writers validate against, and parses
@@ -61,8 +60,8 @@ down to individual variables:
   {class}`~flexcore.config.schema.DRConfig` container slot), and
   {class}`~flexcore.config.schema.TimeConfig` fill in the leaves.
 
-`flexops.build_model(config)` constructs the whole Pyomo model from a validated
-`ModelConfig` — that function lands in M09.
+`flexops.build_model(config)` constructs the whole Pyomo model from a
+validated `ModelConfig`.
 
 ## How a surrogate describes its function
 
@@ -78,8 +77,8 @@ yet — see {doc}`../reference/flexops/surrogates`).
 The only implemented class, `multilinear`
 ({class}`~flexops.surrogates.multilinear.MultilinearSurrogate`), is a constant
 plus a sum of `coefficient * (product of distinct declared inputs)` — the
-expanded form that covers what an earlier milestone called `linear` (no cross
-terms) and `bilinear` (one cross term). A coefficient key is a
+expanded form that covers a linear relationship (no cross terms) and a
+bilinear one (one cross term) alike. A coefficient key is a
 `*`-separated product of names from `input_variables`, each appearing at most
 once (no `^` exponent, no repeated factor); the reserved key `intercept` is the
 constant term:
@@ -151,4 +150,36 @@ both produce equivalent behavior. Because the schema is versioned and
 serializable, this seam is where the monorepo splits into separate repositories
 later.
 
-<!-- TODO(M14): .. flexops-config-table:: flexcore.config.schema.ModelConfig -->
+## Field reference
+
+```{eval-rst}
+.. flexops-config-table:: flexcore.config.schema.ModelConfig
+```
+
+```{eval-rst}
+.. flexops-config-table:: flexcore.config.schema.TimeConfig
+```
+
+```{eval-rst}
+.. flexops-config-table:: flexcore.config.schema.CostingConfig
+```
+
+```{eval-rst}
+.. flexops-config-table:: flexcore.config.schema.NetworkConfig
+```
+
+```{eval-rst}
+.. flexops-config-table:: flexcore.config.schema.PlantConfig
+```
+
+```{eval-rst}
+.. flexops-config-table:: flexcore.config.schema.UnitConfig
+```
+
+```{eval-rst}
+.. flexops-config-table:: flexcore.config.schema.IOVariableSpec
+```
+
+```{eval-rst}
+.. flexops-config-table:: flexcore.config.schema.SurrogateSpec
+```

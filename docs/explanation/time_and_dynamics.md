@@ -1,4 +1,4 @@
-# Time and dynamics (decision R2)
+# Time and dynamics
 
 flex-pse models time as a **discrete, ordered set of integer indices**, never as
 a continuous DAE. A {py:class}`~flexops.core.time_block.TimeBlock` builds an
@@ -21,7 +21,7 @@ battery state of charge — is written by hand as a *difference equation* agains
 period `t` in terms of the rates sampled at `t`, indexed `t = 1 … N-1`, with the
 initial condition as its own constraint. For tank holdup that is
 `V[t] = V[t-1] + dt * (inflow[t] - outflow[t])`. One direction, applied
-everywhere (conventions §2), so no difference equation in the codebase has to be
+everywhere, so no difference equation in the codebase has to be
 re-derived to be read. This keeps the discrete index arithmetic that unit
 commitment depends on, keeps the model a clean MILP/MINLP for the solver facade
 to classify, and makes the rolling-horizon hooks (`register_initial_state`,
@@ -30,7 +30,7 @@ to classify, and makes the rolling-horizon hooks (`register_initial_state`,
 ## Composition inherits the same time set
 
 Both composition levels — a `PlantBlock` (a collection of **units**) and a
-`NetworkBlock` (a composition of **plants**, R7) — are thin IDAES
+`NetworkBlock` (a composition of **plants**) — are thin IDAES
 `FlowsheetBlockData` subclasses built with `dynamic=False` and the `TimeBlock`'s
 ordered integer `Set` installed as their time domain *by reference*, so
 `plant.time is time_block.time_index`. Nothing in flex-pse ever constructs a
@@ -42,8 +42,7 @@ Both take the TimeBlock **explicitly**:
 m.waterfacility = fo.PlantBlock(time_block=m.time_block)
 ```
 
-This is a deliberate correction to the original slide API, which left the time
-domain implicit (architecture §3.3). Omitting `time_block=` is a documented
+Passing `time_block=` explicitly is deliberate. Omitting it is a documented
 convenience, not the primary path: it works when the model carries exactly one
 `TimeBlock` and raises `FlexConfigError` on zero or several, telling you to name
 the one you meant. A design-mode study composes *several* models, each with its

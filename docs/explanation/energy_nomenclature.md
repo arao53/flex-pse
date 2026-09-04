@@ -11,7 +11,7 @@ becomes an import error rather than a silently-unaggregated variable.
 | {data}`~flexcore.nomenclature.POWER_THERMAL` (`power_thermal[t]`) | unit-level heat/gas-driven duty | kW | separate thermal aggregation/costing |
 | {data}`~flexcore.nomenclature.FUEL_USAGE` (`fuel_usage_<fuel>[t]`) | unit-level combustible-fuel consumption | m³/hr | FlexCosting → EECO's gas leg |
 
-Rules (`plan/00_conventions.md` §2, `plan/01_architecture.md` §4):
+Rules:
 
 - Every unit model registers at least one power draw via
   {meth}`~flexops.core.ops_block.OpsBlockData.register_power` (or creates one

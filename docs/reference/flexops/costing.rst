@@ -9,10 +9,10 @@ EECO integration
 flex-pse does **not** build its own tariff/cost engine. Tariffs, demand
 charges, tiered/fixed charges, and both the optimization-time and
 post-optimization cost computations come from the external **EECO** package
-(``eeco`` on PyPI), a core runtime dependency (architecture §2.4, decisions
-R4/R9). ``flexops.costing.opex`` is the thin flex-pse interface around it —
-and, by convention (decision R12), the **only** module in the codebase that
-imports ``eeco``, so there is one file to fix when EECO's API moves.
+(``eeco`` on PyPI), a core runtime dependency. ``flexops.costing.opex`` is the
+thin flex-pse interface around it — and, by convention, the **only** module in
+the codebase that imports ``eeco``, so there is one file to fix when EECO's
+API moves.
 
 EECO owns all cost math; these wrappers are glue: they marshal inputs, rename
 EECO's outputs to stable flex-pse names, and translate EECO/pandas errors into
@@ -151,7 +151,7 @@ Demand response (containers-only in v0)
 
 .. note::
 
-   Demand response is **containers-only** in v0 (architecture §2.4). A
+   Demand response is **containers-only** in v0. A
    :class:`DRConfig` holds a loaded DR program so the wiring exists, and the
    internal DR hook is a no-op: supplying a DR file never changes the
    objective. Building DR event/curtailment/incentive/capacity constraints is
@@ -165,12 +165,14 @@ EECO is used two ways. :func:`add_operating_cost` asks EECO to build the
 **convex-relaxed** operating-cost ``Expression`` on a Pyomo block — the
 tractable proxy the scheduler minimizes. :func:`evaluate_cost` evaluates EECO on
 a **fixed, realized** aggregate-power numpy array to compute the TRUE
-(de-relaxed) cost — the user-facing bill (§6 reporting rule, R4/R9).
+(de-relaxed) cost — the user-facing bill (see
+:doc:`../../explanation/reported_cost`).
 
 Because the relaxation drops the tiered energy surcharge when no consumption
 estimate is supplied, the in-objective total is a proxy that is **≤ or ≈** the
 post-hoc true bill. The raw solver objective is never reported as the
-user-facing cost.
+user-facing cost — see :doc:`../../explanation/reported_cost` for why that
+distinction matters to a user.
 
 .. admonition:: Timezones / DST
 
@@ -199,7 +201,7 @@ FlexCosting block
    ScalarCostSpec
 
 ``FlexCosting`` subclasses IDAES ``FlowsheetCostingBlockData`` and **delegates
-all tariff/energy operating cost to EECO** (decision R4), in two ways: it hands
+all tariff/energy operating cost to EECO**, in two ways: it hands
 EECO the aggregate electrical power (as a bare kW magnitude, via a dimensionless
 ``opex.eeco_aggregate_electrical_power`` normalization Var) + tariff to build the
 convex-relaxed in-objective cost
@@ -376,11 +378,11 @@ Every cost lives in one of two sub-blocks built by
    :meth:`~FlexCostingData.set_operations_mode` fixes the registered sizing Vars
    and deactivates their capex constraints;
    :meth:`~FlexCostingData.set_design_mode` unfixes and activates them. Both are
-   idempotent single-model toggles; in v0 the sizing registry is empty so they are
-   no-ops (wiring for M08/M16). Merging representative months and linking sizing
-   Vars across them is the M16 design wrapper, not this mode.
+   idempotent single-model toggles; in v0 the sizing registry is empty so they
+   are no-ops. Merging representative months and linking sizing Vars across
+   them is a planned design-mode wrapper, not built yet.
 
-.. note:: **Reporting rule (R9, §6).**
+.. note:: **Reporting rule.**
 
    :meth:`~FlexCostingData.report_cost` returns a categorized :class:`CostReport`
    — capital vs. operating, each itemized — recomputed **post-solve**, never read
@@ -388,7 +390,9 @@ Every cost lives in one of two sub-blocks built by
    and fuel are EECO post-hoc evaluations on the realized dispatch (fuel on the
    realized ``aggregate_fuel_usage``, ``0`` when the model burns none); fixed is
    the config constant. In v0 ``dr_revenue`` and the whole ``capital`` breakdown
-   are zero placeholders, so the structure is stable as those features land.
+   are zero placeholders, so the structure is stable as those features land. See
+   :doc:`../../explanation/reported_cost` for why this number, and not the
+   solver's internal objective, is the one a user should trust.
 
 Construction-order invariant
 ----------------------------
