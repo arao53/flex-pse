@@ -4,9 +4,10 @@ The config-driven entry point. A single validated
 :class:`~flexcore.config.schema.ModelConfig` yields the TimeBlock, the property
 package, the ``FlexCosting`` block, the network/plant/unit tree, its arcs, any
 external dispatch, and the objective — so nothing essential has to live in
-imperative code. ``examples/api_freeze.py`` and
-``examples/api_freeze_config.json`` are the same model built each way, and a
-component test holds them to the same solved objective.
+imperative code. The frozen-API fixtures ``api_freeze.py`` and
+``api_freeze_config.json`` (under ``flexops/tests/fixtures/api_freeze/``) are
+the same model built each way, and a component test holds them to the same
+solved objective.
 
 **Units in a persisted config are data, not code.** A config cannot carry a
 Pyomo expression, so a units-carrying quantity is written as

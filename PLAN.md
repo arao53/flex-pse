@@ -70,8 +70,9 @@ wraps it — flex-pse does not build its own tariff/cost engine.
 ### Target user-facing API (the "API freeze" script)
 
 This script — adapted from the architecture slides — must run top-to-bottom and
-solve by the end of milestone M09. It is checked in as `examples/api_freeze.py`
-and guarded by a component test; any change that breaks it is a breaking change.
+solve by the end of milestone M09. It is checked in as
+`src/flexops/tests/fixtures/api_freeze/api_freeze.py` and guarded by a component
+test; any change that breaks it is a breaking change.
 
 ```python
 import pyomo.environ as pyo
