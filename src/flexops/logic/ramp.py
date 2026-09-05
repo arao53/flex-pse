@@ -1,4 +1,4 @@
-"""Optional UC piece: ramp-rate limiting on a time-indexed Var (M08, §3.5).
+"""Optional UC piece: ramp-rate limiting on a time-indexed Var.
 
 Bounds how fast a continuous process variable may change between time
 points, either step-to-step or as a net change allowed over a multi-step

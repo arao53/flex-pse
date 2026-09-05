@@ -2,7 +2,7 @@ flexops.unit_models
 ====================
 
 Unit models are organized by inlet/outlet topology first (the ``base``
-sub-package), then specialized physically (architecture §3.4, R6). The topology
+sub-package), then specialized physically. The topology
 base owns port construction and the per-stream mass balance; a physical subclass
 adds the flow-to-energy relationship and any bounds. ``Pump`` and ``Tank``
 subclass the single-inlet/single-outlet ``SISOBlock``; a ``Tank`` additionally
@@ -13,10 +13,10 @@ Constraint ``power_electrical_relation`` (``power_thermal_relation`` for a heat
 duty). That name is the swap contract: FlexParameterize upgrades a unit's
 relationship by deactivating exactly that Constraint and attaching a fitted
 replacement, reusing the same registered IO variables — so there is no separate
-regression unit class (R11).
+regression unit class.
 
-**Picking a base when adding a new unit model** (architecture §3.4): ask
-whether every port shares one ``property_package``.
+**Picking a base when adding a new unit model**: ask whether every port
+shares one ``property_package``.
 
 - If so, subclass the topology base matching the port count
   (``SISOBlock``/``SIDOBlock``/``DIDOBlock``). It already owns port
@@ -140,6 +140,23 @@ swap.
    :nosignatures:
 
    Combustor
+
+.. currentmodule:: flexops.unit_models.powergeneration.generic_renewables
+
+Like ``Combustor`` and ``BatteryModel``, this unit has no fluid ports (no
+``property_package``): it turns an exogenous production profile — solar
+irradiance, a wind-speed-derived output curve, or any other precomputed
+capacity-factor series — into an electrical export, scaled by a fixable
+nameplate ``capacity``. Like a discharging ``BatteryModel`` or an exporting
+``Combustor``, the draw is negative (export), and the sign is split from the
+generation-magnitude relation the same way ``Combustor`` splits them.
+
+.. autosummary::
+   :toctree: generated
+   :template: unit_model.rst
+   :nosignatures:
+
+   GenericRenewables
 
 .. currentmodule:: flexops.unit_models.mixer
 

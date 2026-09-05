@@ -5,9 +5,9 @@ single-``property_package`` IO-topology base (``SISOBlock``/``SIDOBlock``/
 ``DIDOBlock``) that hardcodes the liquid phase. A combustor takes an
 **arbitrary number** of fuel sources -- connected via inlet ports, pulled
 from utilities, or both -- burned into one flue-gas outlet, so no fixed-arity
-topology base fits (its port
-count is a config option, §3.4's "choosing a base class" question). It
-subclasses :class:`~flexops.core.ops_block.OpsBlockData` directly instead,
+topology base fits (its port count is a config option, and picking a base
+class asks whether every port shares one property_package -- here they
+don't). It subclasses :class:`~flexops.core.ops_block.OpsBlockData` directly instead,
 hand-writing its ports and balances, the way
 :class:`~flexops.unit_models.storage.battery.BatteryModel` does.
 

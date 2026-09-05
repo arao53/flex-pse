@@ -3,9 +3,7 @@
 This is the frozen public API, end to end: a facility with a storage tank, a
 treatment plant modeled as one energy-intensity surrogate, and a behind-the-meter
 battery, scheduled against a time-of-use tariff for a month at 15-minute
-resolution. It is
-[`examples/api_freeze.py`](https://github.com/arao53/flexPSE/blob/main/examples/api_freeze.py)
-verbatim, plus the solve; a component test runs it on every pull request, so it
+resolution. A component test runs this exact script on every pull request, so it
 cannot drift from the library.
 
 ## 1. Install
@@ -17,8 +15,9 @@ conda activate flex-pse
 
 ## 2. Build the model
 
-Run this from `examples/data/`, which holds the `tariff.json` and
-`dr_events.json` the script loads by name.
+Run this from a directory holding the two data files it loads by name,
+`tariff.json` (a time-of-use price sheet) and `dr_events.json` (a
+demand-response program, which may be empty).
 
 ```python
 import pyomo.environ as pyo
@@ -95,9 +94,8 @@ realized power trajectory post-solve through EECO to get the true bill.
 
 ## 5. Or build the same model from a config
 
-Nothing above has to live in Python. The same model is described by
-[`examples/api_freeze_config.json`](https://github.com/arao53/flexPSE/blob/main/examples/api_freeze_config.json)
-and solves to the same objective:
+Nothing above has to live in Python. The same model can be described by a JSON
+config file, `api_freeze_config.json`, which solves to the same objective:
 
 ```python
 from flexcore.config.io import load_model_config
@@ -112,3 +110,5 @@ m = fo.build_model(load_model_config("api_freeze_config.json"))
 - [Time and dynamics](../explanation/time_and_dynamics.md) — why discrete time.
 - [Energy nomenclature](../explanation/energy_nomenclature.md) —
   `power_electrical` / `power_thermal` and why fuel is a volume.
+- [Examples](../examples/index.md) — solved, interactive walkthroughs built on
+  this API.

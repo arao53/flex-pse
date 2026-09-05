@@ -1,7 +1,7 @@
 flexops.logic
 =============
 
-The composable unit-commitment layer (architecture §3.5): a set of optional
+The composable unit-commitment layer: a set of optional
 constraint pieces applied per unit. :func:`~flexops.logic.status.add_status` is
 the base — present whenever a unit can be shut off — and everything else is
 opt-in. Every name below is re-exported from ``flexops.logic`` itself.
@@ -62,8 +62,8 @@ Parallel trains and degeneracy
 Symmetry among identical parallel trains creates solver-time degeneracy: many
 equal-objective solutions differ only in *which* interchangeable unit is on, or
 in how a shared duty is split between them. A unit cannot see its siblings, so
-this is handled **outside the unit level** (decision R8): the caller declares
-the group, never a unit's own ``build()``.
+this is handled **outside the unit level**: the caller declares the group,
+never a unit's own ``build()``.
 
 The group is listed in priority order and ordered **descending** along that
 list::

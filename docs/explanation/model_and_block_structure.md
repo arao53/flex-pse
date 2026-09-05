@@ -1,4 +1,4 @@
-# Model and block structure (decisions R1, R2)
+# Model and block structure
 
 This page defines, explicitly, how a flex-pse model is assembled from Pyomo/IDAES
 blocks and how variables on those blocks are indexed. Two questions recur when
@@ -11,8 +11,9 @@ reading or writing a unit model, and they have different answers:
 ## The block hierarchy
 
 A flex-pse model is a plain Pyomo `ConcreteModel` (or a `dynamic=False` IDAES
-flowsheet — **never** a `dynamic=True`/Pyomo.DAE flowsheet, decision R2). Onto it
-are placed a small, fixed set of block kinds:
+flowsheet — **never** a `dynamic=True`/Pyomo.DAE flowsheet, see
+{doc}`time_and_dynamics` for why). Onto it are placed a small, fixed set of
+block kinds:
 
 ```
 ConcreteModel
@@ -42,8 +43,8 @@ milestone.
 
 {py:class}`~flexops.core.ops_block.OpsBlockData` inherits IDAES
 `UnitModelBlockData` for its ConfigBlock, Port, and costing-registration
-machinery, but uses **no ControlVolumes** (decision R1): each subclass
-hand-writes its one-to-three balance constraints as difference equations against
+machinery, but uses **no ControlVolumes**: each subclass hand-writes its
+one-to-three balance constraints as difference equations against
 `time_block.dt`. The base provides:
 
 - the power Vars via {meth}`~flexops.core.ops_block.OpsBlockData.declare_power`;

@@ -3,8 +3,7 @@ flexparameterize
 
 Parameterizes a FlexOps model from tabular plant data. The pipeline is
 **tabular data → tag aliasing → sufficiency validation → regression →
-{apply to model | emit config}** (architecture §5); see
-:doc:`../../how_to/parameterize_from_data`.
+{apply to model | emit config}**; see :doc:`../../how_to/parameterize_from_data`.
 
 Any tabular source works — historian export, spreadsheet, CSV, database query.
 Nothing here requires a historian connection; the only requirement is that a
@@ -86,9 +85,9 @@ Applying a fit to a live model
 
 .. currentmodule:: flexparameterize.apply
 
-The FlexParameterize → FlexOps direction of the two-way coupling (decision
-R10): fixes regressed parameters in place and, where the relationship is richer
-than the unit's default constant intensity, realizes the
+The FlexParameterize → FlexOps direction of the two-way coupling: fixes
+regressed parameters in place and, where the relationship is richer than the
+unit's default constant intensity, realizes the
 :class:`~flexcore.config.schema.SurrogateSpec` as a
 :class:`~flexops.surrogates.base.Surrogate` (:func:`~flexops.surrogates.surrogates.surrogate_from_spec`)
 and swaps it in for the unit's ``power_electrical_relation`` Constraint — or
@@ -113,3 +112,26 @@ The serializable direction: the same fit becomes a
 :func:`flexops.core.build.build_model` rebuilds the parameterized model from.
 
 .. autofunction:: emit_model_config
+
+Native-constraint NLP estimation (not yet implemented)
+--------------------------------------------------------
+
+.. currentmodule:: flexparameterize.estimation
+
+A sibling capability to the regression pipeline above, not a replacement for
+it: instead of fitting a regressor against bare tabular columns, this fits
+parameters directly against a unit's own already-built, nonlinear-in-parameter
+constraint (a pump's hydraulic power law, for example) with
+``pyomo.contrib.parmest``. The shape below is reserved; every entry point
+raises ``NotImplementedError`` until it lands.
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   EstimationResult
+   UnitExperiment
+
+.. autofunction:: estimate_parameters
+
+.. autofunction:: commit_estimate

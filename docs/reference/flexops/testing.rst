@@ -3,7 +3,7 @@ flexops.testing
 
 .. currentmodule:: flexops.testing
 
-The public, shipped unit-model test harness (testing plan §2). Every
+The public, shipped unit-model test harness. Every
 unit-model milestone -- and any user writing a custom unit model -- subclasses
 :class:`UnitModelTestHarness` instead of hand-writing the
 build/units-consistency/registration/DoF/solve checks.

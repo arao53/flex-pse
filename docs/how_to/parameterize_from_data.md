@@ -14,7 +14,7 @@ requires a historian connection.
 The starting point is a **built** FlexOps model, because FlexOps is what
 declares the containers: each unit registers its process IO variables and its
 regressable parameters, and FlexParameterize reads that registry to know what
-can be fitted (architecture §1, §5).
+can be fitted.
 
 ## 1. Map the data's columns onto model aliases
 
@@ -153,8 +153,7 @@ carries no tariff of its own.
 
 Both endings consume the same `SurrogateSpec` from the same fit, so the model
 `apply_to_model` mutated and the model rebuilt from the emitted config describe
-the same behaviour (architecture §5, decision R10). That invariant is asserted
-by `test_apply_and_emit_agree`.
+the same behaviour. That invariant is asserted by `test_apply_and_emit_agree`.
 
 ## Supplying a relationship you already know
 
@@ -253,3 +252,9 @@ registered relations. Only a relationship the unit registered via
 registered and so can never be swapped; see
 [the config schema](../explanation/config_schema.md) for which relations each
 unit registers.
+
+## See it running
+
+For worked, solved examples built on the FlexOps models this pipeline
+parameterizes, see the interactive examples at
+[flex-pse.github.io/flex-pse-examples](https://flex-pse.github.io/flex-pse-examples/).

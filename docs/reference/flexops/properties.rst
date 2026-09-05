@@ -3,7 +3,7 @@ flexops.properties
 
 .. currentmodule:: flexops.properties.simple_aqueous
 
-The minimal flow-carrying property packages (§3.7). Ports built from their
+The minimal flow-carrying property packages. Ports built from their
 state blocks carry volumetric flow between units via standard IDAES/Pyomo arcs.
 
 ``SimpleAqueousFlow`` state blocks carry ``flow_vol``, with opt-in

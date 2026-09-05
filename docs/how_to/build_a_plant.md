@@ -6,9 +6,9 @@ costing → plant → units → arcs → `cost_process()` → objective**. Costi
 `cost_process()` time, so it may be constructed while the plant is still empty.
 Plant totals are deferred for the same reason.
 
-The frozen [`examples/api_freeze.py`](https://github.com/arao53/flexPSE/blob/main/examples/api_freeze.py)
-is exactly this sequence and is guarded by a component test: from M09 on, a
-change that breaks it is a breaking change.
+The script below is exactly this sequence, and a component test runs it on
+every pull request: a change that breaks it is a breaking change to the public
+API.
 
 ## The imperative path
 
@@ -168,11 +168,10 @@ temperature and pressure arrive from its own arc and stay independent. Put a
 
 ## The config-driven twin
 
-Nothing essential lives only in imperative code: the same model is built from
-one version-controlled JSON file (architecture §2.3, R3). The config twin of the
-script above is
-[`examples/api_freeze_config.json`](https://github.com/arao53/flexPSE/blob/main/examples/api_freeze_config.json),
-and a component test holds the two to the same solved objective.
+Nothing essential lives only in imperative code: the same model can be built
+from one version-controlled JSON file. The config twin of the script above is
+`api_freeze_config.json`, and a component test holds the two to the same solved
+objective.
 
 ```python
 from flexcore.config.io import load_model_config
@@ -198,7 +197,7 @@ A malformed config raises `FlexConfigError` naming the exact field path (e.g.
 
 ## More than one plant: NetworkBlock
 
-A plant containing plants is a `NetworkBlock`, not a nested `PlantBlock` (R7):
+A plant containing plants is a `NetworkBlock`, not a nested `PlantBlock`:
 `PlantBlock` composes units, `NetworkBlock` composes plants. Its totals are the
 sums of its child plants' totals, so every unit is counted exactly once.
 
@@ -244,3 +243,11 @@ m.campus.add_link(
 
 The network's `total_feed`/`total_product` are the sums of its child plants'
 totals — never a second walk over their units — so nothing is double-counted.
+
+## See it running
+
+For a worked, solved example built on this API — a pump-scheduling facility
+shifting load off-peak, with the resulting schedule plotted against the
+tariff — see the interactive examples at
+[flex-pse.github.io/flex-pse-examples](https://flex-pse.github.io/flex-pse-examples/).
+Each example page opens directly in a browser with no installation.
