@@ -312,6 +312,7 @@
 <li class="toctree-l2"><a class="reference internal" href="../reference/flexops/unit_models/generated/flexops.unit_models.powergeneration.combustor.Combustor.html">flexops.unit_models.powergeneration.combustor.Combustor</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../reference/flexops/unit_models/generated/flexops.unit_models.mixer.Mixer.html">flexops.unit_models.mixer.Mixer</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../reference/flexops/unit_models/generated/flexops.unit_models.splitter.Splitter.html">flexops.unit_models.splitter.Splitter</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../reference/flexops/unit_models/generated/flexops.unit_models.wastewater.digestor.Digestor.html">flexops.unit_models.wastewater.digestor.Digestor</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../reference/flexops/unit_models/generated/flexops.unit_models.feed.Feed.html">flexops.unit_models.feed.Feed</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../reference/flexops/unit_models/generated/flexops.unit_models.product.Product.html">flexops.unit_models.product.Product</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../reference/flexops/unit_models/generated/flexops.unit_models.constant_intensity.ConstantEnergyIntensityModel.html">flexops.unit_models.constant_intensity.ConstantEnergyIntensityModel</a></li>
@@ -322,7 +323,10 @@
 <li class="toctree-l2"><a class="reference internal" href="../reference/flexparameterize/generated/flexparameterize.tags.TagReport.html">TagReport</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../reference/flexparameterize/generated/flexparameterize.validate.SufficiencyReport.html">SufficiencyReport</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../reference/flexparameterize/generated/flexparameterize.validate.IOPairStatus.html">IOPairStatus</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../reference/flexparameterize/generated/flexparameterize.regression.base.Regressor.html">Regressor</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../reference/flexparameterize/generated/flexparameterize.regression.base.FitResult.html">FitResult</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../reference/flexparameterize/generated/flexparameterize.regression.constant.ConstantIntensityRegressor.html">ConstantIntensityRegressor</a></li>
+<li class="toctree-l2"><a class="reference internal" href="../reference/flexparameterize/generated/flexparameterize.regression.linear.LinearRegressor.html">LinearRegressor</a></li>
 <li class="toctree-l2"><a class="reference internal" href="../reference/flexparameterize/generated/flexparameterize.apply.ApplyReport.html">ApplyReport</a></li>
 </ul>
 </li>
@@ -446,7 +450,9 @@ which <strong>always</strong> carries all three state variables (<code class="do
 single <code class="docutils literal notranslate"><span class="pre">Vap</span></code> phase and time, plus <code class="docutils literal notranslate"><span class="pre">pressure</span></code>/<code class="docutils literal notranslate"><span class="pre">temperature</span></code>) because a gas
 stream’s conditions always matter (no equation of state is
 imposed; a unit adds any relation it needs as its own constraint). Its first
-consumer is <a class="reference internal" href="../reference/flexops/unit_models/generated/flexops.unit_models.powergeneration.combustor.Combustor.html#flexops.unit_models.powergeneration.combustor.Combustor" title="flexops.unit_models.powergeneration.combustor.Combustor"><code class="xref py py-class docutils literal notranslate"><span class="pre">Combustor</span></code></a>, so the
+consumer is <a class="reference internal" href="../reference/flexops/unit_models/generated/flexops.unit_models.powergeneration.combustor.Combustor.html#flexops.unit_models.powergeneration.combustor.Combustor" title="flexops.unit_models.powergeneration.combustor.Combustor"><code class="xref py py-class docutils literal notranslate"><span class="pre">Combustor</span></code></a>
+– N fuel sources (inlet ports and/or utility fuel names) burned into one
+flue-gas outlet, exporting power – so the
 extensive/intensive table below is live rather than hypothetical.</p></li>
 </ul>
 <p>Ports built from state blocks carry a stream between units via standard

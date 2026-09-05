@@ -3,10 +3,10 @@
   <head><meta charset="utf-8">
     <meta name="viewport" content="width=device-width,initial-scale=1">
     <meta name="color-scheme" content="light dark"><meta name="viewport" content="width=device-width, initial-scale=1" />
-<link rel="index" title="Index" href="../../../../genindex.html"><link rel="search" title="Search" href="../../../../search.html"><link rel="next" title="flexops.unit_models.base.sido.SIDOBlock" href="flexops.unit_models.base.sido.SIDOBlock.html"><link rel="prev" title="flexops.unit_models" href="../index.html">
+<link rel="index" title="Index" href="../../../../genindex.html"><link rel="search" title="Search" href="../../../../search.html"><link rel="next" title="flexops.unit_models.feed.Feed" href="flexops.unit_models.feed.Feed.html"><link rel="prev" title="flexops.unit_models.splitter.Splitter" href="flexops.unit_models.splitter.Splitter.html">
 
     <!-- Generated with Sphinx 9.1.0 and Furo 2025.12.19 -->
-        <title>flexops.unit_models.base.siso.SISOBlock - flex-pse documentation</title>
+        <title>flexops.unit_models.wastewater.digestor.Digestor - flex-pse documentation</title>
       <link rel="stylesheet" type="text/css" href="../../../../_static/pygments.css?v=d111a655" />
     <link rel="stylesheet" type="text/css" href="../../../../_static/styles/furo.css?v=7bdb33bb" />
     <link rel="stylesheet" type="text/css" href="../../../../_static/mystnb.11b39860a7a0cbfd473a3ad8a317855267ff0bd372690045ca344a6b62be495e.css" />
@@ -301,7 +301,7 @@
 </ul>
 </li>
 <li class="toctree-l1 current has-children"><a class="reference internal" href="../index.html">flexops.unit_models</a><input aria-label="Toggle navigation of flexops.unit_models" checked="" class="toctree-checkbox" id="toctree-checkbox-7" name="toctree-checkbox-7" role="switch" type="checkbox"/><label for="toctree-checkbox-7"><span class="icon"><svg><use href="#svg-arrow-right"></use></svg></span></label><ul class="current">
-<li class="toctree-l2 current current-page"><a class="current reference internal" href="#">flexops.unit_models.base.siso.SISOBlock</a></li>
+<li class="toctree-l2"><a class="reference internal" href="flexops.unit_models.base.siso.SISOBlock.html">flexops.unit_models.base.siso.SISOBlock</a></li>
 <li class="toctree-l2"><a class="reference internal" href="flexops.unit_models.base.sido.SIDOBlock.html">flexops.unit_models.base.sido.SIDOBlock</a></li>
 <li class="toctree-l2"><a class="reference internal" href="flexops.unit_models.base.dido.DIDOBlock.html">flexops.unit_models.base.dido.DIDOBlock</a></li>
 <li class="toctree-l2"><a class="reference internal" href="flexops.unit_models.pump.Pump.html">flexops.unit_models.pump.Pump</a></li>
@@ -312,7 +312,7 @@
 <li class="toctree-l2"><a class="reference internal" href="flexops.unit_models.powergeneration.combustor.Combustor.html">flexops.unit_models.powergeneration.combustor.Combustor</a></li>
 <li class="toctree-l2"><a class="reference internal" href="flexops.unit_models.mixer.Mixer.html">flexops.unit_models.mixer.Mixer</a></li>
 <li class="toctree-l2"><a class="reference internal" href="flexops.unit_models.splitter.Splitter.html">flexops.unit_models.splitter.Splitter</a></li>
-<li class="toctree-l2"><a class="reference internal" href="flexops.unit_models.wastewater.digestor.Digestor.html">flexops.unit_models.wastewater.digestor.Digestor</a></li>
+<li class="toctree-l2 current current-page"><a class="current reference internal" href="#">flexops.unit_models.wastewater.digestor.Digestor</a></li>
 <li class="toctree-l2"><a class="reference internal" href="flexops.unit_models.feed.Feed.html">flexops.unit_models.feed.Feed</a></li>
 <li class="toctree-l2"><a class="reference internal" href="flexops.unit_models.product.Product.html">flexops.unit_models.product.Product</a></li>
 <li class="toctree-l2"><a class="reference internal" href="flexops.unit_models.constant_intensity.ConstantEnergyIntensityModel.html">flexops.unit_models.constant_intensity.ConstantEnergyIntensityModel</a></li>
@@ -351,7 +351,7 @@
         </a>
         <div class="content-icon-container">
           <div class="view-this-page">
-  <a class="muted-link" href="../../../../_sources/reference/flexops/unit_models/generated/flexops.unit_models.base.siso.SISOBlock.rst.txt" title="View this page">
+  <a class="muted-link" href="../../../../_sources/reference/flexops/unit_models/generated/flexops.unit_models.wastewater.digestor.Digestor.rst.txt" title="View this page">
     <svg><use href="#svg-eye"></use></svg>
     <span class="visually-hidden">View this page</span>
   </a>
@@ -369,11 +369,11 @@
           </label>
         </div>
         <article role="main" id="furo-main-content">
-          <section id="flexops-unit-models-base-siso-sisoblock">
-<h1>flexops.unit_models.base.siso.SISOBlock<a class="headerlink" href="#flexops-unit-models-base-siso-sisoblock" title="Link to this heading">¶</a></h1>
+          <section id="flexops-unit-models-wastewater-digestor-digestor">
+<h1>flexops.unit_models.wastewater.digestor.Digestor<a class="headerlink" href="#flexops-unit-models-wastewater-digestor-digestor" title="Link to this heading">¶</a></h1>
 <dl class="py class">
-<dt class="sig sig-object py" id="flexops.unit_models.base.siso.SISOBlock">
-<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">flexops.unit_models.base.siso.</span></span><span class="sig-name descname"><span class="pre">SISOBlock</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwds</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#flexops.unit_models.base.siso.SISOBlock" title="Link to this definition">¶</a></dt>
+<dt class="sig sig-object py" id="flexops.unit_models.wastewater.digestor.Digestor">
+<span class="property"><span class="k"><span class="pre">class</span></span><span class="w"> </span></span><span class="sig-prename descclassname"><span class="pre">flexops.unit_models.wastewater.digestor.</span></span><span class="sig-name descname"><span class="pre">Digestor</span></span><span class="sig-paren">(</span><em class="sig-param"><span class="o"><span class="pre">*</span></span><span class="n"><span class="pre">args</span></span></em>, <em class="sig-param"><span class="o"><span class="pre">**</span></span><span class="n"><span class="pre">kwds</span></span></em><span class="sig-paren">)</span><a class="headerlink" href="#flexops.unit_models.wastewater.digestor.Digestor" title="Link to this definition">¶</a></dt>
 <dd><dl class="field-list simple">
 <dt class="field-odd">Parameters<span class="colon">:</span></dt>
 <dd class="field-odd"><ul class="simple">
@@ -420,6 +420,35 @@ register_power forwards the unit’s power draw to it. None
 for standalone units; the forwarding is strictly
 conditional.</p>
 </dd>
+<dt>inlet_packages</dt><dd><p>Mapping of inlet name to its property package. Each key
+becomes one inlet port named f’inlet_{key}’; every value
+must be a single-phase property package.</p>
+</dd>
+<dt>biogas_fraction</dt><dd><p>Fraction of total inlet volume converted to biogas
+(dimensionless, a fixed, regressable Var once built, in
+(0, 1)).</p>
+</dd>
+<dt>has_sludge_outlet</dt><dd><p>Whether the digester exposes a treated-sludge outlet. When
+False, only the biogas outlet is built and the mass
+balance reduces to biogas_volume == biogas_fraction *
+total_inlet.</p>
+</dd>
+<dt>biogas_property_package</dt><dd><p>Property package for the biogas outlet. Defaults to a
+plain SimpleGasFlow() when None.</p>
+</dd>
+<dt>sludge_property_package</dt><dd><p>Property package for the treated-sludge outlet. Defaults
+to a plain SimpleAqueousFlow() when None. Required when
+has_sludge_outlet is True.</p>
+</dd>
+<dt>operating_temperature</dt><dd><p>Reactor operating temperature (K). Defaults to 15.55 C
+(288.706 K), the standard condition for SCFM measurement.
+Fixed at construction and passed through to the biogas
+outlet.</p>
+</dd>
+<dt>operating_pressure</dt><dd><p>Reactor operating pressure (Pa). Defaults to 1 bar (101325
+Pa), the standard condition for SCFM measurement. Fixed at
+construction and passed through to the biogas outlet.</p>
+</dd>
 </dl>
 </div></blockquote>
 </p></li>
@@ -433,7 +462,7 @@ BlockData index exactly to the index in initialize.</p></li>
 </ul>
 </dd>
 <dt class="field-even">Returns<span class="colon">:</span></dt>
-<dd class="field-even"><p>(SISOBlock) New instance</p>
+<dd class="field-even"><p>(Digestor) New instance</p>
 </dd>
 </dl>
 </dd></dl>
@@ -445,23 +474,23 @@ BlockData index exactly to the index in initialize.</p></li>
       <footer>
         
         <div class="related-pages">
-          <a class="next-page" href="flexops.unit_models.base.sido.SIDOBlock.html">
+          <a class="next-page" href="flexops.unit_models.feed.Feed.html">
               <div class="page-info">
                 <div class="context">
                   <span>Next</span>
                 </div>
-                <div class="title">flexops.unit_models.base.sido.SIDOBlock</div>
+                <div class="title">flexops.unit_models.feed.Feed</div>
               </div>
               <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
             </a>
-          <a class="prev-page" href="../index.html">
+          <a class="prev-page" href="flexops.unit_models.splitter.Splitter.html">
               <svg class="furo-related-icon"><use href="#svg-arrow-right"></use></svg>
               <div class="page-info">
                 <div class="context">
                   <span>Previous</span>
                 </div>
                 
-                <div class="title">flexops.unit_models</div>
+                <div class="title">flexops.unit_models.splitter.Splitter</div>
                 
               </div>
             </a>
@@ -495,8 +524,8 @@ BlockData index exactly to the index in initialize.</p></li>
         <div class="toc-tree-container">
           <div class="toc-tree">
             <ul>
-<li><a class="reference internal" href="#">flexops.unit_models.base.siso.SISOBlock</a><ul>
-<li><a class="reference internal" href="#flexops.unit_models.base.siso.SISOBlock"><code class="docutils literal notranslate"><span class="pre">SISOBlock</span></code></a></li>
+<li><a class="reference internal" href="#">flexops.unit_models.wastewater.digestor.Digestor</a><ul>
+<li><a class="reference internal" href="#flexops.unit_models.wastewater.digestor.Digestor"><code class="docutils literal notranslate"><span class="pre">Digestor</span></code></a></li>
 </ul>
 </li>
 </ul>
