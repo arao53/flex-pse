@@ -1,3 +1,10 @@
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/_static/logo/flex-pse-horizontal-dark.png">
+    <img src="docs/_static/logo/flex-pse-horizontal-light.png" alt="flex-pse" width="480">
+  </picture>
+</p>
+
 # flex-pse
 
 [![CI](https://github.com/flex-pse/flex-pse/actions/workflows/ci.yml/badge.svg)](https://github.com/flex-pse/flex-pse/actions/workflows/ci.yml)
