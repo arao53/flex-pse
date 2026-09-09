@@ -1,8 +1,6 @@
-<p align="center">
+<p align="left">
   <img src="docs/_static/logo/flex-pse-horizontal-light.png" alt="flex-pse" width="480">
 </p>
-
-# flex-pse
 
 [![CI](https://github.com/flex-pse/flex-pse/actions/workflows/ci.yml/badge.svg)](https://github.com/flex-pse/flex-pse/actions/workflows/ci.yml)
 [![codecov](https://codecov.io/gh/flex-pse/flex-pse/graph/badge.svg)](https://codecov.io/gh/flex-pse/flex-pse)
