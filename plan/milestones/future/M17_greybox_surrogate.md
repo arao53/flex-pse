@@ -42,6 +42,23 @@ implementation starts, not assumed:
    has nothing useful to add for a capability that only ever needs one
    specific NLP solver. This milestone follows the same pattern for CyIpopt
    rather than teaching the facade a new problem class (see Open Question 2).
+4. **v1 implements derivatives via automatic differentiation (PyTorch
+   `autograd`), not finite-difference perturbation — this is a reversal from
+   the prototype and narrows the milestone's scope.** Decided during
+   planning: autograd is exact (no step-size tuning, no truncation error —
+   see Pitfall 3, which finite-difference would have reintroduced) and
+   materially cheaper (one backward pass per Jacobian vs. `2H` forward
+   evaluations). The cost is that it only works for a callable implemented
+   in an autodiff-capable framework — it cannot differentiate through a
+   truly opaque callable (a compiled binary, a bare REST call, a legacy
+   Fortran simulator). **Finite-difference perturbation — the fallback that
+   would handle those — is deliberately not implemented in v1**, following
+   this repo's existing convention for a named-but-not-yet-built option
+   (`NeuralNetworkSurrogate`'s `_validate` raises `NotImplementedError`
+   naming the implemented alternative; see Specification §2/§3). This also
+   narrows the Goal below: v1 does not actually cover "an arbitrary black-box
+   callable that may not even be a neural network" — it covers a callable
+   built in an autodiff framework, with the fully-opaque case deferred.
 
 ## Prototype (informal, not part of this repo)
 
@@ -67,15 +84,31 @@ solve strategies were confirmed to converge to the identical optimum:
 
 **The prototype is a materially harder problem than this milestone's v1** —
 see Specification §1 for why, and why v1 deliberately does not attempt it.
+The prototype also used finite-difference perturbation throughout; **v1
+implements autograd-based differentiation instead** (Update note item 4,
+Specification §2/§3) — the prototype validated the CyIpopt wiring and the
+lower-triangular-Hessian/block-diagonal mechanics, not the differentiation
+strategy this milestone actually ships first.
 
 ## Goal
 
-Give `flexops.surrogates` a class that can wrap an arbitrary black-box
-Python callable (a proprietary/legacy simulator, a network call to a hosted
-model, a foundation model with no analytic form) as a unit's registered
-relation, with derivatives obtained by finite-difference perturbation rather
-than requiring the callable to be autodiff-able or even differentiable in
-closed form.
+Give `flexops.surrogates` a class that can wrap a black-box Python callable
+with no closed-form Pyomo expression (a foundation model, a network call to a
+hosted model, any callable with no analytic derivative flex-pse could embed
+directly) as a unit's registered relation, with derivatives obtained by
+automatic differentiation rather than requiring the caller to hand-derive
+them or embed the callable's internals as Pyomo expressions.
+
+**v1 requires the wrapped callable to be implemented in an autodiff-capable
+framework (PyTorch — see Specification §2 for why this is the one framework
+v1 commits to).** It does not (yet) cover a *truly* opaque callable — a
+compiled binary, a bare REST call, a legacy simulator with no Python-visible
+computational graph — the way the word "black-box" might suggest; that case
+needs finite-difference perturbation, which v1 deliberately does not
+implement (Update note item 4). Concretely, v1 does cover exactly the
+motivating case from the prototype (a PyTorch-based forecaster like
+`theforecastingcompany/t0-alpha`), just not literally "any callable
+whatsoever."
 
 **This is a different, harder capability than PLAN.md §4.2's "External
 forecaster interface" backlog item — do not conflate the two.** That item is
@@ -99,10 +132,12 @@ This is also **not** a replacement for `NeuralNetworkSurrogate` (reserved for a
 literal trained network's weights embedded as a white-box Pyomo
 formulation — e.g. an OMLT big-M ReLU or ICNN encoding, fully
 ASL/ipopt-solvable, no grey box needed). This milestone's surrogate treats
-the callable as **opaque** — it may not even be a neural network — and pays
-for that generality with a mandatory CyIpopt-only solve path. Keeping them
-as two separate `SurrogateType` members avoids overloading one class with
-two structurally different solve requirements.
+the callable as **opaque to Pyomo** — it is never translated into Pyomo
+expressions, no matter how it computes its output — while still requiring it
+be a PyTorch computational graph underneath, and pays for that with a
+mandatory CyIpopt-only solve path. Keeping them as two separate
+`SurrogateType` members avoids overloading one class with two structurally
+different solve requirements.
 
 ## Open questions (resolve before/at milestone kickoff, not assumed here)
 
@@ -141,7 +176,26 @@ two structurally different solve requirements.
    the whole horizon (v1's block-diagonal structure, §1, makes either
    equally correct — only the call count differs) is an implementation
    choice to make against whatever the referenced callable actually supports,
-   not a fixed requirement here.
+   not a fixed requirement here. Autograd makes the batched case genuinely
+   attractive (`torch.func.vmap` + `jacrev`/`hessian` over the batch
+   dimension can produce the whole block-diagonal Jacobian/Hessian in one
+   vectorized pass rather than `H` separate backward calls) — worth
+   benchmarking against the simple per-`t` loop before committing, not
+   assumed to be worth the added complexity here.
+5. **Is PyTorch really the one framework v1 commits to, or should the
+   `predict_callable` contract be framework-agnostic (torch, JAX, either)?**
+   Recommendation: commit to PyTorch only for v1 — it is what
+   `theforecastingcompany/t0-alpha` (`tfc-t0`) actually ships, supporting
+   both means either an abstraction layer over two autodiff APIs (real
+   complexity for a hypothetical second framework, against conventions'
+   "no code for hypothetical requirements") or a second surrogate class.
+   Revisit if a concrete JAX-based use case shows up.
+6. **Does the real t0-alpha forward pass actually stay differentiable
+   end-to-end through `future_covariates`?** Not yet verified against the
+   real package (the prototype used a synthetic stand-in). A quantile/median
+   computed via `torch.quantile` is differentiable, but worth an explicit
+   spike against the real weights before implementation — see Pitfall 4 for
+   why a silent break here is worse than a crash.
 
 ## Specification
 
@@ -162,12 +216,25 @@ callable instead of a closed-form expression. Because output at time `t`
 depends only on inputs at time `t`, the grey box's Jacobian and Hessian
 (across the whole `ExternalGreyBoxBlock`, sized for the full time horizon so
 only one block is attached per relation) are **block-diagonal**: perturbation
-cost is `O(H)` calls for the Jacobian and `O(H)` for the Hessian (one
-second-derivative probe per time index), not the prototype's `O(H²)` — a
-much better story for a real neural forecaster where each call may be
+cost is `O(H)` backward passes for the Jacobian and `O(H)` for the Hessian
+(one second-derivative probe per time index), not the prototype's `O(H²)` —
+a much better story for a real neural forecaster where each call may be
 expensive. A future milestone can generalize to cross-time coupling once a
 concrete use case needs it; do not build it speculatively here (conventions:
 no code for hypothetical requirements).
+
+Note the scoping rationale above was written against finite-difference cost
+(`O(H²)` calls for a dense Hessian). Autograd changes that calculus:
+`torch.autograd.functional.jacobian`/`hessian` (or `vmap`+`jacrev`, Open
+Question 4) can produce the *full, dense* cross-time-coupled Jacobian/Hessian
+in roughly the same order of backward passes as the block-diagonal case,
+since PyTorch does not care whether the underlying computation happens to be
+block-diagonal. This weakens, but does not remove, the cost argument for
+staying static in v1 — the scope restriction is kept here regardless,
+because the harder capability is still a distinct piece of product design
+(an autoregressive, context-carrying surrogate, not just "a bigger
+Jacobian"), not because autograd could not compute the derivatives. Flagged
+for reconsideration alongside Open Question 4, not decided here.
 
 ### 2. `SurrogateSpec.data` contract
 
@@ -177,15 +244,26 @@ no code for hypothetical requirements).
     "predict_kwargs": {"model_name": "theforecastingcompany/t0-alpha"},  # opaque, passed to the callable once at build time (e.g. to load/cache weights)
     "input_variables": {"flow_in": "m^3/hr", "ambient_temperature": "degK"},
     "output_variables": {"fouling_rate": "1/hr"},  # exactly one entry, same constraint as MultilinearSurrogate
-    "fd_eps": 0.05,       # optional, default TBD by implementer benchmarking
-    "hessian": "finite_difference",  # or "none" -- see Pitfall 3
+    "differentiation": "autograd",  # the only implemented value in v1; "finite_difference" is reserved (see below)
 }
 ```
 
 `predict_callable` resolves (via `importlib.import_module` +
 `getattr`/dotted traversal) to a callable of signature
-`f(inputs: dict[str, float], **predict_kwargs) -> float`, called once per
-time index with that index's resolved, unit-converted input values.
+`f(inputs: dict[str, torch.Tensor], **predict_kwargs) -> torch.Tensor`,
+called once per time index with that index's resolved, unit-converted input
+values wrapped as scalar tensors with `requires_grad=True`. **PyTorch is the
+one framework v1 commits to** (Open Question 5) — `predict_callable` must be
+built from differentiable `torch` operations throughout, not merely "any
+Python callable returning a float" as an earlier draft of this document
+described.
+
+`"differentiation": "finite_difference"` is accepted by the schema (so the
+field exists and a future milestone can implement it without a schema
+migration) but `_validate()` raises `NotImplementedError` naming
+`"autograd"` as the implemented alternative — the same idiom
+`NeuralNetworkSurrogate`/`ArimaSurrogate` already use for a reserved-but-
+unbuilt option. Omitting the key defaults to `"autograd"`.
 
 ### 3. New class: `flexops/surrogates/grey_box.py`
 
@@ -211,15 +289,34 @@ class ExternalModelSurrogate(Surrogate):
 ```
 
 The `ExternalGreyBoxModel` adapter (private to this module, not part of the
-public `Surrogate` API) does the FD Jacobian/Hessian exactly as the
-prototype did, generalized to the block-diagonal, per-time-index structure
-in §1: `evaluate_jacobian_outputs` perturbs only input `t` to get
-`d(output_t)/d(input_t)`, zero elsewhere; `evaluate_hessian_outputs` uses the
-weighted-sum-of-outputs contract (`set_output_constraint_multipliers`) —
-required here (unlike the prototype's simpler objective-only CyIpopt path)
-because each output feeds its own separate `target[t] == output[t]`
-constraint, not a single scalar objective — but reduces to one independent
-scalar second derivative per time index, not a dense matrix.
+public `Surrogate` API) computes derivatives via `torch.autograd`, not the
+prototype's finite differences, generalized to the block-diagonal,
+per-time-index structure in §1:
+
+- `evaluate_outputs`: for each time index `t`, call `predict_callable` on
+  that index's input tensors (`requires_grad=True`) and record the output
+  tensor (kept around, not just its detached float value — autograd needs
+  the graph for the next two methods).
+- `evaluate_jacobian_outputs`: `torch.autograd.grad(output_t, input_t,
+  create_graph=True)` per time index gives `d(output_t)/d(input_t)` exactly;
+  zero elsewhere (the block-diagonal structure), assembled into the same
+  `scipy.sparse.coo_matrix` shape a finite-difference implementation would
+  have produced — the external contract is unchanged by the differentiation
+  strategy.
+- `evaluate_hessian_outputs`: a second `torch.autograd.grad` call on the
+  Jacobian tensor from the previous step (this is *why* `create_graph=True`
+  above is mandatory — see Pitfall 4) gives the exact second derivative per
+  time index. Still uses the weighted-sum-of-outputs contract
+  (`set_output_constraint_multipliers`) — required here (unlike the
+  prototype's simpler objective-only CyIpopt path) because each output feeds
+  its own separate `target[t] == output[t]` constraint, not a single scalar
+  objective — but reduces to one independent scalar second derivative per
+  time index, not a dense matrix, and returned lower-triangular only
+  (Pitfall 2, unchanged from the FD version).
+
+`data["differentiation"] == "finite_difference"` is rejected at `_validate()`
+with `NotImplementedError` (Specification §2) — there is no FD code path in
+this module for v1.
 
 ### 4. Build-time solver guard (Open Question 2)
 
@@ -243,19 +340,25 @@ someone else's library).
   current call sites before choosing).
 - `pyproject.toml` — new optional extra (do **not** add to core deps or to
   `[solvers]`, which is documented as HiGHS-only self-contained wheels; a
-  new `[greybox]` extra pinning `cyipopt`, matching the existing pattern of
-  `[parameterize]` for scikit-learn). Confirm whether `cyipopt` has
-  reliable PyPI wheels for this repo's supported platforms or needs a
-  conda-forge-only note in installation docs (it installed cleanly via
-  `conda install -c conda-forge cyipopt` during prototyping; PyPI wheel
-  coverage was not checked).
+  new `[greybox]` extra pinning `cyipopt` **and `torch`**, matching the
+  existing pattern of `[parameterize]` for scikit-learn). Confirm whether
+  `cyipopt` has reliable PyPI wheels for this repo's supported platforms or
+  needs a conda-forge-only note in installation docs (it installed cleanly
+  via `conda install -c conda-forge cyipopt` during prototyping; PyPI wheel
+  coverage was not checked). `torch` is a heavy dependency (hundreds of MB
+  even CPU-only) — pin the CPU-only build explicitly (see Pitfall 5) rather
+  than letting the default PyPI wheel pull in CUDA.
 - `.github/workflows/ci.yml` / a new `.github/actions/setup-cyipopt` —
-  component/integration tests need cyipopt installed in CI, following
-  `.github/actions/setup-ipopt`'s precedent.
+  component/integration tests need cyipopt **and CPU-only torch** installed
+  in CI, following `.github/actions/setup-ipopt`'s precedent; the arima
+  integration PR's `[parameterize]`-in-CI change (adding a whole extra to
+  the standard `pip install -e ".[dev,solvers,parameterize]"` CI line) is
+  the pattern to mirror for `[greybox]` here.
 - `src/flexops/tests/surrogates/test_grey_box.py` (new).
 - `pyproject.toml` `[tool.pytest.ini_options]` markers — add
-  `needs_cyipopt: skip if cyipopt/SolverFactory("cyipopt") is unavailable`,
-  alongside the existing `needs_ipopt`/`needs_highs`/etc.
+  `needs_cyipopt: skip if cyipopt/SolverFactory("cyipopt") is unavailable`
+  and `needs_torch: skip if torch is not importable`, alongside the existing
+  `needs_ipopt`/`needs_highs`/etc.
 - Docs: `docs/reference/flexops/surrogates` (new class), 
   `docs/explanation/config_schema.md` (extend the surrogate-type list),
   `docs/how_to/parameterize_from_data.md` or a new how-to specifically for
@@ -283,33 +386,52 @@ someone else's library).
    `PyomoNLPWithGreyBoxBlocks` raises `ValueError` on a full symmetric
    matrix) — easy to get wrong once, since the failure only surfaces at
    solve time, not at class-definition time.
-3. **Central finite-difference stencil correctness.** A forward-biased
-   stencil (`f(u+2h) - 2f(u+h) + f(u)` instead of
-   `f(u+h) - 2f(u) + f(u-h)`) is a real mistake made and caught during
-   prototyping — silently lower-order accurate, not a crash, so it will not
-   surface as a test failure unless a test specifically checks Hessian
-   accuracy against a known analytic function (see Tests).
-4. **Every finite-difference call re-invokes the wrapped external model.**
-   For an expensive callable (a real neural forecaster, a network call), the
-   default full FD Hessian is the dominant per-solve cost. `data["hessian"]
-   = "none"` should skip `evaluate_hessian_outputs` entirely and require
-   `hessian_approximation="limited-memory"` on the CyIpopt solve (confirmed
-   in the prototype: same converged optimum, ~2.7x fewer callable
-   invocations on the toy problem) — document this as the recommended
-   setting for any callable more expensive than the synthetic stand-in.
-5. **`cyipopt` must stay out of the default install.** Follow the existing
-   `[solvers]`/`[parameterize]` extras pattern (memory: tooling/optional
-   imports get their own extra, never core deps); `flexops.surrogates`
-   already only imports `pyomo.contrib.pynumero...` inside this one module,
-   at the point of use, so a bare install without `[greybox]` still imports
-   the rest of `flexops.surrogates` fine and only fails at
-   `ExternalModelSurrogate` construction with a clear `ImportError`-wrapping
-   message.
-6. **PR #104 risk (Update note item 1).** If `Surrogate.build()`'s contract
+3. **(Deferred — applies only once finite-difference is implemented, not to
+   v1.) Central finite-difference stencil correctness.** Recorded here so it
+   is not rediscovered from scratch: a forward-biased stencil
+   (`f(u+2h) - 2f(u+h) + f(u)` instead of `f(u+h) - 2f(u) + f(u-h)`) is a
+   real mistake made and caught during prototyping — silently lower-order
+   accurate, not a crash. Autograd sidesteps this whole bug class (Update
+   note item 4), which is the main reason it is v1's priority.
+4. **`torch.autograd.grad(..., create_graph=True)` is mandatory on the
+   Jacobian computation, not optional.** Omitting it is the standard PyTorch
+   gotcha: the returned gradient tensor is silently detached from the
+   autograd graph, so the second `torch.autograd.grad` call in
+   `evaluate_hessian_outputs` either errors ("does not require grad") or —
+   worse — silently returns zeros if not guarded, which IPOPT would treat as
+   "flat here," not fail loudly on. Test against a known nonzero analytic
+   second derivative (see Tests), not just "the call succeeds."
+5. **A non-differentiable operation inside `predict_callable` breaks
+   silently, not loudly.** An in-place tensor op, a `.detach()`, a
+   `.item()`/`float()` cast, boolean masking, or `torch.no_grad()` context
+   anywhere in the wrapped model's forward pass can silently produce a
+   `None` gradient or a disconnected graph — PyTorch does not raise by
+   default. `_validate()` must run an eager smoke test (call
+   `predict_callable` once on dummy input, take the gradient, assert it is
+   not `None` and is finite) at *construction* time, mirroring this
+   package's existing "fail at construction, not mid-solve" convention —
+   without this check, a broken gradient surfaces as CyIpopt silently
+   "converging" at a non-stationary point, not as an error (see Open
+   Question 6 for whether the real t0-alpha needs this check applied to
+   its actual weights before implementation starts, not just to test
+   doubles).
+6. **`torch` is a heavy dependency for an optional extra.** Even the
+   CPU-only wheel is hundreds of MB; pin it explicitly to the CPU build
+   (Files to create or modify) so `[greybox]` does not silently pull in a
+   multi-GB CUDA distribution on a machine with no GPU.
+7. **`cyipopt`/`torch` must stay out of the default install.** Follow the
+   existing `[solvers]`/`[parameterize]` extras pattern (memory:
+   tooling/optional imports get their own extra, never core deps);
+   `flexops.surrogates` already only imports `pyomo.contrib.pynumero...`
+   (and would only import `torch`) inside this one module, at the point of
+   use, so a bare install without `[greybox]` still imports the rest of
+   `flexops.surrogates` fine and only fails at `ExternalModelSurrogate`
+   construction with a clear `ImportError`-wrapping message.
+8. **PR #104 risk (Update note item 1).** If `Surrogate.build()`'s contract
    changes mid-implementation, every code sample in this document needs a
    mechanical but non-trivial translation. Check `#104`'s status before
    writing code, not just before merging.
-7. **Never delete Pyomo components.** A grey-box relation swapped again
+9. **Never delete Pyomo components.** A grey-box relation swapped again
    later must `deactivate()` the old `ExternalGreyBoxBlock`, exactly like
    every other surrogate swap — confirm `ExternalGreyBoxBlock.deactivate()`
    actually removes it from `PyomoNLPWithGreyBoxBlocks`' view (expected,
@@ -320,23 +442,35 @@ someone else's library).
 
 `src/flexops/tests/surrogates/test_grey_box.py`:
 
-- `unit`, no solver:
+- `unit`, `needs_torch`, no solver:
   - `test_validate_resolves_predict_callable_eagerly` — bad dotted path
     raises `FlexConfigError` at construction.
   - `test_validate_rejects_multiple_output_variables` (mirrors
     `MultilinearSurrogate`'s equivalent test).
+  - `test_validate_rejects_finite_difference_differentiation_mode` —
+    `data["differentiation"] = "finite_difference"` raises
+    `NotImplementedError` naming `"autograd"`, mirroring
+    `NeuralNetworkSurrogate`'s existing not-yet-implemented test pattern.
+  - `test_validate_raises_on_non_differentiable_callable` — a deliberately
+    broken `predict_callable` (e.g. one that calls `.detach()` or
+    `.item()` internally) raises `FlexConfigError` at construction, not a
+    silent `None` gradient at solve time (Pitfall 5).
   - `test_jacobian_matches_analytic_derivative_on_known_function` — wrap a
-    plain Python function with a known closed-form derivative (e.g.
-    `f(x) = x**3`), assert the FD Jacobian is within tolerance — this is
-    what would have caught Pitfall 3 immediately.
+    small `torch` function with a known closed-form derivative (e.g.
+    `f(x) = x**3`), assert the autograd Jacobian matches **exactly** (to
+    floating-point precision, not "within tolerance" — unlike
+    finite-difference, autograd has no reason to be approximate here).
   - `test_hessian_matches_analytic_second_derivative_on_known_function` —
-    same idea, catches the exact stencil bug found during prototyping.
+    same idea for the second derivative; this is what guards Pitfall 4
+    (the `create_graph=True` gotcha) — an implementation that forgets it
+    would fail this test with a `None`/zero-valued Hessian, not a subtle
+    accuracy gap.
   - `test_hessian_is_lower_triangular_only` — guards Pitfall 2 directly.
   - `test_block_diagonal_structure_ignores_cross_time_perturbation` — perturb
     input at time `s`, assert output Jacobian entries at `t != s` are
-    (numerically) zero, confirming the `O(H)` scoping in Specification §1
+    exactly zero, confirming the `O(H)` scoping in Specification §1
     actually holds in the implementation, not just in the design.
-- `component`, `needs_cyipopt`:
+- `component`, `needs_cyipopt`, `needs_torch`:
   - `test_swap_relation_attaches_grey_box_and_solves` — small one-unit model
     (mirror `flexparameterize/tests/helpers.py::build_plant()`'s shape),
     swap to an `external_model` surrogate wrapping a simple known function,
@@ -374,20 +508,30 @@ someone else's library).
       `SurrogateType.EXTERNAL_MODEL`, following the exact
       validate-eagerly/one-output-variable conventions every other
       surrogate class follows.
-- [ ] Jacobian and Hessian FD implementations are verified against a known
-      analytic function (not just "the solve converges") — this is the
-      direct fix for the stencil bug found during prototyping.
+- [ ] Jacobian and Hessian autograd implementations are verified against a
+      known analytic function to floating-point precision (not just "the
+      solve converges") — an implementation that forgets
+      `create_graph=True` (Pitfall 4) fails this immediately rather than
+      passing with degraded accuracy the way an uncaught finite-difference
+      bug would have.
+- [ ] `data["differentiation"] = "finite_difference"` raises
+      `NotImplementedError` naming `"autograd"` — a reserved, explicitly
+      not-yet-built option, not a silently accepted no-op.
+- [ ] `_validate()` runs an eager differentiability smoke test on
+      `predict_callable` and raises `FlexConfigError` (not a downstream
+      `None`-gradient failure) when it is not actually autodiff-able
+      (Pitfall 5).
 - [ ] `evaluate_hessian_outputs` returns lower-triangular only; a dedicated
       test guards this.
 - [ ] The block-diagonal (`O(H)`, not `O(H²)`) structure from Specification
       §1 is both implemented and tested, not just asserted in this document.
 - [ ] Attempting `flexcore.solvers.get_solver` on a model containing a
       grey-box surrogate raises a clear, actionable `FlexConfigError`.
-- [ ] `cyipopt` is an optional extra (`[greybox]`), never a core or
-      `[solvers]` dependency; a bare install still imports
-      `flexops.surrogates` cleanly.
-- [ ] Every cyipopt-dependent test uses a `needs_cyipopt` marker and only
-      skips (never fails) when cyipopt is unavailable.
+- [ ] `cyipopt` and `torch` (CPU-only) are both in the optional `[greybox]`
+      extra, never core or `[solvers]` dependencies; a bare install still
+      imports `flexops.surrogates` cleanly.
+- [ ] Every cyipopt/torch-dependent test uses a `needs_cyipopt`/`needs_torch`
+      marker and only skips (never fails) when either is unavailable.
 - [ ] The arbitrary-code-execution trust boundary (Pitfall 1) is documented
       prominently in both the class docstring and
       `docs/explanation/config_schema.md`, with an explicit decision
