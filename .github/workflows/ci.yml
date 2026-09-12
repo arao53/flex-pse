@@ -64,10 +64,15 @@ jobs:
       # cyipopt has no PyPI wheel (source-only) and its C extension build
       # needs a pkg-config-discoverable system IPOPT -- the IDAES binary
       # setup-ipopt installs below is a standalone executable, not a
-      # dev/headers install, so it can't satisfy this on its own.
+      # dev/headers install, so it can't satisfy this on its own. liblapack
+      # -dev/libblas-dev are needed too: coinor-libipopt-dev's pkg-config
+      # file links -llapack/-lblas, and Ubuntu's runtime liblapack3/libblas3
+      # packages ship only the versioned .so.3, not the unversioned .so link
+      # name the linker needs for -l.
       - run: |
           sudo apt-get update -qq
-          sudo apt-get install -y --no-install-recommends coinor-libipopt1v5 coinor-libipopt-dev
+          sudo apt-get install -y --no-install-recommends \
+            coinor-libipopt1v5 coinor-libipopt-dev liblapack-dev libblas-dev
       - run: pip install -e ".[dev,solvers,parameterize,greybox]"
       - uses: ./.github/actions/setup-ipopt
       # All tiers combined (unit+component+integration), one run: per-subpackage
