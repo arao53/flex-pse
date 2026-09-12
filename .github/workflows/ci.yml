@@ -61,6 +61,13 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
+      # cyipopt has no PyPI wheel (source-only) and its C extension build
+      # needs a pkg-config-discoverable system IPOPT -- the IDAES binary
+      # setup-ipopt installs below is a standalone executable, not a
+      # dev/headers install, so it can't satisfy this on its own.
+      - run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends coinor-libipopt1v5 coinor-libipopt-dev
       - run: pip install -e ".[dev,solvers,parameterize,greybox]"
       - uses: ./.github/actions/setup-ipopt
       # All tiers combined (unit+component+integration), one run: per-subpackage
