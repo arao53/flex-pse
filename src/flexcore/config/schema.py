@@ -278,6 +278,13 @@ class CostingConfig(_StrictModel):
         "carrier priced needs no tariff at all. Each price is flat over the horizon "
         "or given per time point.",
     )
+    export_price: PriceSpec | None = Field(
+        default=None,
+        description="Optional price paid for exported electricity, in the same form "
+        "as an energy_prices entry. Needs an 'electrical' entry in energy_prices "
+        "and must not exceed it at any time point. Omit it to credit exports at "
+        "the import price.",
+    )
     currency: str = Field(
         default="USD",
         description="Currency basis to use when no tariff is given; a tariff's own "

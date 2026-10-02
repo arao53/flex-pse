@@ -66,6 +66,18 @@
           "description": "Optional native prices keyed by carrier or fuel name ('electrical', or a fuel such as 'natural_gas'). A carrier priced here is billed at that price instead of through the tariff, so a run with every carrier priced needs no tariff at all. Each price is flat over the horizon or given per time point.",
           "title": "Energy Prices"
         },
+        "export_price": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/PriceSpec"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional price paid for exported electricity, in the same form as an energy_prices entry. Needs an 'electrical' entry in energy_prices and must not exceed it at any time point. Omit it to credit exports at the import price."
+        },
         "fixed_operating_cost": {
           "default": 0.0,
           "description": "Fixed operating cost over the horizon, in the currency basis in force (a tariff's own, else 'currency'): non-tariff costs such as maintenance, labor, and chemicals. Distinct from the tariff's own fixed charge (which EECO includes in the electricity cost).",
