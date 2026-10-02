@@ -261,6 +261,11 @@ class OperatingCostBreakdown:
         dr_revenue: Demand-response incentive credit (subtracted); ``0`` in v0
             (DR is containers-only).
         total: ``electricity + fuel + fixed + scalar - dr_revenue``.
+        electricity_import: Cost of imported electricity; ``None`` unless
+            ``report_cost(..., split_electricity=True)``.
+        electricity_export: Revenue from exported electricity, as a positive
+            magnitude (``electricity = electricity_import - electricity_export``);
+            ``None`` unless ``split_electricity=True``.
     """
 
     electricity: float
@@ -269,6 +274,8 @@ class OperatingCostBreakdown:
     scalar: float
     dr_revenue: float
     total: float
+    electricity_import: float | None = None
+    electricity_export: float | None = None
 
 
 @dataclasses.dataclass
@@ -404,6 +411,20 @@ class FlexCostingData(FlowsheetCostingBlockData):
             "which is read in the currency over the carrier's metered quantity — "
             "kWh for a power carrier, m**3 for a fuel. A carrier priced here is "
             "billed natively and is NOT sent to EECO, so it needs no tariff.",
+        ),
+    )
+    CONFIG.declare(
+        "export_price",
+        ConfigValue(
+            default=None,
+            description="Optional price paid for electricity exported to the grid, "
+            "in the same forms and units as an energy_prices entry. Requires a "
+            "native energy_prices['electrical'] import price and must not exceed it "
+            "at any time point. With it, the net electrical power is split into "
+            "non-negative grid_import and grid_export, billed at the import and "
+            "export prices respectively; the model stays an LP because exporting is "
+            "never more profitable than importing is costly. Omit it to credit "
+            "exports at the import price (net metering).",
         ),
     )
     CONFIG.declare(
@@ -589,6 +610,19 @@ class FlexCostingData(FlowsheetCostingBlockData):
             name: _price_terms(name, value, n_points)
             for name, value in (self.config.energy_prices or {}).items()
         }
+
+        if self.config.export_price is not None:
+            if "electrical" not in self._prices:
+                raise FlexConfigError(
+                    "export_price needs a native import price to compare against: "
+                    "give energy_prices={'electrical': ...} as well.",
+                    field="export_price",
+                    value=self.config.export_price,
+                )
+            # Stored beside the carrier prices so _price_for reads it the same way.
+            self._prices["electrical_export"] = _price_terms(
+                "export_price", self.config.export_price, n_points
+            )
 
         self.dr = DRConfig(program=load_dr_program(self.config.dr_event_file))
 
@@ -897,6 +931,36 @@ class FlexCostingData(FlowsheetCostingBlockData):
             value=carrier,
         )
 
+    @staticmethod
+    def _check_export_price(import_price, export_price, tb, cur) -> None:
+        """Require ``export_price[t] <= import_price[t]`` wherever both have values.
+
+        If an export price beat the import price, the LP would import and export
+        in the same period to profit from the spread, bounded only by grid limits.
+        A price that is a Pyomo component with no value yet cannot be checked.
+
+        Raises:
+            FlexConfigError: If the export price exceeds the import price at any
+                time point.
+        """
+        per_kwh = cur / pyunits.kWh
+
+        def magnitude(price, t):
+            price = price[t] if isinstance(price, Mapping) else price
+            return pyo.value(pyunits.convert(price, per_kwh), exception=False)
+
+        for t in tb.time_index:
+            imported, exported = magnitude(import_price, t), magnitude(export_price, t)
+            if imported is not None and exported is not None and exported > imported:
+                raise FlexConfigError(
+                    f"export_price ({exported}) exceeds the import price "
+                    f"({imported}) at time point {t}; the model would import and "
+                    "export at once to profit from the spread. Lower the export "
+                    "price to at most the import price.",
+                    field="export_price",
+                    value=exported,
+                )
+
     def _build_opex(self, tb, cur, dt_hours) -> None:
         """Build the ``opex`` block: electricity + fuel + fixed + scalar (Vars).
 
@@ -920,7 +984,34 @@ class FlexCostingData(FlowsheetCostingBlockData):
             initialize=0.0, units=cur, doc="Electricity cost (base currency)."
         )
         price = self._price_for("electrical", cur / pyunits.kWh)
-        if price is not None:
+        export_price = self._price_for("electrical_export", cur / pyunits.kWh)
+        if export_price is not None:
+            self._check_export_price(price, export_price, tb, cur)
+            self.grid_import = pyo.Var(
+                tb.time_index,
+                domain=pyo.NonNegativeReals,
+                initialize=0.0,
+                units=pyunits.kW,
+                doc="Electrical power imported from the grid (kW).",
+            )
+            self.grid_export = pyo.Var(
+                tb.time_index,
+                domain=pyo.NonNegativeReals,
+                initialize=0.0,
+                units=pyunits.kW,
+                doc="Electrical power exported to the grid (kW).",
+            )
+            self.eq_grid_balance = pyo.Constraint(
+                tb.time_index,
+                rule=lambda _b, t: self.aggregate_power[t, "electrical"]
+                == self.grid_import[t] - self.grid_export[t],
+            )
+            opex.eq_electricity_cost = pyo.Constraint(
+                expr=opex.electricity_cost
+                == self._priced_integral(self.grid_import, price, tb, dt_hours)
+                - self._priced_integral(self.grid_export, export_price, tb, dt_hours)
+            )
+        elif price is not None:
             opex.eq_electricity_cost = pyo.Constraint(
                 expr=opex.electricity_cost
                 == self._priced_integral(
@@ -1383,7 +1474,9 @@ class FlexCostingData(FlowsheetCostingBlockData):
         total = priced * quantity_units * dt_hours * pyunits.hr
         return float(pyo.value(pyunits.convert(total, self._currency)))
 
-    def report_cost(self, model, *, prev_demand_dict=None) -> CostReport:
+    def report_cost(
+        self, model, *, prev_demand_dict=None, split_electricity: bool = False
+    ) -> CostReport:
         """Return the reported, categorized cost, evaluated **post-solve**.
 
         The user-facing reported cost. Operating
@@ -1401,10 +1494,20 @@ class FlexCostingData(FlowsheetCostingBlockData):
                 EECO bills only the demand incremental above the running peak,
                 rather than recounting the peak in every window. ``None`` (default)
                 bills the horizon standalone.
+            split_electricity: If ``True``, also report electricity as import cost
+                and export revenue (``electricity_import`` / ``electricity_export``
+                on the operating breakdown), alongside the net ``electricity``.
+                With an ``export_price`` the split is the solved ``grid_import`` /
+                ``grid_export``; with a single native price it is the sign of the
+                net power.
 
         Returns:
             The :class:`CostReport` breakdown, whose ``currency`` names the basis
             every value in it is a magnitude in.
+
+        Raises:
+            FlexConfigError: If ``split_electricity`` is set but electricity is
+                billed through a tariff, which EECO bills only as a net figure.
         """
         tb = self.config.time_block
         dt_hours = pyo.value(pyunits.convert(tb.dt, pyunits.hr))
@@ -1413,10 +1516,36 @@ class FlexCostingData(FlowsheetCostingBlockData):
             [pyo.value(self.aggregate_electrical_power[t]) for t in tb.time_index]
         )
         price = self._price_for("electrical", self._currency / pyunits.kWh)
-        if price is not None:
-            electricity = self._natively_priced_cost(
-                realized_power, price, dt_hours, tb.time_index
+        export_price = self._price_for(
+            "electrical_export", self._currency / pyunits.kWh
+        )
+        if split_electricity and price is None:
+            raise FlexConfigError(
+                "split_electricity needs a native electricity price; a tariff-billed "
+                "electricity cost is EECO's single net figure and cannot be split.",
+                field="split_electricity",
+                value=split_electricity,
             )
+        electricity_import = electricity_export = None
+        if price is not None:
+            if export_price is not None:
+                imported = np.array(
+                    [pyo.value(self.grid_import[t]) for t in tb.time_index]
+                )
+                exported = np.array(
+                    [pyo.value(self.grid_export[t]) for t in tb.time_index]
+                )
+            else:
+                imported = np.clip(realized_power, 0.0, None)
+                exported = np.clip(-realized_power, 0.0, None)
+                export_price = price
+            electricity_import = self._natively_priced_cost(
+                imported, price, dt_hours, tb.time_index
+            )
+            electricity_export = self._natively_priced_cost(
+                exported, export_price, dt_hours, tb.time_index
+            )
+            electricity = electricity_import - electricity_export
         else:
             electricity = evaluate_cost(
                 realized_power,
@@ -1474,6 +1603,8 @@ class FlexCostingData(FlowsheetCostingBlockData):
             scalar=scalar,
             dr_revenue=dr_revenue,
             total=electricity + fuel + fixed + scalar - dr_revenue,
+            electricity_import=electricity_import if split_electricity else None,
+            electricity_export=electricity_export if split_electricity else None,
         )
         # Capex is an empty placeholder in v0 -> no per-component capital costs.
         by_component: dict[str, float] = {}
