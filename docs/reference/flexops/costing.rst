@@ -433,6 +433,9 @@ Every cost lives in one of two sub-blocks built by
    ``decomposition_type="absolute_value"`` (or any type EECO supports) to
    ``FlexCosting`` and it is handed to EECO for both the in-objective cost and
    the post-solve bill (``report_cost``). The default ``None`` skips the split.
+   A tariff with an electric ``export`` charge requires it: with ``None`` EECO
+   bills the net power as both imports and exports, so ``FlexCosting`` raises
+   :class:`~flexcore.exceptions.FlexConfigError` instead of misbilling.
    EECO owns the available types and whether a type keeps the problem linear;
    its ``"absolute_value"`` type is nonlinear, so use ``export_price`` above
    when you need an LP.

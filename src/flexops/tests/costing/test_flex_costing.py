@@ -1578,3 +1578,50 @@ def test_decomposition_type_defaults_to_none():
     """Existing tariff models are unchanged: no decomposition unless requested."""
     m = _pump_tank_costing()
     assert m.costing.opex.find_component("electric_positive") is None
+
+
+def _tariff_with_export_charge():
+    """A flat electric tariff with an energy charge and an export charge."""
+    base = {
+        "utility": "electric",
+        "month_start": 1,
+        "month_end": 12,
+        "weekday_start": 0,
+        "weekday_end": 6,
+        "hour_start": 0,
+        "hour_end": 24,
+        "basic_charge_limit (metric)": 0,
+        "units": "$/kWh",
+    }
+    return load_tariff(
+        [
+            {**base, "type": "energy", "name": "imp", "charge (metric)": 0.10},
+            {**base, "type": "export", "name": "exp", "charge (metric)": 0.05},
+        ]
+    )
+
+
+@pytest.mark.unit
+def test_tariff_export_charge_without_decomposition_raises():
+    """EECO bills the net series as both import and export unless it is decomposed."""
+    with pytest.raises(FlexConfigError, match="decomposition_type"):
+        _pump_tank_costing(tariff=_tariff_with_export_charge())
+
+
+@pytest.mark.unit
+def test_tariff_export_charge_with_decomposition_builds():
+    """Naming a decomposition type satisfies the export-charge check."""
+    m = _pump_tank_costing(
+        tariff=_tariff_with_export_charge(), decomposition_type="absolute_value"
+    )
+    assert m.costing.opex.find_component("electric_negative") is not None
+
+
+@pytest.mark.unit
+def test_tariff_export_charge_ignored_when_electricity_priced_natively():
+    """A native electricity price bypasses the tariff, so its export charge is moot."""
+    m = _pump_tank_costing(
+        tariff=_tariff_with_export_charge(),
+        energy_prices={"electrical": _IMPORT_PRICE},
+    )
+    assert m.costing.opex.find_component("electric_negative") is None

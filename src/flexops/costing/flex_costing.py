@@ -1034,6 +1034,19 @@ class FlexCostingData(FlowsheetCostingBlockData):
                 )
             )
         else:
+            electric_charges = self._tariff[self._tariff["utility"] == "electric"]
+            if (
+                electric_charges["type"] == "export"
+            ).any() and self.config.decomposition_type is None:
+                raise FlexConfigError(
+                    "The tariff has an electric 'export' charge, but "
+                    "decomposition_type is None. EECO then bills the net power as "
+                    "both imports and exports, which misprices any site that "
+                    "exports. Set decomposition_type (e.g. 'absolute_value'), or "
+                    "price electricity natively with energy_prices and export_price.",
+                    field="decomposition_type",
+                    value=None,
+                )
             # EECO bills bare numbers, so hand it the magnitude in EECO's units
             # (convert, then divide the units out) rather than a units-carrying
             # expression, which would make EECO's own conversion constraints
