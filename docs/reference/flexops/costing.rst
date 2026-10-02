@@ -426,6 +426,17 @@ Every cost lives in one of two sub-blocks built by
    electricity. ``grid_import`` and ``grid_export`` can carry import and export
    limits directly.
 
+.. note:: **Exports on the tariff path.**
+
+   An EECO tariff can carry ``export`` charges, but EECO only applies them once
+   net power is split into imports and exports. Pass
+   ``decomposition_type="absolute_value"`` (or any type EECO supports) to
+   ``FlexCosting`` and it is handed to EECO for both the in-objective cost and
+   the post-solve bill (``report_cost``). The default ``None`` skips the split.
+   EECO owns the available types and whether a type keeps the problem linear;
+   its ``"absolute_value"`` type is nonlinear, so use ``export_price`` above
+   when you need an LP.
+
 .. note:: **Reporting rule.**
 
    :meth:`~FlexCostingData.report_cost` returns a categorized

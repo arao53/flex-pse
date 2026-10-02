@@ -428,6 +428,18 @@ class FlexCostingData(FlowsheetCostingBlockData):
         ),
     )
     CONFIG.declare(
+        "decomposition_type",
+        ConfigValue(
+            default=None,
+            description="Optional EECO decomposition of net electrical power into "
+            "imports and exports on the tariff path, e.g. 'absolute_value', so "
+            "the tariff's export charges apply to an exporting site. Passed "
+            "straight to EECO, which owns the available types and whether they "
+            "are linear. None skips the decomposition. Has no effect on native "
+            "prices; use export_price for those.",
+        ),
+    )
+    CONFIG.declare(
         "currency",
         ConfigValue(
             default="USD",
@@ -1052,6 +1064,7 @@ class FlexCostingData(FlowsheetCostingBlockData):
                 tariff=self._tariff,
                 dr_config=self.dr,
                 prorate=self.config.prorate_monthly_charges,
+                decomposition_type=self.config.decomposition_type,
             )
             opex.eq_electricity_cost = pyo.Constraint(
                 expr=opex.electricity_cost == elec.total_operating_cost * cur
@@ -1555,6 +1568,7 @@ class FlexCostingData(FlowsheetCostingBlockData):
                 time_index=tb.datetime_index,
                 prorate=self.config.prorate_monthly_charges,
                 prev_demand_dict=prev_demand_dict,
+                decomposition_type=self.config.decomposition_type,
             )
 
         fuel = 0.0

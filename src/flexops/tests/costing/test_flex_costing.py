@@ -1563,3 +1563,18 @@ def test_report_cost_split_on_tariff_raises():
     _propagate(m.costing)
     with pytest.raises(FlexConfigError, match="split_electricity"):
         m.costing.report_cost(m, split_electricity=True)
+
+
+@pytest.mark.unit
+def test_decomposition_type_is_passed_to_eeco_on_tariff_path():
+    """FlexCosting(decomposition_type=...) splits net power for the tariff bill."""
+    m = _pump_tank_costing(decomposition_type="absolute_value")
+    assert m.costing.opex.find_component("electric_positive") is not None
+    assert m.costing.opex.find_component("electric_negative") is not None
+
+
+@pytest.mark.unit
+def test_decomposition_type_defaults_to_none():
+    """Existing tariff models are unchanged: no decomposition unless requested."""
+    m = _pump_tank_costing()
+    assert m.costing.opex.find_component("electric_positive") is None

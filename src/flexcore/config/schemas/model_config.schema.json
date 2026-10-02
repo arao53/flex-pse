@@ -32,6 +32,19 @@
           "title": "Currency",
           "type": "string"
         },
+        "decomposition_type": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional EECO decomposition of net electrical power into imports and exports on the tariff path (e.g. 'absolute_value'), so the tariff's export charges apply. Passed straight to EECO.",
+          "title": "Decomposition Type"
+        },
         "discount_rate": {
           "default": 0.08,
           "description": "Annual discount rate (fraction, e.g. 0.08 = 8%). Used alone as the effective rate when interest_rate is unset; otherwise it deflates interest_rate into a real effective rate. An effective rate of 0 falls back to straight-line 1/lifetime.",

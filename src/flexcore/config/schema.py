@@ -285,6 +285,12 @@ class CostingConfig(_StrictModel):
         "and must not exceed it at any time point. Omit it to credit exports at "
         "the import price.",
     )
+    decomposition_type: str | None = Field(
+        default=None,
+        description="Optional EECO decomposition of net electrical power into "
+        "imports and exports on the tariff path (e.g. 'absolute_value'), so the "
+        "tariff's export charges apply. Passed straight to EECO.",
+    )
     currency: str = Field(
         default="USD",
         description="Currency basis to use when no tariff is given; a tariff's own "

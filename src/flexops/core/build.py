@@ -145,6 +145,7 @@ def _build_costing(model, cfg: ModelConfig):
         tariff_file=costing.tariff_source,
         energy_prices=import_prices or None,
         export_price=export_price,
+        decomposition_type=costing.decomposition_type,
         currency=costing.currency,
         dr_event_file=None if costing.dr is None else costing.dr.events_source,
         fixed_operating_cost=costing.fixed_operating_cost,
