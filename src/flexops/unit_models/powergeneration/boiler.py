@@ -74,6 +74,7 @@ class BoilerData(OpsBlockData):
         "boiler_type",
         ConfigValue(
             default=BoilerType.FIRED,
+            domain=BoilerType,
             description="Heat source: BoilerType.FIRED burns fuel; "
             "BoilerType.HEAT_RECOVERY recovers heat from a hot-gas inlet, "
             "optionally with duct firing.",
