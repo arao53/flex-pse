@@ -162,6 +162,9 @@ equations and for how to set its parameters from a detailed boiler model.
    :nosignatures:
 
    BoilerType
+   BoilerInletName
+   FiringOption
+   HeatRecoveryOption
 
 .. currentmodule:: flexops.unit_models.powergeneration.generic_renewables
 

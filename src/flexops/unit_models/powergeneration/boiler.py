@@ -19,21 +19,34 @@ from flexops.unit_models.powergeneration.utils import (
     validate_fuel_sources,
 )
 
-_KWH_PER_M3 = pyunits.kWh / pyunits.m**3
-_RESERVED_INLET_NAMES = ("feedwater", "hot_gas")
-_FIRING_OPTIONS = ("efficiency", "max_firing_rate")
-_HEAT_RECOVERY_OPTIONS = (
-    "hot_gas_property_package",
-    "gas_heat_content",
-    "stack_temperature",
-)
-
 
 class BoilerType(enum.StrEnum):
     """Where a :class:`Boiler` gets its heat."""
 
     FIRED = "fired"
     HEAT_RECOVERY = "heat_recovery"
+
+
+class BoilerInletName(enum.StrEnum):
+    """Inlet names a :class:`Boiler` builds itself, so no fuel may take them."""
+
+    FEEDWATER = "feedwater"
+    HOT_GAS = "hot_gas"
+
+
+class FiringOption(enum.StrEnum):
+    """:class:`Boiler` config options that need at least one fuel source."""
+
+    EFFICIENCY = "efficiency"
+    MAX_FIRING_RATE = "max_firing_rate"
+
+
+class HeatRecoveryOption(enum.StrEnum):
+    """:class:`Boiler` config options that need ``BoilerType.HEAT_RECOVERY``."""
+
+    HOT_GAS_PROPERTY_PACKAGE = "hot_gas_property_package"
+    GAS_HEAT_CONTENT = "gas_heat_content"
+    STACK_TEMPERATURE = "stack_temperature"
 
 
 @declare_process_block_class("Boiler")
@@ -144,7 +157,7 @@ class BoilerData(OpsBlockData):
     CONFIG.declare(
         "gas_heat_content",
         ConfigValue(
-            default=0.15 * _KWH_PER_M3,
+            default=0.15 * pyunits.kWh / pyunits.m**3,
             description="Heat recovered per unit volume of hot gas (kWh/m^3). "
             "BoilerType.HEAT_RECOVERY only.",
         ),
@@ -197,7 +210,7 @@ class BoilerData(OpsBlockData):
     CONFIG.declare(
         "steam_heat_content",
         ConfigValue(
-            default=3.4 * _KWH_PER_M3,
+            default=3.4 * pyunits.kWh / pyunits.m**3,
             description="Heat carried per unit volume of outlet steam, relative "
             "to feedwater (kWh/m^3).",
         ),
@@ -228,7 +241,7 @@ class BoilerData(OpsBlockData):
     CONFIG.declare(
         "aux_energy_intensity",
         ConfigValue(
-            default=0 * _KWH_PER_M3,
+            default=0 * pyunits.kWh / pyunits.m**3,
             description="Auxiliary electrical draw per unit volume of steam "
             "(kWh/m^3).",
         ),
@@ -276,7 +289,7 @@ class BoilerData(OpsBlockData):
             inlet_field="fuel_inlet_names",
             require_any=not heat_recovery,
         )
-        reserved = set(config.fuel_inlet_names) & set(_RESERVED_INLET_NAMES)
+        reserved = set(config.fuel_inlet_names) & {n.value for n in BoilerInletName}
         if reserved:
             self._fail("fuel_inlet_names", f"Reserved fuel name(s) {sorted(reserved)}.")
         missing, unknown = heating_value_mismatch(
@@ -289,13 +302,17 @@ class BoilerData(OpsBlockData):
             )
 
         if not self._fuel_names():
-            for option in _FIRING_OPTIONS:
-                if option in user_set:
-                    self._fail(option, f"{option} needs at least one fuel source.")
+            for option in FiringOption:
+                if option.value in user_set:
+                    self._fail(
+                        option.value, f"{option} needs at least one fuel source."
+                    )
         if not heat_recovery:
-            for option in _HEAT_RECOVERY_OPTIONS:
-                if option in user_set:
-                    self._fail(option, f"{option} needs BoilerType.HEAT_RECOVERY.")
+            for option in HeatRecoveryOption:
+                if option.value in user_set:
+                    self._fail(
+                        option.value, f"{option} needs BoilerType.HEAT_RECOVERY."
+                    )
 
         required = ["feedwater_property_package", "steam_property_package"]
         if config.fuel_inlet_names:
@@ -360,7 +377,7 @@ class BoilerData(OpsBlockData):
             name: self.declare_process_parameter(
                 f"heating_value_{name}",
                 self.config.heating_values[name],
-                _KWH_PER_M3,
+                pyunits.kWh / pyunits.m**3,
                 f"Lower heating value of fuel '{name}'.",
                 bounds=(0.0, None),
             )
@@ -408,7 +425,7 @@ class BoilerData(OpsBlockData):
         gas_heat_content = self.declare_process_parameter(
             "gas_heat_content",
             self.config.gas_heat_content,
-            _KWH_PER_M3,
+            pyunits.kWh / pyunits.m**3,
             "Heat recovered per unit volume of hot gas.",
             bounds=(0.0, None),
         )
@@ -566,7 +583,7 @@ class BoilerData(OpsBlockData):
         steam_heat_content = self.declare_process_parameter(
             "steam_heat_content",
             self.config.steam_heat_content,
-            _KWH_PER_M3,
+            pyunits.kWh / pyunits.m**3,
             "Heat carried per unit volume of outlet steam.",
             bounds=(0.0, None),
         )
