@@ -137,7 +137,7 @@ def test_previous_schema_version_with_degradation_free_units_migrates():
             "end_date": "2025-07-09",
             "time_step": "1 hr",
         },
-        "costing": {},
+        "costing": {"tariff_source": "tariff.json"},
         "plant": {"name": "demo", "units": {"pump": {"unit_model_class": "Pump"}}},
     }
     loaded = load_model_config(data)
