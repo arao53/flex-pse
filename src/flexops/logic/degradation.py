@@ -1,6 +1,6 @@
 """Optional piece: a priced degradation (wear) penalty on a unit's variables.
 
-Each term charges a linear wear driver of one variable beyond a free allowance,
+Each term charges a linear wear driver of one variable beyond a free deadband,
 summed into a cost-rate series. See ``docs/explanation/degradation.md`` for the
 formulation.
 """
@@ -23,7 +23,7 @@ def add_degradation(
 
     Args:
         unit: The unit block whose variables the terms name.
-        spec: The validated penalty (terms, horizon allowance and budget).
+        spec: The validated penalty (terms, covered cost and budget).
         costing: A FlexCosting block to bill the charged wear cost to as the
             scalar cost ``f"{unit.local_name}_{spec.name}"``, or ``None``.
 
@@ -93,20 +93,20 @@ def add_degradation(
 
     horizon_hours = len(time) * pyo.value(pyunits.convert(tb.dt, pyunits.hr))
     scale = 1.0 if spec.period_hours is None else horizon_hours / spec.period_hours
-    allowance = _add_param(unit, f"{name}_horizon_allowance", spec.horizon_allowance)
+    covered = _add_param(unit, f"{name}_covered_cost", spec.covered_cost)
     unit.add_component(
         f"{name}_billable",
         pyo.Var(
             domain=pyo.NonNegativeReals,
             initialize=0.0,
             units=pyunits.dimensionless,
-            doc="Wear cost beyond the horizon allowance.",
+            doc="Wear cost beyond the covered cost.",
         ),
     )
     billable = unit.find_component(f"{name}_billable")
     unit.add_component(
         f"{name}_billable_floor",
-        pyo.Constraint(expr=billable >= total - scale * allowance),
+        pyo.Constraint(expr=billable >= total - scale * covered),
     )
     if spec.horizon_budget is not None:
         budget = _add_param(unit, f"{name}_horizon_budget", spec.horizon_budget)
@@ -174,7 +174,7 @@ def _add_term(unit, prefix: str, term: DegradationTermSpec, tb):
     price_units = 1 / var_units if per_step else 1 / (var_units * pyunits.hr)
     price = _add_param(unit, f"{prefix}_price", term.price, price_units)
     if term.kind is not DegradationTerm.EXCEEDANCE:
-        a = _add_param(unit, f"{prefix}_allowance", term.allowance, var_units)
+        a = _add_param(unit, f"{prefix}_deadband", term.deadband, var_units)
     w = term.window
     index = [t for t in time if t >= w] if per_step else list(time)
     unit.add_component(

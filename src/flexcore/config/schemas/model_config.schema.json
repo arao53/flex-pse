@@ -171,11 +171,11 @@
       "additionalProperties": false,
       "description": "A named, priced degradation penalty on a unit: a sum of wear-driver terms.",
       "properties": {
-        "horizon_allowance": {
+        "covered_cost": {
           "default": 0.0,
           "description": "Free wear cost per period, in the model currency; only cost beyond it is charged.",
           "minimum": 0,
-          "title": "Horizon Allowance",
+          "title": "Covered Cost",
           "type": "number"
         },
         "horizon_budget": {
@@ -208,7 +208,7 @@
             }
           ],
           "default": null,
-          "description": "Length of the period horizon_allowance and horizon_budget are stated for (e.g. 730 for a month); they are prorated to the modeled horizon. None means they are stated for the modeled horizon.",
+          "description": "Length of the period covered_cost and horizon_budget are stated for (e.g. 730 for a month); they are prorated to the modeled horizon. None means they are stated for the modeled horizon.",
           "title": "Period Hours"
         },
         "terms": {
@@ -243,11 +243,11 @@
       "additionalProperties": false,
       "description": "One priced wear driver of a unit variable, valued in that variable's units.",
       "properties": {
-        "allowance": {
+        "deadband": {
           "default": 0.0,
-          "description": "Free amount per step, in the variable's units; only the excess beyond it is charged. Not used by exceedance.",
+          "description": "Free amount per step, in the variable's units; only the excess beyond it is charged (a deadband). Not used by exceedance.",
           "minimum": 0,
-          "title": "Allowance",
+          "title": "Deadband",
           "type": "number"
         },
         "kind": {

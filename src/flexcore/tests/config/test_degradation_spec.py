@@ -27,20 +27,20 @@ def test_term_kind_rejects_an_unknown_name():
 
 
 @pytest.mark.unit
-def test_term_defaults_are_no_allowance_and_one_step_window():
+def test_term_defaults_are_no_deadband_and_one_step_window():
     """A minimal term charges every unit of change between adjacent steps."""
     term = _variation()
-    assert term.allowance == 0.0
+    assert term.deadband == 0.0
     assert term.window == 1
 
 
 @pytest.mark.unit
 @pytest.mark.parametrize(
     "overrides",
-    [{"price": -1.0}, {"allowance": -0.5}, {"window": 0}],
+    [{"price": -1.0}, {"deadband": -0.5}, {"window": 0}],
 )
-def test_term_rejects_negative_price_allowance_and_empty_window(overrides):
-    """Prices and allowances are non-negative and a window spans at least one step."""
+def test_term_rejects_negative_price_deadband_and_empty_window(overrides):
+    """Prices and deadbands are non-negative and a window spans at least one step."""
     with pytest.raises(ValidationError):
         _variation(**overrides)
 
@@ -57,8 +57,8 @@ def test_deviation_requires_a_reference():
 
 
 @pytest.mark.unit
-def test_exceedance_requires_a_bound_and_rejects_an_allowance():
-    """An exceedance needs at least one bound; the bound is already its allowance."""
+def test_exceedance_requires_a_bound_and_rejects_an_deadband():
+    """An exceedance needs at least one bound; the bound is already its deadband."""
     with pytest.raises(ValidationError):
         DegradationTermSpec(kind=DegradationTerm.EXCEEDANCE, variable="p", price=1.0)
     with pytest.raises(ValidationError):
@@ -67,7 +67,7 @@ def test_exceedance_requires_a_bound_and_rejects_an_allowance():
             variable="p",
             price=1.0,
             upper=10.0,
-            allowance=1.0,
+            deadband=1.0,
         )
     term = DegradationTermSpec(
         kind=DegradationTerm.EXCEEDANCE, variable="p", price=1.0, lower=2.0
@@ -105,10 +105,10 @@ def test_spec_requires_at_least_one_term():
 @pytest.mark.unit
 @pytest.mark.parametrize(
     "overrides",
-    [{"horizon_allowance": -1.0}, {"horizon_budget": -1.0}, {"period_hours": 0.0}],
+    [{"covered_cost": -1.0}, {"horizon_budget": -1.0}, {"period_hours": 0.0}],
 )
 def test_spec_rejects_negative_horizon_limits_and_empty_period(overrides):
-    """Horizon allowance and budget are non-negative; a period has positive length."""
+    """covered cost and budget are non-negative; a period has positive length."""
     with pytest.raises(ValidationError):
         DegradationSpec(name="wear", terms=[_variation()], **overrides)
 

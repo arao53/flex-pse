@@ -15,7 +15,7 @@ and lets the economics decide.
 
 A penalty is a sum of **terms**. Each term watches one time-indexed
 variable {math}`g` of the unit, measures a wear driver, subtracts a free
-allowance {math}`a`, and charges what remains at a price {math}`p`. Every term is
+deadband {math}`a`, and charges what remains at a price {math}`p`. Every term is
 linear, so a model that was an LP stays an LP.
 
 | Kind | Charged excess {math}`e[t]` | Price is per | Typical use |
@@ -43,26 +43,26 @@ contract usually provides. Converting a fraction-of-life model, where a
 full cycle consumes a known share of a replacement, is a matter of
 multiplying that share by the replacement cost.
 
-## Allowances and budgets
+## Deadbands, covered cost, and budgets
 
 There are three ways to make some wear free or to cap it. They answer
 different questions.
 
-**Per-step allowance** (`allowance` on a term). Each step may move up to
+**Per-step deadband** (`deadband` on a term). Each step may move up to
 {math}`a` for free; only the excess is charged. This is a deadband. It models wear
 that is negligible below a threshold (small drive trims, pressure drift
 within control noise, battery cycling slower than calendar aging), and it
 rewards spreading moves out over time. Inside the deadband many schedules
 cost the same, so the solver may return a slightly jittery profile there.
-Set the allowance to zero for strict smoothing.
+Set the deadband to zero for strict smoothing.
 
 An aggregate floor of the form {math}`D[t] = \max(\text{cycling}[t], D_\text{shelf})`,
 used in some battery arbitrage studies, is the same idea: it equals a
-constant plus a per-step allowance. The constant does not change the optimal
+constant plus a deadband. The constant does not change the optimal
 schedule and would double count maintenance already carried in the fixed
-operating cost, so only the allowance is modeled.
+operating cost, so only the deadband is modeled.
 
-**Horizon allowance** (`horizon_allowance` on the penalty). The first
+**Covered cost** (`covered_cost` on the penalty). The first
 dollars of wear over the period are free, for example because a service
 contract already covers a number of starts per month. Only the total
 matters, not when the wear happens:
@@ -96,7 +96,7 @@ total.
 For a penalty named `wear`, term `k` builds `wear_k_quantity` (the
 watched quantity), `wear_k_excess` (the hinge), the constraints
 `wear_k_up`/`wear_k_down`, and mutable parameters `wear_k_price`,
-`wear_k_allowance`, and the reference or bounds. The penalty builds
+`wear_k_deadband`, and the reference or bounds. The penalty builds
 `wear_rate`, `wear_total`, `wear_billable`, and, if a budget is given,
 `wear_budget`. Every parameter is registered, so
 `unit.update_parameters({"wear_0_price": 3.0})` retunes a built model in
@@ -147,7 +147,7 @@ spec = DegradationSpec(
             kind=DegradationTerm.VARIATION,
             variable="outlet_state.pressure",
             price=40.0,       # dollars per bar of change
-            allowance=0.2,    # bar per step that is free
+            deadband=0.2,    # bar per step that is free
         ),
         DegradationTermSpec(
             kind=DegradationTerm.EXCEEDANCE,
@@ -156,7 +156,7 @@ spec = DegradationSpec(
             upper=60.0,
         ),
     ],
-    horizon_allowance=500.0,  # dollars per month covered by the service contract
+    covered_cost=500.0,  # dollars per month covered by the service contract
     period_hours=730.0,
 )
 rate, total = add_degradation(m.plant.ro, spec, costing=m.costing)
@@ -169,10 +169,10 @@ The same penalty in a config sits under the unit's `degradation` list:
   {
     "name": "membrane_wear",
     "terms": [
-      {"kind": "variation", "variable": "outlet_state.pressure", "price": 40.0, "allowance": 0.2},
+      {"kind": "variation", "variable": "outlet_state.pressure", "price": 40.0, "deadband": 0.2},
       {"kind": "exceedance", "variable": "outlet_state.pressure", "price": 15.0, "upper": 60.0}
     ],
-    "horizon_allowance": 500.0,
+    "covered_cost": 500.0,
     "period_hours": 730.0
   }
 ]

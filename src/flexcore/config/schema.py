@@ -177,11 +177,11 @@ class DegradationTermSpec(_StrictModel):
         description="Cost in the model currency per unit of change for variation, "
         "or per unit of the variable held for one hour for the other kinds.",
     )
-    allowance: float = Field(
+    deadband: float = Field(
         default=0.0,
         ge=0,
         description="Free amount per step, in the variable's units; only the "
-        "excess beyond it is charged. Not used by exceedance.",
+        "excess beyond it is charged (a deadband). Not used by exceedance.",
     )
     window: int = Field(
         default=1,
@@ -214,8 +214,8 @@ class DegradationTermSpec(_StrictModel):
         if self.kind is DegradationTerm.EXCEEDANCE:
             if self.lower is None and self.upper is None:
                 raise ValueError("An exceedance term requires lower and/or upper.")
-            if self.allowance:
-                raise ValueError("An exceedance term's bounds are its allowance.")
+            if self.deadband:
+                raise ValueError("An exceedance term's bounds are its deadband.")
         if self.kind is not DegradationTerm.VARIATION and self.window != 1:
             raise ValueError("window is only used by a variation term.")
         return self
@@ -228,7 +228,7 @@ class DegradationSpec(_StrictModel):
     terms: list[DegradationTermSpec] = Field(
         min_length=1, description="The priced wear drivers that are summed."
     )
-    horizon_allowance: float = Field(
+    covered_cost: float = Field(
         default=0.0,
         ge=0,
         description="Free wear cost per period, in the model currency; only cost "
@@ -243,7 +243,7 @@ class DegradationSpec(_StrictModel):
     period_hours: float | None = Field(
         default=None,
         gt=0,
-        description="Length of the period horizon_allowance and horizon_budget "
+        description="Length of the period covered_cost and horizon_budget "
         "are stated for (e.g. 730 for a month); they are prorated to the modeled "
         "horizon. None means they are stated for the modeled horizon.",
     )

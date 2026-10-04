@@ -94,10 +94,10 @@ def test_quantity_relation_ties_the_tracked_quantity_to_the_variable():
 
 
 @pytest.mark.unit
-def test_variation_charges_change_beyond_the_allowance():
-    """|q[t] - q[t-1]| - allowance, floored at zero, is the charged excess."""
+def test_variation_charges_change_beyond_the_deadband():
+    """|q[t] - q[t-1]| - deadband, floored at zero, is the charged excess."""
     m, unit = _unit()
-    add_degradation(unit, _spec(_term(allowance=1.0)))
+    add_degradation(unit, _spec(_term(deadband=1.0)))
     _set(unit.wear_0_quantity, [0.0, 0.5, 4.0, 4.0, 1.0, 1.0])
 
     assert set(unit.wear_0_excess.index_set()) == set(range(1, _N))
@@ -116,11 +116,11 @@ def test_variation_window_compares_endpoints_and_skips_missing_history():
 
 
 @pytest.mark.unit
-def test_deviation_charges_distance_from_the_reference_beyond_the_allowance():
-    """|q - reference| - allowance, floored at zero, on every step."""
+def test_deviation_charges_distance_from_the_reference_beyond_the_deadband():
+    """|q - reference| - deadband, floored at zero, on every step."""
     m, unit = _unit()
     add_degradation(
-        unit, _spec(_term(DegradationTerm.DEVIATION, reference=10.0, allowance=1.0))
+        unit, _spec(_term(DegradationTerm.DEVIATION, reference=10.0, deadband=1.0))
     )
     _set(unit.wear_0_quantity, [10.0, 12.0, 7.0, 10.5, 0.0, 11.0])
 
@@ -144,10 +144,10 @@ def test_exceedance_charges_only_outside_the_band():
 
 
 @pytest.mark.unit
-def test_throughput_charges_the_quantity_beyond_the_allowance():
-    """max(0, q - allowance) on every step."""
+def test_throughput_charges_the_quantity_beyond_the_deadband():
+    """max(0, q - deadband) on every step."""
     m, unit = _unit()
-    add_degradation(unit, _spec(_term(DegradationTerm.THROUGHPUT, allowance=3.0)))
+    add_degradation(unit, _spec(_term(DegradationTerm.THROUGHPUT, deadband=3.0)))
     _set(unit.wear_0_quantity, [0.0, 3.0, 5.0, 10.0, 1.0, 4.0])
     assert unit.find_component("wear_0_down") is None
     _hinge_is_tight(unit, 0, {0: 0.0, 1: 0.0, 2: 2.0, 3: 7.0, 4: 0.0, 5: 1.0})
@@ -184,12 +184,12 @@ def test_total_integrates_the_rate_over_the_horizon():
 
 
 @pytest.mark.unit
-def test_horizon_allowance_and_budget_are_prorated_from_their_period():
+def test_covered_cost_and_budget_are_prorated_from_their_period():
     """Values stated per period_hours are scaled by horizon_hours / period_hours."""
     m, unit = _unit()
     _, total = add_degradation(
         unit,
-        _spec(horizon_allowance=10.0, horizon_budget=40.0, period_hours=3.0),
+        _spec(covered_cost=10.0, horizon_budget=40.0, period_hours=3.0),
     )
     scale = _HORIZON_HR / 3.0
     total.set_value(12.0)
@@ -225,19 +225,19 @@ def test_billed_rate_spreads_the_billable_amount_evenly():
 
 @pytest.mark.unit
 def test_prices_and_limits_update_in_place():
-    """Prices, allowances and horizon limits are registered mutable parameters."""
+    """Prices, deadbands and horizon limits are registered mutable parameters."""
     m, unit = _unit()
     add_degradation(unit, _spec(horizon_budget=5.0))
     unit.update_parameters(
         {
             "wear_0_price": 7.0,
-            "wear_0_allowance": 0.5,
-            "wear_horizon_allowance": 1.0,
+            "wear_0_deadband": 0.5,
+            "wear_covered_cost": 1.0,
             "wear_horizon_budget": 9.0,
         }
     )
     assert pyo.value(unit.wear_0_price) == 7.0
-    assert pyo.value(unit.wear_0_allowance) == 0.5
+    assert pyo.value(unit.wear_0_deadband) == 0.5
     assert pyo.value(unit.wear_horizon_budget) == 9.0
     regressable = {rec.name: rec.regressable for rec in unit._io_registry.parameters}
     assert regressable["wear_0_price"] is False
@@ -351,18 +351,18 @@ def test_variation_price_smooths_an_alternating_schedule():
 
 @pytest.mark.component
 @pytest.mark.needs_highs
-def test_per_step_allowance_makes_small_moves_free():
-    """A 10 kW per-step allowance makes following demand free again."""
-    x, obj = _solve_against_demand(_spec(_term(allowance=10.0), horizon_budget=1e6))
+def test_per_step_deadband_makes_small_moves_free():
+    """A 10 kW deadband makes following demand free again."""
+    x, obj = _solve_against_demand(_spec(_term(deadband=10.0), horizon_budget=1e6))
     assert x == pytest.approx([0.0, 10.0, 0.0, 10.0, 0.0, 10.0])
     assert obj == pytest.approx(30.0)
 
 
 @pytest.mark.component
 @pytest.mark.needs_highs
-def test_horizon_allowance_covers_the_first_dollars_of_wear():
-    """A $100 horizon allowance absorbs the $100 of cycling wear entirely."""
-    x, obj = _solve_against_demand(_spec(horizon_allowance=100.0, horizon_budget=1e6))
+def test_covered_cost_covers_the_first_dollars_of_wear():
+    """A $100 covered cost absorbs the $100 of cycling wear entirely."""
+    x, obj = _solve_against_demand(_spec(covered_cost=100.0, horizon_budget=1e6))
     assert x == pytest.approx([0.0, 10.0, 0.0, 10.0, 0.0, 10.0])
     assert obj == pytest.approx(30.0)
 
@@ -370,7 +370,7 @@ def test_horizon_allowance_covers_the_first_dollars_of_wear():
 @pytest.mark.component
 @pytest.mark.needs_highs
 def test_hard_budget_caps_wear_even_when_it_is_free_in_the_objective():
-    """A $0 budget forbids any charged change, though the allowance makes it free."""
-    x, obj = _solve_against_demand(_spec(horizon_allowance=1e6, horizon_budget=0.0))
+    """A $0 budget forbids any charged change, though the deadband makes it free."""
+    x, obj = _solve_against_demand(_spec(covered_cost=1e6, horizon_budget=0.0))
     assert x == pytest.approx([10.0] * _N)
     assert obj == pytest.approx(60.0)
