@@ -14,6 +14,7 @@ from flexops.testing import UnitModelTestHarness, dummy_time_block
 from flexops.testing.harness import _solve_with_inputs_fixed
 from flexops.unit_models import CO2Electrolyzer, Electrolyzer, WaterElectrolyzer
 from flexops.unit_models.electrolyzer import (
+    OXYGEN,
     ElectrochemicalProduct,
     ElectrolyzerTechnology,
     ProductPhase,
@@ -56,6 +57,15 @@ FORMATE_PRODUCT = ElectrochemicalProduct(
     co2_per_mol=1.0,
     water_per_mol=1.0,
     molar_mass=46.03 * pyunits.g / pyunits.mol,
+)
+CL2_PRODUCT = ElectrochemicalProduct(
+    name="Cl2",
+    electrons=2,
+    faradaic_efficiency=1.0,
+    phase=ProductPhase.GAS,
+    co2_per_mol=0.0,
+    water_per_mol=0.0,
+    molar_mass=70.90 * pyunits.g / pyunits.mol,
 )
 
 _COMMON = dict(
@@ -213,7 +223,11 @@ def test_products_accept_plain_dicts():
 @pytest.mark.unit
 def test_power_and_faradaic_relations_are_registered_swappable():
     _, unit = _water()
-    assert _relations(unit) == {"power_electrical_relation", "faradaic_relation_H2"}
+    assert _relations(unit) == {
+        "power_electrical_relation",
+        "faradaic_relation_H2",
+        "faradaic_relation_O2",
+    }
 
 
 @pytest.mark.unit
@@ -223,6 +237,7 @@ def test_co2_electrolyzer_registers_one_faradaic_relation_per_product():
         "power_electrical_relation",
         "faradaic_relation_CO",
         "faradaic_relation_H2",
+        "faradaic_relation_O2",
     }
 
 
@@ -297,6 +312,7 @@ def test_faradaic_and_gas_balances_hold_on_hand_computed_values():
     _, unit = _water()
     for t in unit.current:
         unit.production_H2[t].set_value(ELECTRONS / 2)
+        unit.production_O2[t].set_value(ELECTRONS / 4)
         unit.outlet_cathode_gas_state.flow_vol_phase[t, "Vap"].set_value(
             ELECTRONS / 2 * MOLAR_VOLUME
         )
@@ -367,6 +383,57 @@ def test_waste_heat_is_current_times_overpotential_above_thermoneutral():
     _, unit = _water(cell_voltage=2.0 * pyunits.V)
     expected_kw = N_CELLS * CURRENT * (2.0 - 1.48) / 1000.0
     assert pyo.value(unit.waste_heat[0]) == pytest.approx(expected_kw)
+
+
+# -- anode products ----------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_default_anode_product_is_oxygen():
+    _, unit = _water()
+    assert isinstance(unit.production_O2, pyo.Var)
+    assert pyo.value(unit.faradaic_efficiency_O2) == pytest.approx(1.0)
+    assert "anode_products" not in unit.config
+
+
+@pytest.mark.unit
+def test_generic_electrolyzer_accepts_a_custom_anode_product_table():
+    m = dummy_time_block(3)
+    m.gas = SimpleGasFlow()
+    m.unit = Electrolyzer(
+        liquid_property_package=m.properties,
+        gas_property_package=m.gas,
+        anode_products=[CL2_PRODUCT],
+        **_COMMON,
+    )
+    unit = m.unit
+    unit.current[:].set_value(CURRENT)
+    for t in unit.current:
+        unit.production_Cl2[t].set_value(ELECTRONS / 2)
+        unit.outlet_anode_gas_state.flow_vol_phase[t, "Vap"].set_value(
+            ELECTRONS / 2 * MOLAR_VOLUME
+        )
+    _assert_satisfied(unit.faradaic_relation_Cl2)
+    _assert_satisfied(unit.anode_gas_balance)
+
+
+@pytest.mark.unit
+def test_rejects_anode_faradaic_efficiencies_summing_above_one():
+    with pytest.raises(FlexConfigError, match="anode"):
+        _co2(anode_products=[CL2_PRODUCT, OXYGEN])
+
+
+@pytest.mark.unit
+def test_rejects_liquid_anode_product():
+    liquid = dataclasses.replace(CL2_PRODUCT, phase=ProductPhase.LIQUID)
+    with pytest.raises(FlexConfigError, match="gas"):
+        _co2(anode_products=[liquid], has_liquid_outlet=True)
+
+
+@pytest.mark.unit
+def test_rejects_product_names_shared_between_cathode_and_anode():
+    with pytest.raises(FlexConfigError, match="unique"):
+        _co2(anode_products=[dataclasses.replace(OXYGEN, name="CO")])
 
 
 # -- config errors -----------------------------------------------------------
