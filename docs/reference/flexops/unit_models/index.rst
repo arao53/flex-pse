@@ -212,8 +212,9 @@ gas outlets leave at the fixed operating temperature and pressure. The
 separators hold a liquid inventory, so make-up water can be fed at a
 different time from when the stack consumes it. The per-product Faradaic relations and
 ``power_electrical_relation`` are registered, so you can replace them in place with a
-fitted Faradaic-efficiency or polarization curve. ``WaterElectrolyzer`` fixes
-the product to hydrogen and takes its defaults from ``technology`` (PEM or AEM).
+fitted Faradaic-efficiency or polarization curve. The anode reaction is a
+second product table, ``anode_products``, which defaults to oxygen evolution.
+``WaterElectrolyzer`` fixes the products to hydrogen and oxygen and takes its defaults from ``technology`` (PEM or AEM).
 ``CO2Electrolyzer`` takes a product table and adds the CO2 feed, set by
 single-pass conversion, along with carbonate crossover to the anode. Every gas
 port builds from ``gas_property_package`` unless it is given its own package

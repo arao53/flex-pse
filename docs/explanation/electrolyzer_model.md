@@ -17,8 +17,7 @@ P_{elec}[t] &= N_{cells} \, V_{cell} \, I[t] \, (1 + f_{BoP}) \\
 Each product's `faradaic_relation_{name}` and the `power_electrical_relation`
 are registered relations, so a fitted Faradaic-efficiency curve or polarization
 curve replaces them in place (see
-{meth}`~flexops.core.ops_block.OpsBlockData.swap_relation`). The anode evolves
-oxygen with all the charge, {math}`\dot{n}_{O_2} = \dot{n}_e / 4`.
+{meth}`~flexops.core.ops_block.OpsBlockData.swap_relation`).
 
 ## Separators
 
@@ -42,10 +41,22 @@ conservation and is never registered.
 Each cathode product is an
 `ElectrochemicalProduct`. Its
 stoichiometry is per mole of product for the overall cell reaction, anode
-oxygen evolution included. For example, CO2 -> CO + 1/2 O2 has
+reaction included. For example, CO2 -> CO + 1/2 O2 has
 `co2_per_mol = 1` and `water_per_mol = 0`, and H2O -> H2 + 1/2 O2 has
 `water_per_mol = 1`. Gas products leave through the cathode gas outlet and
 liquid products through the liquid outlet.
+
+## Anode products
+
+The anode products are a second `ElectrochemicalProduct` table,
+`anode_products`, with Faradaic efficiencies summing to at most 1. Each anode
+product follows the same Faraday's law as a cathode product,
+{math}`\dot{n}_{k}[t] = FE_k \, \dot{n}_{e}[t] / z_k`, with its own registered
+relation, and leaves through the anode gas outlet, so all anode products must be
+gases. The default is oxygen evolution at a Faradaic efficiency of 1; a
+chlorine anode would instead list Cl2 ({math}`z = 2`) with an oxygen side
+reaction. Product names must be unique across both tables. The overall-reaction
+water stays on the cathode product, so oxygen consumes none.
 
 ## Property packages
 
@@ -58,7 +69,8 @@ when one is given (`cathode_gas_property_package`,
 ## Water electrolyzer
 
 {class}`~flexops.unit_models.electrolyzer.WaterElectrolyzer` fixes the product
-slate to hydrogen (H2O -> H2 + 1/2 O2), so it has no `products` option. Its
+slate to hydrogen at the cathode and oxygen at the anode (H2O -> H2 + 1/2 O2),
+so it has no `products` or `anode_products` option. Its
 `technology` (PEM or AEM) picks the defaults for `cell_voltage`,
 `operating_temperature`, and `operating_pressure`; an option given explicitly
 overrides its technology default. An AEM stack's KOH bleed is modeled with

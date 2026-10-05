@@ -70,6 +70,16 @@ HYDROGEN = ElectrochemicalProduct(
     molar_mass=2.016 * pyunits.g / pyunits.mol,
 )
 
+OXYGEN = ElectrochemicalProduct(
+    name="O2",
+    electrons=4,
+    faradaic_efficiency=1.0,
+    phase=ProductPhase.GAS,
+    co2_per_mol=0.0,
+    water_per_mol=0.0,
+    molar_mass=32.00 * pyunits.g / pyunits.mol,
+)
+
 
 def _products_domain(value) -> tuple[ElectrochemicalProduct, ...]:
     """Coerce a list of products or product dicts into products.
@@ -203,6 +213,15 @@ class ElectrolyzerData(OpsBlockData):
         ),
     )
     CONFIG.declare(
+        "anode_products",
+        ConfigValue(
+            default=(OXYGEN,),
+            domain=_products_domain,
+            description="Anode gas products, as ElectrochemicalProduct entries (or "
+            "dicts of their fields). Faradaic efficiencies may sum to at most 1.",
+        ),
+    )
+    CONFIG.declare(
         "has_liquid_outlet",
         ConfigValue(
             default=False,
@@ -287,6 +306,14 @@ class ElectrolyzerData(OpsBlockData):
         """
         return self.config.products
 
+    def _anode_products(self) -> tuple[ElectrochemicalProduct, ...]:
+        """Return the configured anode product slate.
+
+        Returns:
+            The configured anode products.
+        """
+        return self.config.anode_products
+
     def _gas_package_fields(self) -> tuple[str, ...]:
         """Return the config fields naming each gas port's property package.
 
@@ -333,22 +360,42 @@ class ElectrolyzerData(OpsBlockData):
                     field=field,
                     value=None,
                 )
-        products = self._products()
-        names = [p.name for p in products]
-        if not products or not all(n.isidentifier() for n in names):
-            raise FlexConfigError(
-                f"products must be one or more products named by Python "
-                f"identifiers, got {names!r}.",
-                field="products",
-                value=names,
-            )
+        tables = {
+            "products": self._products(),
+            "anode_products": self._anode_products(),
+        }
+        for field, products in tables.items():
+            names = [p.name for p in products]
+            if not products or not all(n.isidentifier() for n in names):
+                raise FlexConfigError(
+                    f"{field} must be one or more products named by Python "
+                    f"identifiers, got {names!r}.",
+                    field=field,
+                    value=names,
+                )
+            total = sum(p.faradaic_efficiency for p in products)
+            if total > 1.0 + 1e-9:
+                raise FlexConfigError(
+                    f"{field} faradaic efficiencies sum to {total}, above 1.",
+                    field=field,
+                    value=names,
+                )
+        names = [p.name for products in tables.values() for p in products]
         if len(set(names)) != len(names):
             raise FlexConfigError(
-                f"product names must be unique, got {names!r}.",
+                f"product names must be unique across cathode and anode, "
+                f"got {names!r}.",
                 field="products",
                 value=names,
             )
-        for p in products:
+        for p in self._anode_products():
+            if p.phase is not ProductPhase.GAS:
+                raise FlexConfigError(
+                    f"anode product {p.name!r} must be a gas.",
+                    field="anode_products",
+                    value=p,
+                )
+        for p in (*self._products(), *self._anode_products()):
             if p.electrons <= 0 or not 0.0 <= p.faradaic_efficiency <= 1.0:
                 raise FlexConfigError(
                     f"product {p.name!r} needs electrons > 0 and a faradaic "
@@ -364,13 +411,6 @@ class ElectrolyzerData(OpsBlockData):
                     field="has_liquid_outlet",
                     value=False,
                 )
-        total = sum(p.faradaic_efficiency for p in products)
-        if total > 1.0 + 1e-9:
-            raise FlexConfigError(
-                f"faradaic efficiencies sum to {total}, above 1.",
-                field="products",
-                value=names,
-            )
         low, high = self.config.liquid_level_min, self.config.liquid_level_max
         capacity = _magnitude(self.config.separator_volume, pyunits.m**3)
         initial = _magnitude(self.config.initial_liquid_volume, pyunits.m**3)
@@ -442,35 +482,8 @@ class ElectrolyzerData(OpsBlockData):
             doc="Molar flow of electrons through the stack, N_cells * I / F.",
         )
 
-        for p in self._products():
-            fe = self.declare_process_parameter(
-                f"faradaic_efficiency_{p.name}",
-                p.faradaic_efficiency,
-                pyunits.dimensionless,
-                f"Fraction of the stack charge producing {p.name}.",
-                bounds=(0.0, 1.0),
-            )
-            production = pyo.Var(
-                tb.time_index,
-                initialize=0.0,
-                domain=pyo.NonNegativeReals,
-                units=pyunits.mol / pyunits.s,
-                doc=f"Molar production rate of {p.name}.",
-            )
-            self.add_component(f"production_{p.name}", production)
-            self.add_component(
-                f"faradaic_relation_{p.name}",
-                pyo.Constraint(
-                    tb.time_index,
-                    rule=lambda b, t, _n=production, _fe=fe, _z=p.electrons: _n[t]
-                    == _fe * b.electron_flow[t] / _z,
-                    doc=f"Faraday's law: production_{p.name} == faradaic "
-                    f"efficiency * electron_flow / {p.electrons}.",
-                ),
-            )
-            self.register_relation(
-                self.find_component(f"faradaic_relation_{p.name}"), target=production
-            )
+        for p in (*self._products(), *self._anode_products()):
+            self._build_faradaic(p)
 
         cell_voltage = self.declare_process_parameter(
             "cell_voltage",
@@ -513,6 +526,42 @@ class ElectrolyzerData(OpsBlockData):
         ):
             self.swap_relation("power_electrical_relation", surrogate_from_spec(spec))
 
+    def _build_faradaic(self, p: ElectrochemicalProduct) -> None:
+        """Build one product's production rate and its Faradaic relation.
+
+        Args:
+            p: The product.
+        """
+        tb = self._find_time_block()
+        fe = self.declare_process_parameter(
+            f"faradaic_efficiency_{p.name}",
+            p.faradaic_efficiency,
+            pyunits.dimensionless,
+            f"Fraction of the stack charge producing {p.name}.",
+            bounds=(0.0, 1.0),
+        )
+        production = pyo.Var(
+            tb.time_index,
+            initialize=0.0,
+            domain=pyo.NonNegativeReals,
+            units=pyunits.mol / pyunits.s,
+            doc=f"Molar production rate of {p.name}.",
+        )
+        self.add_component(f"production_{p.name}", production)
+        self.add_component(
+            f"faradaic_relation_{p.name}",
+            pyo.Constraint(
+                tb.time_index,
+                rule=lambda b, t, _n=production, _fe=fe, _z=p.electrons: _n[t]
+                == _fe * b.electron_flow[t] / _z,
+                doc=f"Faraday's law: production_{p.name} == faradaic "
+                f"efficiency * electron_flow / {p.electrons}.",
+            ),
+        )
+        self.register_relation(
+            self.find_component(f"faradaic_relation_{p.name}"), target=production
+        )
+
     # -- gas outlets -----------------------------------------------------------
 
     def _molar_volume(self):
@@ -540,7 +589,7 @@ class ElectrolyzerData(OpsBlockData):
         return 0 * pyunits.mol / pyunits.s
 
     def _anode_gas_extra(self, t):
-        """Return the non-oxygen molar flow leaving with the anode gas.
+        """Return the non-product molar flow leaving with the anode gas.
 
         Args:
             t: Time point.
@@ -563,6 +612,9 @@ class ElectrolyzerData(OpsBlockData):
             for p in self._products()
             if p.phase is ProductPhase.GAS
         ]
+        anode_products = [
+            self.find_component(f"production_{p.name}") for p in self._anode_products()
+        ]
 
         @self.Constraint(
             tb.time_index,
@@ -577,11 +629,11 @@ class ElectrolyzerData(OpsBlockData):
 
         @self.Constraint(
             tb.time_index,
-            doc="Anode gas volume: oxygen (electron_flow / 4) plus any crossover, "
-            "at the operating temperature and pressure.",
+            doc="Anode gas volume: anode products plus any crossover, at the "
+            "operating temperature and pressure.",
         )
         def anode_gas_balance(b, t):
-            moles = b.electron_flow[t] / 4 + b._anode_gas_extra(t)
+            moles = sum(n[t] for n in anode_products) + b._anode_gas_extra(t)
             return anode.flow_vol_phase[t, anode_phase] == pyunits.convert(
                 molar_volume * moles, pyunits.m**3 / pyunits.hr
             )
@@ -601,13 +653,14 @@ class ElectrolyzerData(OpsBlockData):
         density = _magnitude(self.config.liquid_density, pyunits.kg / pyunits.m**3)
         density = density * pyunits.kg / pyunits.m**3
         products = self._products()
+        all_products = (*products, *self._anode_products())
 
         self.water_consumption = pyo.Expression(
             tb.time_index,
             rule=lambda b, t: pyunits.convert(
                 sum(
                     p.water_per_mol * b.find_component(f"production_{p.name}")[t]
-                    for p in products
+                    for p in all_products
                 )
                 * WATER_MOLAR_MASS
                 / density,
@@ -732,12 +785,14 @@ class WaterElectrolyzerData(ElectrolyzerData):
     """A water electrolyzer producing hydrogen, with defaults set by technology.
 
     Config:
-        Inherits the Electrolyzer config without ``products``; adds
+        Inherits the Electrolyzer config without ``products`` or
+        ``anode_products``; adds
         ``technology``.
     """
 
     CONFIG = ElectrolyzerData.CONFIG()
     del CONFIG["products"]  # fixed to hydrogen
+    del CONFIG["anode_products"]  # fixed to oxygen
     for _name in ("cell_voltage", "operating_temperature", "operating_pressure"):
         CONFIG.get(_name).set_default_value(None)
     CONFIG.declare(
@@ -763,6 +818,14 @@ class WaterElectrolyzerData(ElectrolyzerData):
             A one-product tuple, :data:`HYDROGEN`.
         """
         return (HYDROGEN,)
+
+    def _anode_products(self) -> tuple[ElectrochemicalProduct, ...]:
+        """Return the fixed oxygen anode product slate.
+
+        Returns:
+            A one-product tuple, :data:`OXYGEN`.
+        """
+        return (OXYGEN,)
 
 
 @declare_process_block_class("CO2Electrolyzer")
