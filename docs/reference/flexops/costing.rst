@@ -295,10 +295,21 @@ Every cost lives in one of two sub-blocks built by
            },
        )
 
-   Keys are ``"electrical"`` or a registered fuel name. A native price **wins
-   over a tariff** that also covers that carrier, so the two can be mixed
-   freely, say electricity priced by a tariff alongside a fuel priced
-   natively.
+   Keys are ``"electrical"`` or a registered fuel name. Native prices and an
+   EECO tariff mix freely across carriers, say electricity priced by a tariff
+   alongside a fuel priced natively. Each carrier is billed one way only:
+
+   * A carrier with an ``energy_prices`` entry is billed natively and never
+     sent to EECO, even when the tariff also covers its utility (``electric``
+     for ``"electrical"``, ``gas`` for any fuel). The native price **replaces**
+     that carrier's whole tariff bill, so the utility's demand, fixed and
+     ``export`` charges do not apply to it either.
+   * A carrier without an entry is billed by EECO against the tariff, and its
+     utility must have tariff rows, or the build raises
+     :class:`~flexcore.exceptions.FlexConfigError`.
+
+   Every fuel bills against the tariff's single ``gas`` utility, so a native
+   price for one fuel leaves the gas rows in place for the others.
 
    **A price may vary over the horizon.** Each entry is one of three things.
    It can be a single value (flat over the horizon), an array-like with one
@@ -400,31 +411,31 @@ Every cost lives in one of two sub-blocks built by
    sizing Vars across them is a planned wrapper for design mode, not built
    yet.
 
-.. note:: **A separate export price.**
+.. note:: **Export prices.**
 
-   By default exports are credited at the import price, because export is
-   negative net power (net metering). To sell for less than you buy, give
-   ``export_price`` alongside a native ``energy_prices["electrical"]``::
+   By default exports are credited at the import price, because an export is a
+   negative net series (net metering). To sell for less than you buy, give
+   ``export_prices``, keyed like ``energy_prices``, for any natively priced
+   carrier: electricity or a fuel the site sells::
 
        m.costing = fo.FlexCosting(
            time_block=m.time_block,
-           energy_prices={"electrical": pool_price},
-           export_price=0.5 * pool_price,
+           energy_prices={"electrical": pool_price, "biogas": 0.50},
+           export_prices={"electrical": 0.5 * pool_price, "biogas": 0.20},
        )
 
-   The export price takes the same forms and units as an ``energy_prices``
-   entry. The net electrical power is then split into ``grid_import`` and
-   ``grid_export`` (kW, both non-negative) with
-   ``aggregate_power[t, "electrical"] == grid_import[t] - grid_export[t]``, and
-   electricity costs ``Σ_t (import_price[t] × grid_import[t] − export_price[t] ×
-   grid_export[t]) × dt``. Because the export price may not exceed the import
-   price, the optimizer never imports and exports in the same period, so the
-   model stays an LP with no binaries. An export price above the import price at
-   any time point raises :class:`~flexcore.exceptions.FlexConfigError` (the
-   check skips a price component that has no value yet). ``export_price``
-   requires a native import price and does not apply to tariff-billed
-   electricity. ``grid_import`` and ``grid_export`` can carry import and export
-   limits directly.
+   Each export price takes the same forms and units as its ``energy_prices``
+   entry. The carrier's net series is then split into non-negative
+   ``opex.import_<carrier>`` and ``opex.export_<carrier>``, with
+   ``net[t] == import[t] - export[t]``, and the carrier costs
+   ``Σ_t (import_price[t] × import[t] − export_price[t] × export[t]) × dt``.
+   Because an export price may not exceed its import price, the optimizer never
+   imports and exports in the same period, so the model stays an LP with no
+   binaries. An export price above the import price at any time point raises
+   :class:`~flexcore.exceptions.FlexConfigError` (the check skips a price
+   component that has no value yet), as does an ``export_prices`` key with no
+   ``energy_prices`` entry. The split Vars can carry import and export limits
+   directly.
 
 .. note:: **Exports on the tariff path.**
 
@@ -437,8 +448,9 @@ Every cost lives in one of two sub-blocks built by
    bills the net power as both imports and exports, so ``FlexCosting`` raises
    :class:`~flexcore.exceptions.FlexConfigError` instead of misbilling.
    EECO owns the available types and whether a type keeps the problem linear;
-   its ``"absolute_value"`` type is nonlinear, so use ``export_price`` above
-   when you need an LP.
+   its ``"absolute_value"`` type is nonlinear, so use ``export_prices`` above
+   when you need an LP. EECO's gas leg takes no decomposition, so a tariff
+   with a gas ``export`` charge raises too.
 
 .. note:: **Reporting rule.**
 
@@ -450,10 +462,11 @@ Every cost lives in one of two sub-blocks built by
    ``aggregate_fuel_usage``, ``0`` when the model burns none), and fixed is
    the config constant. In v0 ``dr_revenue`` and the whole ``capital``
    breakdown are zero placeholders, so the structure is stable as those
-   features land. Pass ``split_electricity=True`` to ``report_cost`` to also
-   get ``operating.electricity_import`` (import cost) and
-   ``operating.electricity_export`` (export revenue, a positive magnitude)
-   alongside the net ``electricity``; it needs a native electricity price.
+   features land. Pass ``split_imports_exports=True`` to ``report_cost`` to
+   also get ``operating.imports`` (import cost) and ``operating.exports``
+   (export revenue, a positive magnitude), each keyed by carrier like
+   ``energy_prices``, alongside the net ``electricity`` and ``fuel``. Only
+   natively priced carriers appear; a tariff bill is EECO's single net figure.
    See :doc:`../../explanation/reported_cost` for why this
    number, and not the solver's internal objective, is the one a user should
    trust.

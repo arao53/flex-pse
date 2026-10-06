@@ -1444,17 +1444,19 @@ def test_priced_boundary_blocks_get_their_own_opex_line_items():
     )
 
 
-# -- export price (native, LP-compatible) --------------------------------
+# -- export prices (native, LP-compatible) -------------------------------
 
 _IMPORT_PRICE = 0.10 * _USD / pyunits.kWh
 _EXPORT_PRICE = 0.05 * _USD / pyunits.kWh
 # 12 h importing 100 kW, then 12 h exporting 40 kW.
 _NET_KW = {t: (100.0 if t < 12 else -40.0) for t in range(24)}
+# 12 h buying 10 m3/hr of biogas, then 12 h selling 4 m3/hr.
+_NET_BIOGAS = {t: (10.0 if t < 12 else -4.0) for t in range(24)}
 
 
 def _export_priced_costing(**kwargs) -> pyo.ConcreteModel:
     """A natively priced costing model whose net electrical power is fixed."""
-    kwargs.setdefault("export_price", _EXPORT_PRICE)
+    kwargs.setdefault("export_prices", {"electrical": _EXPORT_PRICE})
     m = _pump_tank_costing(
         no_tariff=True, energy_prices={"electrical": _IMPORT_PRICE}, **kwargs
     )
@@ -1464,6 +1466,26 @@ def _export_priced_costing(**kwargs) -> pyo.ConcreteModel:
     return m
 
 
+def _fuel_export_costing() -> pyo.ConcreteModel:
+    """A natively priced model with a fixed biogas series it buys and then sells."""
+    m = _pump_tank_costing(
+        no_tariff=True,
+        energy_prices={"electrical": _IMPORT_PRICE, "biogas": 0.50},
+        export_prices={"biogas": 0.20},
+        run_cost_process=False,
+    )
+    _add_fuel_usage(m, "biogas", _NET_BIOGAS).fix()
+    m.costing.cost_process()
+    return m
+
+
+def _set_split(opex, carrier: str, net: dict[int, float]) -> None:
+    """Set a carrier's import/export Vars to the sign split of ``net`` (no solve)."""
+    for t, value in net.items():
+        opex.find_component(f"import_{carrier}")[t].set_value(max(value, 0.0))
+        opex.find_component(f"export_{carrier}")[t].set_value(max(-value, 0.0))
+
+
 @pytest.mark.unit
 def test_export_price_above_import_price_raises():
     """An export price above the import price would let the LP arbitrage the grid."""
@@ -1471,7 +1493,7 @@ def test_export_price_above_import_price_raises():
         _pump_tank_costing(
             no_tariff=True,
             energy_prices={"electrical": _IMPORT_PRICE},
-            export_price=0.20 * _USD / pyunits.kWh,
+            export_prices={"electrical": 0.20 * _USD / pyunits.kWh},
         )
 
 
@@ -1483,61 +1505,106 @@ def test_export_price_per_period_above_import_price_raises():
         _pump_tank_costing(
             no_tariff=True,
             energy_prices={"electrical": 0.10},
-            export_price=export,
+            export_prices={"electrical": export},
         )
 
 
 @pytest.mark.unit
-def test_export_price_requires_native_import_price():
-    """An export price needs a native import price to be compared against."""
-    with pytest.raises(FlexConfigError, match="export_price"):
-        _pump_tank_costing(export_price=_EXPORT_PRICE)
+def test_fuel_export_price_above_import_price_raises():
+    """The export <= import check applies to fuels as well as electricity."""
+    m = _pump_tank_costing(
+        no_tariff=True,
+        energy_prices={"electrical": _IMPORT_PRICE, "biogas": 0.50},
+        export_prices={"biogas": 0.60},
+        run_cost_process=False,
+    )
+    _add_fuel_usage(m, "biogas", _NET_BIOGAS)
+    with pytest.raises(FlexConfigError, match="biogas"):
+        m.costing.cost_process()
 
 
 @pytest.mark.unit
-def test_no_export_price_builds_no_grid_variables():
+def test_export_price_requires_native_import_price():
+    """An export price needs a native import price for the same carrier."""
+    with pytest.raises(FlexConfigError, match="export_prices"):
+        _pump_tank_costing(export_prices={"electrical": _EXPORT_PRICE})
+
+
+@pytest.mark.unit
+def test_export_price_key_without_import_price_raises():
+    """Every export_prices key needs a matching energy_prices key."""
+    with pytest.raises(FlexConfigError, match="biogas"):
+        _pump_tank_costing(
+            no_tariff=True,
+            energy_prices={"electrical": _IMPORT_PRICE},
+            export_prices={"biogas": 0.20},
+        )
+
+
+@pytest.mark.unit
+def test_no_export_price_builds_no_split_variables():
     """Single-price (net metering) models are unchanged."""
     m = _pump_tank_costing(no_tariff=True, energy_prices={"electrical": _IMPORT_PRICE})
-    assert m.costing.find_component("grid_import") is None
-    assert m.costing.find_component("grid_export") is None
+    assert m.costing.opex.find_component("import_electrical") is None
+    assert m.costing.opex.find_component("export_electrical") is None
 
 
 @pytest.mark.unit
 def test_export_priced_constraints_are_unit_consistent():
-    """The grid split and the two-price bill are dimensionally consistent."""
-    m = _export_priced_costing()
-    assert_units_consistent(m.costing)
+    """The import/export split and the two-price bill are dimensionally consistent."""
+    assert_units_consistent(_export_priced_costing().costing)
+    assert_units_consistent(_fuel_export_costing().costing)
 
 
 @pytest.mark.unit
-def test_report_cost_split_electricity():
-    """split_electricity reports import cost and export revenue next to the net."""
-    m = _export_priced_costing()
-    for t, kw in _NET_KW.items():
-        m.costing.grid_import[t].set_value(max(kw, 0.0))
-        m.costing.grid_export[t].set_value(max(-kw, 0.0))
+def test_fuel_export_price_bills_the_split():
+    """A fuel with an export price is billed import x price - export x export price."""
+    m = _fuel_export_costing()
+    _set_split(m.costing.opex, "biogas", _NET_BIOGAS)
     _propagate(m.costing)
 
-    split = m.costing.report_cost(m, split_electricity=True).operating
-    assert split.electricity_import == pytest.approx(120.0)
-    assert split.electricity_export == pytest.approx(24.0)
+    # 12 h x 10 m3/hr x $0.50 - 12 h x 4 m3/hr x $0.20 = 60 - 9.6
+    assert pyo.value(m.costing.opex.fuel_cost_biogas) == pytest.approx(50.4)
+
+
+@pytest.mark.unit
+def test_report_cost_split_imports_exports():
+    """split_imports_exports reports import cost and export revenue per carrier."""
+    m = _export_priced_costing()
+    _set_split(m.costing.opex, "electrical", _NET_KW)
+    _propagate(m.costing)
+
+    split = m.costing.report_cost(m, split_imports_exports=True).operating
+    assert split.imports == pytest.approx({"electrical": 120.0})
+    assert split.exports == pytest.approx({"electrical": 24.0})
     assert split.electricity == pytest.approx(96.0)
     assert split.total == pytest.approx(96.0)
+
+
+@pytest.mark.unit
+def test_report_cost_split_covers_fuels():
+    """Each natively priced fuel gets its own import/export entry."""
+    m = _fuel_export_costing()
+    _set_split(m.costing.opex, "biogas", _NET_BIOGAS)
+    _propagate(m.costing)
+
+    split = m.costing.report_cost(m, split_imports_exports=True).operating
+    assert split.imports["biogas"] == pytest.approx(60.0)
+    assert split.exports["biogas"] == pytest.approx(9.6)
+    assert split.fuel == pytest.approx(50.4)
 
 
 @pytest.mark.unit
 def test_report_cost_split_defaults_off():
     """Without the flag the split fields stay unset."""
     m = _export_priced_costing()
-    for t, kw in _NET_KW.items():
-        m.costing.grid_import[t].set_value(max(kw, 0.0))
-        m.costing.grid_export[t].set_value(max(-kw, 0.0))
+    _set_split(m.costing.opex, "electrical", _NET_KW)
     _propagate(m.costing)
 
     operating = m.costing.report_cost(m).operating
     assert operating.electricity == pytest.approx(96.0)
-    assert operating.electricity_import is None
-    assert operating.electricity_export is None
+    assert operating.imports is None
+    assert operating.exports is None
 
 
 @pytest.mark.unit
@@ -1549,20 +1616,21 @@ def test_report_cost_split_single_price_splits_by_sign():
     for t, kw in _NET_KW.items():
         m.costing.aggregate_power[t, "electrical"].fix(kw)
 
-    split = m.costing.report_cost(m, split_electricity=True).operating
-    assert split.electricity_import == pytest.approx(120.0)
-    assert split.electricity_export == pytest.approx(48.0)
+    split = m.costing.report_cost(m, split_imports_exports=True).operating
+    assert split.imports == pytest.approx({"electrical": 120.0})
+    assert split.exports == pytest.approx({"electrical": 48.0})
     assert split.electricity == pytest.approx(72.0)
 
 
 @pytest.mark.unit
-def test_report_cost_split_on_tariff_raises():
-    """A tariff bill is EECO's and cannot be split into import and export."""
+def test_report_cost_split_omits_tariff_billed_carriers():
+    """A tariff bill is EECO's single net figure, so it is left out of the split."""
     m = _pump_tank_costing()
     _set_power(m, {t: 100.0 for t in range(24)})
     _propagate(m.costing)
-    with pytest.raises(FlexConfigError, match="split_electricity"):
-        m.costing.report_cost(m, split_electricity=True)
+    split = m.costing.report_cost(m, split_imports_exports=True).operating
+    assert split.imports == {}
+    assert split.exports == {}
 
 
 @pytest.mark.unit
@@ -1580,10 +1648,10 @@ def test_decomposition_type_defaults_to_none():
     assert m.costing.opex.find_component("electric_positive") is None
 
 
-def _tariff_with_export_charge():
-    """A flat electric tariff with an energy charge and an export charge."""
+def _tariff_with_export_charge(utility: str = "electric", units: str = "$/kWh"):
+    """A flat tariff for one utility with an energy charge and an export charge."""
     base = {
-        "utility": "electric",
+        "utility": utility,
         "month_start": 1,
         "month_end": 12,
         "weekday_start": 0,
@@ -1591,28 +1659,27 @@ def _tariff_with_export_charge():
         "hour_start": 0,
         "hour_end": 24,
         "basic_charge_limit (metric)": 0,
-        "units": "$/kWh",
+        "units": units,
     }
-    return load_tariff(
-        [
-            {**base, "type": "energy", "name": "imp", "charge (metric)": 0.10},
-            {**base, "type": "export", "name": "exp", "charge (metric)": 0.05},
-        ]
-    )
+    return [
+        {**base, "type": "energy", "name": "imp", "charge (metric)": 0.10},
+        {**base, "type": "export", "name": "exp", "charge (metric)": 0.05},
+    ]
 
 
 @pytest.mark.unit
 def test_tariff_export_charge_without_decomposition_raises():
     """EECO bills the net series as both import and export unless it is decomposed."""
     with pytest.raises(FlexConfigError, match="decomposition_type"):
-        _pump_tank_costing(tariff=_tariff_with_export_charge())
+        _pump_tank_costing(tariff=load_tariff(_tariff_with_export_charge()))
 
 
 @pytest.mark.unit
 def test_tariff_export_charge_with_decomposition_builds():
     """Naming a decomposition type satisfies the export-charge check."""
     m = _pump_tank_costing(
-        tariff=_tariff_with_export_charge(), decomposition_type="absolute_value"
+        tariff=load_tariff(_tariff_with_export_charge()),
+        decomposition_type="absolute_value",
     )
     assert m.costing.opex.find_component("electric_negative") is not None
 
@@ -1621,7 +1688,19 @@ def test_tariff_export_charge_with_decomposition_builds():
 def test_tariff_export_charge_ignored_when_electricity_priced_natively():
     """A native electricity price bypasses the tariff, so its export charge is moot."""
     m = _pump_tank_costing(
-        tariff=_tariff_with_export_charge(),
+        tariff=load_tariff(_tariff_with_export_charge()),
         energy_prices={"electrical": _IMPORT_PRICE},
     )
     assert m.costing.opex.find_component("electric_negative") is None
+
+
+@pytest.mark.unit
+def test_gas_tariff_export_charge_raises():
+    """EECO's gas leg cannot decompose net usage, so a gas export charge raises."""
+    tariff = load_tariff(
+        _electric_only_records() + _tariff_with_export_charge("gas", "$/m3")
+    )
+    m = _pump_tank_costing(tariff=tariff, run_cost_process=False)
+    _add_fuel_usage(m, "gas", _NET_BIOGAS)
+    with pytest.raises(FlexConfigError, match="gas"):
+        m.costing.cost_process()

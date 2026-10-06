@@ -86,14 +86,16 @@ def test_build_model_matches_hand_built(monkeypatch):
 
 
 @pytest.mark.unit
-def test_build_model_export_price_splits_grid_power():
-    """A config export_price reaches FlexCosting and builds the grid split."""
+def test_build_model_export_prices_split_electrical_power():
+    """Config export_prices reach FlexCosting and build the import/export split."""
     cfg = json.loads(_CONFIG.read_text())
     del cfg["costing"]["tariff_source"]
     cfg["costing"]["energy_prices"] = {"electrical": {"value": 0.1, "units": "USD/kWh"}}
-    cfg["costing"]["export_price"] = {"value": 0.05, "units": "USD/kWh"}
+    cfg["costing"]["export_prices"] = {
+        "electrical": {"value": 0.05, "units": "USD/kWh"}
+    }
     m = build_model(cfg)
-    assert m.costing.find_component("grid_export") is not None
+    assert m.costing.opex.find_component("export_electrical") is not None
 
 
 @pytest.mark.unit
