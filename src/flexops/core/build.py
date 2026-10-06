@@ -135,16 +135,15 @@ def _build_costing(model, cfg: ModelConfig):
         name: parse_quantity({"value": spec.value, "units": spec.units})
         for name, spec in (costing.energy_prices or {}).items()
     }
-    export_price = None
-    if costing.export_price is not None:
-        export_price = parse_quantity(
-            {"value": costing.export_price.value, "units": costing.export_price.units}
-        )
+    export_prices = {
+        name: parse_quantity({"value": spec.value, "units": spec.units})
+        for name, spec in (costing.export_prices or {}).items()
+    }
     return FlexCosting(
         time_block=model.time_block,
         tariff_file=costing.tariff_source,
         energy_prices=import_prices or None,
-        export_price=export_price,
+        export_prices=export_prices or None,
         decomposition_type=costing.decomposition_type,
         currency=costing.currency,
         dr_event_file=None if costing.dr is None else costing.dr.events_source,
