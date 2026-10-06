@@ -79,17 +79,21 @@
           "description": "Optional native prices keyed by carrier or fuel name ('electrical', or a fuel such as 'natural_gas'). A carrier priced here is billed at that price instead of through the tariff, so a run with every carrier priced needs no tariff at all. Each price is flat over the horizon or given per time point.",
           "title": "Energy Prices"
         },
-        "export_price": {
+        "export_prices": {
           "anyOf": [
             {
-              "$ref": "#/$defs/PriceSpec"
+              "additionalProperties": {
+                "$ref": "#/$defs/PriceSpec"
+              },
+              "type": "object"
             },
             {
               "type": "null"
             }
           ],
           "default": null,
-          "description": "Optional price paid for exported electricity, in the same form as an energy_prices entry. Needs an 'electrical' entry in energy_prices and must not exceed it at any time point. Omit it to credit exports at the import price."
+          "description": "Optional prices paid for exports, keyed like energy_prices ('electrical' or a fuel name). Each key needs a matching energy_prices entry and must not exceed it at any time point. A carrier left out credits exports at its import price.",
+          "title": "Export Prices"
         },
         "fixed_operating_cost": {
           "default": 0.0,
