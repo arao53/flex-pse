@@ -1,6 +1,7 @@
 """Harness-driven and hand tests for the Electrolyzer family."""
 
 import dataclasses
+import logging
 
 import pyomo.environ as pyo
 import pytest
@@ -28,7 +29,9 @@ MOLAR_VOLUME = GAS_CONSTANT * T_OP / P_OP * 3600  # (m^3/hr) per (mol/s)
 WATER_VOLUME = 0.018015 / 1000.0 * 3600  # (m^3/hr) per (mol/s) at 1000 kg/m^3
 
 N_CELLS = 10
-CURRENT = 1000.0  # A
+ELECTRODE_AREA = 500.0  # cm^2
+CURRENT_DENSITY = 2.0  # A/cm^2
+CURRENT = CURRENT_DENSITY * ELECTRODE_AREA  # A
 ELECTRONS = N_CELLS * CURRENT / FARADAY  # mol e-/s
 
 CO_PRODUCT = ElectrochemicalProduct(
@@ -36,40 +39,45 @@ CO_PRODUCT = ElectrochemicalProduct(
     electrons=2,
     faradaic_efficiency=0.9,
     phase=ProductPhase.GAS,
-    co2_per_mol=1.0,
-    water_per_mol=0.0,
     molar_mass=28.01 * pyunits.g / pyunits.mol,
+    reactants={"CO2": 1.0},
 )
 H2_SIDE_PRODUCT = ElectrochemicalProduct(
     name="H2",
     electrons=2,
     faradaic_efficiency=0.1,
     phase=ProductPhase.GAS,
-    co2_per_mol=0.0,
-    water_per_mol=1.0,
     molar_mass=2.016 * pyunits.g / pyunits.mol,
+    reactants={"H2O": 1.0},
 )
 FORMATE_PRODUCT = ElectrochemicalProduct(
     name="HCOOH",
     electrons=2,
     faradaic_efficiency=0.5,
     phase=ProductPhase.LIQUID,
-    co2_per_mol=1.0,
-    water_per_mol=1.0,
     molar_mass=46.03 * pyunits.g / pyunits.mol,
+    reactants={"CO2": 1.0, "H2O": 1.0},
 )
 CL2_PRODUCT = ElectrochemicalProduct(
     name="Cl2",
     electrons=2,
     faradaic_efficiency=1.0,
     phase=ProductPhase.GAS,
-    co2_per_mol=0.0,
-    water_per_mol=0.0,
     molar_mass=70.90 * pyunits.g / pyunits.mol,
+    reactants={"NaCl": 2.0},
+)
+NACLO_PRODUCT = ElectrochemicalProduct(
+    name="NaClO",
+    electrons=2,
+    faradaic_efficiency=0.5,
+    phase=ProductPhase.LIQUID,
+    molar_mass=74.44 * pyunits.g / pyunits.mol,
+    reactants={"NaCl": 1.0},
 )
 
 _COMMON = dict(
     n_cells=N_CELLS,
+    electrode_area=ELECTRODE_AREA * pyunits.cm**2,
     operating_temperature=T_OP * pyunits.K,
     operating_pressure=P_OP * pyunits.Pa,
     separator_volume=10 * pyunits.m**3,
@@ -78,7 +86,7 @@ _COMMON = dict(
 
 
 def _water(n: int = 3, **kwargs):
-    """Build a WaterElectrolyzer on an ``n``-point time block, current set."""
+    """Build a WaterElectrolyzer on an ``n``-point time block, j set."""
     m = dummy_time_block(n)
     m.gas = SimpleGasFlow()
     m.unit = WaterElectrolyzer(
@@ -86,12 +94,12 @@ def _water(n: int = 3, **kwargs):
         gas_property_package=m.gas,
         **{**_COMMON, **kwargs},
     )
-    m.unit.current[:].set_value(CURRENT)
+    m.unit.current_density[:].set_value(CURRENT_DENSITY)
     return m, m.unit
 
 
 def _co2(n: int = 3, **kwargs):
-    """Build a CO2Electrolyzer on an ``n``-point time block, current set."""
+    """Build a CO2Electrolyzer on an ``n``-point time block, j set."""
     m = dummy_time_block(n)
     m.gas = SimpleGasFlow()
     m.unit = CO2Electrolyzer(
@@ -99,7 +107,7 @@ def _co2(n: int = 3, **kwargs):
         gas_property_package=m.gas,
         **{**_COMMON, **kwargs},
     )
-    m.unit.current[:].set_value(CURRENT)
+    m.unit.current_density[:].set_value(CURRENT_DENSITY)
     return m, m.unit
 
 
@@ -124,7 +132,7 @@ def _parameters(unit) -> set[str]:
 
 
 class TestWaterElectrolyzerPEM(UnitModelTestHarness):
-    """Fixing current and make-up water determines every flow and the power."""
+    """Fixing current density and make-up water determines every flow and power."""
 
     expected_dof = 0
     expected_solution = {
@@ -208,9 +216,8 @@ def test_products_accept_plain_dicts():
                 "electrons": 2,
                 "faradaic_efficiency": 0.95,
                 "phase": "gas",
-                "co2_per_mol": 1.0,
-                "water_per_mol": 0.0,
                 "molar_mass": 28.01 * pyunits.g / pyunits.mol,
+                "reactants": {"CO2": 1.0},
             }
         ]
     )
@@ -258,9 +265,9 @@ def test_scalar_coefficients_are_fixed_regressable_parameters():
 
 
 @pytest.mark.unit
-def test_current_and_make_up_water_are_inputs_power_is_output():
+def test_current_density_and_make_up_water_are_inputs_power_is_output():
     _, unit = _water()
-    assert {"current", "flow_vol_phase"} <= _registered(unit, "input")
+    assert {"current_density", "flow_vol_phase"} <= _registered(unit, "input")
     assert {"power_electrical", "liquid_volume"} <= _registered(unit, "output")
     inputs = [rec.var for rec in unit._io_registry.io_variables if rec.role == "input"]
     assert any(var is unit.inlet_water_state.flow_vol_phase for var in inputs)
@@ -385,6 +392,82 @@ def test_waste_heat_is_current_times_overpotential_above_thermoneutral():
     assert pyo.value(unit.waste_heat[0]) == pytest.approx(expected_kw)
 
 
+# -- current density and ohmic loss ------------------------------------------
+
+
+@pytest.mark.unit
+def test_current_is_current_density_times_electrode_area():
+    _, unit = _water()
+    assert isinstance(unit.current_density, pyo.Var)
+    assert pyo.value(unit.current[0]) == pytest.approx(CURRENT)
+    assert unit.current_density[0].ub == pytest.approx(2.0)
+
+
+@pytest.mark.unit
+def test_rated_current_density_bounds_the_operating_variable():
+    _, unit = _water(rated_current_density=1.5 * pyunits.A / pyunits.cm**2)
+    assert unit.current_density[0].ub == pytest.approx(1.5)
+
+
+@pytest.mark.unit
+def test_no_ohmic_loss_keeps_power_linear_in_current_density():
+    _, unit = _water()
+    assert unit.config.ohmic_loss is False
+    assert unit.find_component("area_specific_resistance") is None
+    assert unit.power_electrical_relation[0].body.polynomial_degree() == 1
+
+
+@pytest.mark.unit
+def test_ohmic_loss_adds_asr_times_current_density_to_cell_voltage():
+    _, unit = _water(
+        cell_voltage=2.0 * pyunits.V,
+        ohmic_loss=True,
+        area_specific_resistance=0.1 * pyunits.ohm * pyunits.cm**2,
+    )
+    voltage = 2.0 + 0.1 * CURRENT_DENSITY
+    assert unit.area_specific_resistance.fixed
+    assert "area_specific_resistance" in _parameters(unit)
+    assert pyo.value(unit.operating_voltage[0]) == pytest.approx(voltage)
+    assert unit.power_electrical_relation[0].body.polynomial_degree() == 2
+    unit.power_electrical[:].set_value(N_CELLS * voltage * CURRENT / 1000.0)
+    _assert_satisfied(unit.power_electrical_relation)
+    expected_heat = N_CELLS * CURRENT * (voltage - 1.48) / 1000.0
+    assert pyo.value(unit.waste_heat[0]) == pytest.approx(expected_heat)
+
+
+@pytest.mark.unit
+def test_ohmic_loss_warns_about_solve_complexity(caplog):
+    with caplog.at_level(logging.WARNING, logger="flexops.unit_models.electrolyzer"):
+        _water(ohmic_loss=True)
+    assert "quadratic" in caplog.text.lower()
+
+
+# -- dissolved CO2 -----------------------------------------------------------
+
+
+@pytest.mark.unit
+def test_dissolved_co2_fraction_splits_unreacted_co2_out_of_the_cathode_gas():
+    _, unit = _co2(single_pass_conversion=0.5, co2_dissolved_fraction=0.3)
+    co = 0.9 * ELECTRONS / 2
+    h2 = 0.1 * ELECTRONS / 2
+    unreacted = co  # conversion 0.5, no crossover
+    for t in unit.current:
+        unit.production_CO[t].set_value(co)
+        unit.production_H2[t].set_value(h2)
+        unit.outlet_cathode_gas_state.flow_vol_phase[t, "Vap"].set_value(
+            (co + h2 + 0.7 * unreacted) * MOLAR_VOLUME
+        )
+    assert pyo.value(unit.co2_dissolved[0]) == pytest.approx(0.3 * unreacted)
+    _assert_satisfied(unit.cathode_gas_balance)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("fraction", [-0.1, 1.1])
+def test_rejects_co2_dissolved_fraction_outside_unit_interval(fraction):
+    with pytest.raises(FlexConfigError, match="co2_dissolved_fraction"):
+        _co2(co2_dissolved_fraction=fraction)
+
+
 # -- anode products ----------------------------------------------------------
 
 
@@ -407,7 +490,7 @@ def test_generic_electrolyzer_accepts_a_custom_anode_product_table():
         **_COMMON,
     )
     unit = m.unit
-    unit.current[:].set_value(CURRENT)
+    unit.current_density[:].set_value(CURRENT_DENSITY)
     for t in unit.current:
         unit.production_Cl2[t].set_value(ELECTRONS / 2)
         unit.outlet_anode_gas_state.flow_vol_phase[t, "Vap"].set_value(
@@ -424,10 +507,82 @@ def test_rejects_anode_faradaic_efficiencies_summing_above_one():
 
 
 @pytest.mark.unit
-def test_rejects_liquid_anode_product():
-    liquid = dataclasses.replace(CL2_PRODUCT, phase=ProductPhase.LIQUID)
-    with pytest.raises(FlexConfigError, match="gas"):
-        _co2(anode_products=[liquid], has_liquid_outlet=True)
+def test_liquid_anode_product_leaves_through_liquid_outlet():
+    m = dummy_time_block(3)
+    m.gas = SimpleGasFlow()
+    m.unit = Electrolyzer(
+        liquid_property_package=m.properties,
+        gas_property_package=m.gas,
+        anode_products=[
+            dataclasses.replace(OXYGEN, faradaic_efficiency=0.5),
+            NACLO_PRODUCT,
+        ],
+        has_liquid_outlet=True,
+        **_COMMON,
+    )
+    unit = m.unit
+    unit.current_density[:].set_value(CURRENT_DENSITY)
+    hypochlorite = 0.5 * ELECTRONS / 2
+    for t in unit.current:
+        unit.production_O2[t].set_value(0.5 * ELECTRONS / 4)
+        unit.production_NaClO[t].set_value(hypochlorite)
+        unit.outlet_anode_gas_state.flow_vol_phase[t, "Vap"].set_value(
+            0.5 * ELECTRONS / 4 * MOLAR_VOLUME
+        )
+        unit.outlet_liquid_state.flow_vol_phase[t, "Liq"].set_value(
+            hypochlorite * 0.07444 / 1000.0 * 3600
+        )
+    _assert_satisfied(unit.anode_gas_balance)
+    _assert_satisfied(unit.liquid_outlet_balance)
+
+
+@pytest.mark.unit
+def test_rejects_liquid_anode_product_without_liquid_outlet():
+    with pytest.raises(FlexConfigError, match="has_liquid_outlet"):
+        _co2(anode_products=[NACLO_PRODUCT])
+
+
+@pytest.mark.unit
+def test_builds_a_consumption_expression_per_reactant():
+    _, unit = _co2(anode_products=[CL2_PRODUCT])
+    for t in unit.current:
+        unit.production_CO[t].set_value(0.9 * ELECTRONS / 2)
+        unit.production_Cl2[t].set_value(ELECTRONS / 2)
+    assert pyo.value(unit.consumption_NaCl[0]) == pytest.approx(ELECTRONS)
+    assert pyo.value(unit.consumption_CO2[0]) == pytest.approx(0.9 * ELECTRONS / 2)
+
+
+@pytest.mark.unit
+def test_negative_stoichiometry_produces_the_reactant():
+    m = dummy_time_block(3)
+    m.gas = SimpleGasFlow()
+    m.unit = Electrolyzer(
+        liquid_property_package=m.properties,
+        gas_property_package=m.gas,
+        products=[
+            dataclasses.replace(
+                H2_SIDE_PRODUCT, faradaic_efficiency=1.0, reactants={"H2O": 2.0}
+            )
+        ],
+        anode_products=[dataclasses.replace(OXYGEN, reactants={"H2O": -2.0})],
+        **_COMMON,
+    )
+    unit = m.unit
+    for t in unit.current:
+        unit.production_H2[t].set_value(ELECTRONS / 2)
+        unit.production_O2[t].set_value(ELECTRONS / 4)
+    # 2 H2O per H2 at the cathode, 2 H2O back per O2 at the anode: 1 per H2 net
+    assert pyo.value(unit.consumption_H2O[0]) == pytest.approx(ELECTRONS / 2)
+    assert pyo.value(unit.water_consumption[0]) == pytest.approx(
+        ELECTRONS / 2 * WATER_VOLUME
+    )
+
+
+@pytest.mark.unit
+def test_rejects_reactant_name_that_is_not_an_identifier():
+    bad = dataclasses.replace(CO_PRODUCT, reactants={"CO-2": 1.0})
+    with pytest.raises(FlexConfigError, match="reactant"):
+        _co2(products=[bad, H2_SIDE_PRODUCT])
 
 
 @pytest.mark.unit
