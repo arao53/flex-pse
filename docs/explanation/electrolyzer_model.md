@@ -58,6 +58,9 @@ program.
 | {math}`b` | electrolyte bleed per unit volume of water consumed | – | fitted parameter | `bleed_fraction` |
 | {math}`V_{liq}[t]` | separator liquid inventory | m³ | derived, bounded | `liquid_volume[t]` |
 | {math}`\Delta t` | time step | h | time grid | `time_block.dt` |
+| {math}`k_m` | CO2 mass-transfer coefficient, {math}`D_{CO_2}/\delta_{BL}` (`CO2Electrolyzer` only) | m/s | fitted parameter | `mass_transfer_coefficient` |
+| {math}`C_{CO_2,bulk}` | CO2 concentration in the bulk electrolyte (`CO2Electrolyzer` only) | mol/m³ | fitted parameter | `co2_bulk_concentration` |
+| {math}`C_{CO_2,local}[t]` | CO2 concentration at the cathode (`CO2Electrolyzer` only) | mol/m³ | derived | `co2_local_concentration[t]` |
 
 "Fitted parameter" means a fixed value in a schedule optimization that
 parameter estimation can regress from plant data.
@@ -79,6 +82,19 @@ charge (Faraday's law):
 The Faradaic efficiencies of the cathode products sum to at most 1, and so do
 those of the anode products. Any shortfall is charge lost to reactions that are
 not modeled.
+
+A cathode product named by `balance_product` takes no Faradaic efficiency of
+its own. Its rate is whatever charge the other cathode products leave:
+
+```{math}
+z_b \, \dot{n}_b[t] = \dot{n}_e[t] - \sum_{k \ne b} z_k \, \dot{n}_k[t]
+```
+
+reported as `charge_balance_{b}`. This keeps the charge balance closed when the
+other products' Faradaic relations are replaced by fitted curves, and
+{math}`\dot{n}_b \ge 0` stops those curves from using more charge than the stack
+passes. `CO2Electrolyzer` uses hydrogen evolution as the balance product by
+default.
 
 ### Cell voltage and ohmic loss
 
@@ -166,7 +182,12 @@ same loop, so they leave without changing the inventory.
   polarization curve, replace `power_electrical_relation` with a fitted curve
   (see {meth}`~flexops.core.ops_block.OpsBlockData.swap_relation`).
 - **Constant Faradaic efficiency.** A fitted Faradaic-efficiency curve
-  replaces `faradaic_relation_{k}` in the same way.
+  replaces `faradaic_relation_{k}` in the same way. The balance product, if
+  one is set, picks up the rest of the charge.
+- **Fixed CO2 mass transport.** In `CO2Electrolyzer`, {math}`k_m` is a fixed
+  parameter, so the optimizer cannot raise electrolyte flow to raise the
+  transport limit. The electrolyte recirculation pump is counted in
+  {math}`f_{BoP}`.
 - **Fixed temperature and pressure.** The separators sit at
   {math}`T_{op}, P_{op}`. The model has no thermal dynamics or warm-up, and
   {math}`\dot{Q}_{waste}` is reported but not balanced against a cooling loop.
@@ -327,6 +348,42 @@ does not change the liquid outlet volume, and the outlet carries no speciation.
 A linearized kinetic model of the aqueous and gas split is planned to replace
 the fixed fraction.
 
+### Mass-transport limit
+
+CO2 reaches the cathode by diffusing across a boundary layer of thickness
+{math}`\delta_{BL}`, which electrolyte flow controls. Fick's law gives the CO2
+concentration at the cathode from the CO2 the cells use, both by reduction and
+by buffering the hydroxide the cathode generates (the carbonate term
+{math}`c \, \dot{n}_e`). This follows eq. 2 of Matthews et al., *ACS Catal.*
+2025, 15, 381:
+
+```{math}
+C_{CO_2,local}[t] = C_{CO_2,bulk}
+  - \frac{\dot{n}_{CO_2,consumed}[t] + \dot{n}_{CO_2,crossover}[t]}{k_m \, N_{cells} \, A_{cell}}
+\qquad
+k_m = \frac{D_{CO_2}}{\delta_{BL}}
+```
+
+Setting `mass_transfer_coefficient` builds `co2_local_concentration[t]` and
+the constraint `co2_transport_limit[t]`, which keeps it non-negative. The
+constraint is written multiplied through by {math}`k_m`, so it stays linear if
+{math}`k_m` is regressed:
+
+```{math}
+\dot{n}_{CO_2,consumed}[t] + \dot{n}_{CO_2,crossover}[t] \le k_m \, C_{CO_2,bulk} \, N_{cells} \, A_{cell}
+```
+
+With {math}`D_{CO_2} = 1.97 \times 10^{-9}` m²/s, a flow cell with
+{math}`\delta_{BL}` between 11 and 235 µm has {math}`k_m` between roughly
+{math}`8 \times 10^{-6}` and {math}`2 \times 10^{-4}` m/s. The default
+{math}`C_{CO_2,bulk}` is 34 mol/m³, CO2-saturated electrolyte at 1 atm and
+25 °C. Without `mass_transfer_coefficient`, the unit has no transport limit.
+
+Selectivity also depends on transport. Faster flow raises CO2 reduction rates
+at a given potential, while hydrogen evolution barely changes. A fitted
+`faradaic_relation_{k}` captures this at the fitted flow, and the balance
+product absorbs the rest of the charge.
+
 ## Property packages
 
 Every port is single-phase. The liquid make-up inlet and the liquid outlet
@@ -340,5 +397,6 @@ stream can carry a different gas.
 Each product's `faradaic_relation_{k}` and the `power_electrical_relation` are
 registered relations, so a fitted Faradaic-efficiency curve or polarization
 curve replaces them in place (see
-{meth}`~flexops.core.ops_block.OpsBlockData.swap_relation`). The separator
-holdup is a conservation law and is never swapped.
+{meth}`~flexops.core.ops_block.OpsBlockData.swap_relation`). The balance
+product's `charge_balance_{b}`, the separator holdup and the CO2 transport
+limit are conservation laws and are never swapped.

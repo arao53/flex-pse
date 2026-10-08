@@ -219,7 +219,8 @@ def test_products_accept_plain_dicts():
                 "molar_mass": 28.01 * pyunits.g / pyunits.mol,
                 "reactants": {"CO2": 1.0},
             }
-        ]
+        ],
+        balance_product=None,
     )
     assert pyo.value(unit.faradaic_efficiency_CO) == pytest.approx(0.95)
 
@@ -238,12 +239,11 @@ def test_power_and_faradaic_relations_are_registered_swappable():
 
 
 @pytest.mark.unit
-def test_co2_electrolyzer_registers_one_faradaic_relation_per_product():
+def test_co2_electrolyzer_registers_a_faradaic_relation_per_non_balance_product():
     _, unit = _co2()
     assert _relations(unit) == {
         "power_electrical_relation",
         "faradaic_relation_CO",
-        "faradaic_relation_H2",
         "faradaic_relation_O2",
     }
 
@@ -255,7 +255,6 @@ def test_scalar_coefficients_are_fixed_regressable_parameters():
         "cell_voltage",
         "bop_fraction",
         "faradaic_efficiency_CO",
-        "faradaic_efficiency_H2",
         "single_pass_conversion",
         "co2_crossover_per_electron",
     }
@@ -357,6 +356,7 @@ def test_liquid_outlet_carries_bleed_and_liquid_products():
         ],
         has_liquid_outlet=True,
         bleed_fraction=0.1,
+        balance_product=None,
     )
     formate = 0.5 * ELECTRONS / 2
     consumed = formate * WATER_VOLUME
@@ -383,6 +383,58 @@ def test_co2_feed_closes_the_carbon_balance():
     t = 0
     # carbon in == carbon to product + unreacted (cathode) + crossover (anode)
     assert pyo.value(unit.co2_unreacted[t]) == pytest.approx(feed - co - crossover)
+
+
+@pytest.mark.unit
+def test_balance_product_takes_the_charge_the_other_products_leave():
+    _, unit = _co2()
+    for t in unit.current:
+        unit.production_CO[t].set_value(0.9 * ELECTRONS / 2)
+        unit.production_H2[t].set_value(0.1 * ELECTRONS / 2)
+    _assert_satisfied(unit.charge_balance_H2)
+    assert unit.find_component("faradaic_relation_H2") is None
+    assert unit.find_component("faradaic_efficiency_H2") is None
+
+
+@pytest.mark.unit
+def test_rejects_balance_product_not_in_the_cathode_products():
+    with pytest.raises(FlexConfigError, match="balance_product"):
+        _co2(balance_product="CH4")
+
+
+@pytest.mark.unit
+def test_no_mass_transfer_coefficient_builds_no_transport_limit():
+    _, unit = _co2()
+    assert unit.find_component("co2_transport_limit") is None
+    assert unit.find_component("co2_local_concentration") is None
+
+
+@pytest.mark.unit
+def test_mass_transfer_coefficient_builds_fixed_transport_parameters():
+    _, unit = _co2(mass_transfer_coefficient=1e-4 * pyunits.m / pyunits.s)
+    assert {"mass_transfer_coefficient", "co2_bulk_concentration"} <= _parameters(unit)
+    assert unit.mass_transfer_coefficient.fixed
+    assert pyo.value(unit.co2_bulk_concentration) == pytest.approx(34.0)
+
+
+@pytest.mark.unit
+def test_local_co2_reaches_zero_at_the_transport_limit():
+    flux = 0.9 * ELECTRONS / 2  # CO2 to CO, no crossover
+    k_m = flux / (34.0 * N_CELLS * ELECTRODE_AREA * 1e-4)  # m/s
+    _, unit = _co2(mass_transfer_coefficient=k_m)
+    for t in unit.current:
+        unit.production_CO[t].set_value(flux)
+    assert pyo.value(unit.co2_local_concentration[0]) == pytest.approx(0.0, abs=1e-9)
+    _assert_satisfied(unit.co2_transport_limit)
+    unit.production_CO[0].set_value(flux / 2)
+    assert pyo.value(unit.co2_local_concentration[0]) == pytest.approx(17.0)
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("k_m", [0.0, -1e-4])
+def test_rejects_non_positive_mass_transfer_coefficient(k_m):
+    with pytest.raises(FlexConfigError, match="mass_transfer_coefficient"):
+        _co2(mass_transfer_coefficient=k_m)
 
 
 @pytest.mark.unit
@@ -703,3 +755,23 @@ def test_power_relation_swaps_to_a_fitted_polarization_surrogate():
     )
     _solve_with_inputs_fixed(m, unit)
     assert pyo.value(unit.power_electrical[1]) == pytest.approx(1.0 + 0.02 * CURRENT)
+
+
+@pytest.mark.component
+def test_swapped_faradaic_relation_leaves_the_remaining_charge_to_hydrogen():
+    m, unit = _co2()
+    unit.inlet_water_state.flow_vol_phase[:, "Liq"].set_value(0.01)
+    co = 0.5 * ELECTRONS / 2
+    unit.swap_relation(
+        "faradaic_relation_CO",
+        MultilinearSurrogate(
+            {
+                "input_variables": {"current": "A"},
+                "output_variables": {"production_CO": "mol/s"},
+                "coefficients": {"intercept": 0.0, "current": co / CURRENT},
+            }
+        ),
+    )
+    _solve_with_inputs_fixed(m, unit)
+    assert pyo.value(unit.production_CO[1]) == pytest.approx(co)
+    assert pyo.value(unit.production_H2[1]) == pytest.approx(ELECTRONS / 2 - co)
