@@ -5,18 +5,21 @@ import enum
 
 import pyomo.environ as pyo
 from idaes.core import declare_process_block_class
-from pyomo.common.config import ConfigValue
+from pyomo.common.config import Bool, ConfigValue
 from pyomo.environ import units as pyunits
 
 from flexcore import nomenclature as nm
 from flexcore.config.schema import SurrogateType
 from flexcore.exceptions import FlexConfigError
+from flexcore.logger import get_logger
 from flexops.core.ops_block import OpsBlockData
 from flexops.surrogates import surrogate_from_spec
 from flexops.unit_models._multiport import single_flow_phase
 
 FARADAY = 96485.33212 * pyunits.C / pyunits.mol
 WATER_MOLAR_MASS = 18.015 * pyunits.g / pyunits.mol
+
+_log = get_logger(__name__)
 
 
 class ProductPhase(enum.StrEnum):
@@ -42,18 +45,17 @@ class ElectrochemicalProduct:
         electrons: Electrons transferred per mole of product.
         faradaic_efficiency: Fraction of the stack charge producing this product.
         phase: Phase the product leaves in (gas or liquid outlet).
-        co2_per_mol: Moles of CO2 consumed per mole of product.
-        water_per_mol: Moles of water consumed per mole of product.
         molar_mass: Molar mass with units (used for liquid products).
+        reactants: Moles of each reactant consumed per mole of product, keyed
+            by reactant name; negative values are produced.
     """
 
     name: str
     electrons: int
     faradaic_efficiency: float
     phase: ProductPhase
-    co2_per_mol: float
-    water_per_mol: float
     molar_mass: object
+    reactants: dict[str, float] = dataclasses.field(default_factory=dict)
 
     def __post_init__(self) -> None:
         """Coerce ``phase`` from its string value."""
@@ -65,9 +67,8 @@ HYDROGEN = ElectrochemicalProduct(
     electrons=2,
     faradaic_efficiency=1.0,
     phase=ProductPhase.GAS,
-    co2_per_mol=0.0,
-    water_per_mol=1.0,
     molar_mass=2.016 * pyunits.g / pyunits.mol,
+    reactants={"H2O": 1.0},
 )
 
 OXYGEN = ElectrochemicalProduct(
@@ -75,8 +76,6 @@ OXYGEN = ElectrochemicalProduct(
     electrons=4,
     faradaic_efficiency=1.0,
     phase=ProductPhase.GAS,
-    co2_per_mol=0.0,
-    water_per_mol=0.0,
     molar_mass=32.00 * pyunits.g / pyunits.mol,
 )
 
@@ -159,17 +158,43 @@ class ElectrolyzerData(OpsBlockData):
         ConfigValue(default=100, domain=int, description="Cells in series."),
     )
     CONFIG.declare(
-        "rated_current",
+        "electrode_area",
         ConfigValue(
-            default=2000 * pyunits.A,
-            description="Maximum stack current, the upper bound on current[t], A.",
+            default=1000.0 * pyunits.cm**2,
+            description="Active electrode area of one cell, cm^2.",
+        ),
+    )
+    CONFIG.declare(
+        "rated_current_density",
+        ConfigValue(
+            default=2.0 * pyunits.A / pyunits.cm**2,
+            description="Maximum current density, the upper bound on "
+            "current_density[t], A/cm^2.",
         ),
     )
     CONFIG.declare(
         "cell_voltage",
         ConfigValue(
             default=1.9 * pyunits.V,
-            description="Cell voltage (a fixed, regressable Var once built), V.",
+            description="Cell voltage before ohmic loss (a fixed, regressable Var "
+            "once built), V.",
+        ),
+    )
+    CONFIG.declare(
+        "ohmic_loss",
+        ConfigValue(
+            default=False,
+            domain=Bool,
+            description="If True, add area_specific_resistance * current_density "
+            "to cell_voltage, making power quadratic in current density.",
+        ),
+    )
+    CONFIG.declare(
+        "area_specific_resistance",
+        ConfigValue(
+            default=0.15 * pyunits.ohm * pyunits.cm**2,
+            description="Area-specific cell resistance, used when ohmic_loss is "
+            "True (a fixed, regressable Var once built), ohm*cm^2.",
         ),
     )
     CONFIG.declare(
@@ -322,6 +347,16 @@ class ElectrolyzerData(OpsBlockData):
         """
         return ("cathode_gas_property_package", "anode_gas_property_package")
 
+    def _reactant_names(self) -> tuple[str, ...]:
+        """Return every reactant the products consume, always including water.
+
+        Returns:
+            Reactant names, each built as a ``consumption_{name}`` Expression.
+        """
+        products = (*self._products(), *self._anode_products())
+        names = dict.fromkeys(["H2O", *(r for p in products for r in p.reactants)])
+        return tuple(names)
+
     def _gas_package(self, field: str):
         """Return the package for one gas port, else ``gas_property_package``.
 
@@ -388,14 +423,14 @@ class ElectrolyzerData(OpsBlockData):
                 field="products",
                 value=names,
             )
-        for p in self._anode_products():
-            if p.phase is not ProductPhase.GAS:
+        for p in (*self._products(), *self._anode_products()):
+            if not all(r.isidentifier() for r in p.reactants):
                 raise FlexConfigError(
-                    f"anode product {p.name!r} must be a gas.",
-                    field="anode_products",
+                    f"product {p.name!r} reactant names must be Python "
+                    f"identifiers, got {list(p.reactants)!r}.",
+                    field="products",
                     value=p,
                 )
-        for p in (*self._products(), *self._anode_products()):
             if p.electrons <= 0 or not 0.0 <= p.faradaic_efficiency <= 1.0:
                 raise FlexConfigError(
                     f"product {p.name!r} needs electrons > 0 and a faradaic "
@@ -467,12 +502,19 @@ class ElectrolyzerData(OpsBlockData):
         tb = self._find_time_block()
         n_cells = self.config.n_cells
 
-        self.current = pyo.Var(
+        j_units = pyunits.A / pyunits.cm**2
+        self.current_density = pyo.Var(
             tb.time_index,
             initialize=0.0,
-            bounds=(0.0, _magnitude(self.config.rated_current, pyunits.A)),
-            units=pyunits.A,
-            doc="Stack current: the unit's operating variable, A.",
+            bounds=(0.0, _magnitude(self.config.rated_current_density, j_units)),
+            units=j_units,
+            doc="Current density: the unit's operating variable, A/cm^2.",
+        )
+        area = _magnitude(self.config.electrode_area, pyunits.cm**2) * pyunits.cm**2
+        self.current = pyo.Expression(
+            tb.time_index,
+            rule=lambda b, t: pyunits.convert(b.current_density[t] * area, pyunits.A),
+            doc="Stack current, current_density * electrode_area, A.",
         )
         self.electron_flow = pyo.Expression(
             tb.time_index,
@@ -482,8 +524,22 @@ class ElectrolyzerData(OpsBlockData):
             doc="Molar flow of electrons through the stack, N_cells * I / F.",
         )
 
-        for p in (*self._products(), *self._anode_products()):
+        products = (*self._products(), *self._anode_products())
+        for p in products:
             self._build_faradaic(p)
+        for r in self._reactant_names():
+            self.add_component(
+                f"consumption_{r}",
+                pyo.Expression(
+                    tb.time_index,
+                    rule=lambda b, t, _r=r: sum(
+                        p.reactants.get(_r, 0.0)
+                        * b.find_component(f"production_{p.name}")[t]
+                        for p in products
+                    ),
+                    doc=f"Molar {r} consumed by the cell reactions.",
+                ),
+            )
 
         cell_voltage = self.declare_process_parameter(
             "cell_voltage",
@@ -491,6 +547,30 @@ class ElectrolyzerData(OpsBlockData):
             pyunits.V,
             "Cell voltage at the operating point.",
             bounds=(0.0, None),
+        )
+        asr = None
+        if self.config.ohmic_loss:
+            _log.warning(
+                "%s: ohmic_loss=True makes power quadratic in current "
+                "density; the schedule needs a nonlinear solver and solves slower.",
+                self.name,
+            )
+            asr = self.declare_process_parameter(
+                "area_specific_resistance",
+                self.config.area_specific_resistance,
+                pyunits.ohm * pyunits.cm**2,
+                "Area-specific cell resistance.",
+                bounds=(0.0, None),
+            )
+        self.operating_voltage = pyo.Expression(
+            tb.time_index,
+            rule=lambda b, t: (
+                cell_voltage
+                if asr is None
+                else cell_voltage
+                + pyunits.convert(asr * b.current_density[t], pyunits.V)
+            ),
+            doc="Cell voltage plus any ohmic loss, V.",
         )
         bop = self.declare_process_parameter(
             "bop_fraction",
@@ -504,9 +584,10 @@ class ElectrolyzerData(OpsBlockData):
             tb.time_index,
             rule=lambda b, t: power[t]
             == pyunits.convert(
-                n_cells * cell_voltage * b.current[t] * (1 + bop), pyunits.kW
+                n_cells * b.operating_voltage[t] * b.current[t] * (1 + bop),
+                pyunits.kW,
             ),
-            doc="Electrical draw: N_cells * cell_voltage * current * "
+            doc="Electrical draw: N_cells * operating_voltage * current * "
             "(1 + bop_fraction). Swapped in place for a fitted polarization curve.",
         )
         self.register_relation(self.power_electrical_relation, target=power)
@@ -515,7 +596,7 @@ class ElectrolyzerData(OpsBlockData):
         self.waste_heat = pyo.Expression(
             tb.time_index,
             rule=lambda b, t: pyunits.convert(
-                n_cells * b.current[t] * (cell_voltage - v_tn), pyunits.kW
+                n_cells * b.current[t] * (b.operating_voltage[t] - v_tn), pyunits.kW
             ),
             doc="Stack heat released above the thermoneutral voltage, kW.",
         )
@@ -613,7 +694,9 @@ class ElectrolyzerData(OpsBlockData):
             if p.phase is ProductPhase.GAS
         ]
         anode_products = [
-            self.find_component(f"production_{p.name}") for p in self._anode_products()
+            self.find_component(f"production_{p.name}")
+            for p in self._anode_products()
+            if p.phase is ProductPhase.GAS
         ]
 
         @self.Constraint(
@@ -652,18 +735,12 @@ class ElectrolyzerData(OpsBlockData):
         phase = self._liquid_phase
         density = _magnitude(self.config.liquid_density, pyunits.kg / pyunits.m**3)
         density = density * pyunits.kg / pyunits.m**3
-        products = self._products()
-        all_products = (*products, *self._anode_products())
+        products = (*self._products(), *self._anode_products())
 
         self.water_consumption = pyo.Expression(
             tb.time_index,
             rule=lambda b, t: pyunits.convert(
-                sum(
-                    p.water_per_mol * b.find_component(f"production_{p.name}")[t]
-                    for p in all_products
-                )
-                * WATER_MOLAR_MASS
-                / density,
+                b.consumption_H2O[t] * WATER_MOLAR_MASS / density,
                 pyunits.m**3 / pyunits.hr,
             ),
             doc="Volume of water the cell reactions consume.",
@@ -751,8 +828,8 @@ class ElectrolyzerData(OpsBlockData):
     # -- IO registration -------------------------------------------------------
 
     def _register_io(self) -> None:
-        """Register current and make-up as inputs; power, gas, inventory as outputs."""
-        self.register_io_variable(self.current, role="input")
+        """Register j and make-up as inputs; power, gas, inventory as outputs."""
+        self.register_io_variable(self.current_density, role="input")
         for var in self.inlet_water_state.define_state_vars().values():
             self.register_io_variable(var, role="input")
         self.register_io_variable(self.power_electrical, role="output")
@@ -834,8 +911,11 @@ class CO2ElectrolyzerData(ElectrolyzerData):
 
     Config:
         Inherits the Electrolyzer config; adds ``single_pass_conversion``,
-        ``co2_crossover_per_electron``, and ``co2_property_package``.
+        ``co2_crossover_per_electron``, ``co2_dissolved_fraction``, and
+        ``co2_property_package``.
     """
+
+    # TODO: replace the fixed dissolved fraction with linearized CO2 kinetics.
 
     CONFIG = ElectrolyzerData.CONFIG()
     CONFIG.get("products").set_default_value(
@@ -845,9 +925,8 @@ class CO2ElectrolyzerData(ElectrolyzerData):
                 electrons=2,
                 faradaic_efficiency=0.9,
                 phase=ProductPhase.GAS,
-                co2_per_mol=1.0,
-                water_per_mol=0.0,
                 molar_mass=28.01 * pyunits.g / pyunits.mol,
+                reactants={"CO2": 1.0},
             ),
             dataclasses.replace(HYDROGEN, faradaic_efficiency=0.1),
         )
@@ -874,6 +953,16 @@ class CO2ElectrolyzerData(ElectrolyzerData):
         ),
     )
     CONFIG.declare(
+        "co2_dissolved_fraction",
+        ConfigValue(
+            default=0.0,
+            domain=float,
+            description="Fraction of the unreacted CO2 leaving dissolved in the "
+            "electrolyte rather than with the cathode gas, in [0, 1] (a fixed, "
+            "regressable Var once built).",
+        ),
+    )
+    CONFIG.declare(
         "co2_property_package",
         ConfigValue(
             default=None,
@@ -890,6 +979,14 @@ class CO2ElectrolyzerData(ElectrolyzerData):
         """
         return (*super()._gas_package_fields(), "co2_property_package")
 
+    def _reactant_names(self) -> tuple[str, ...]:
+        """Return the reactant names, always including CO2.
+
+        Returns:
+            Reactant names, each built as a ``consumption_{name}`` Expression.
+        """
+        return tuple(dict.fromkeys([*super()._reactant_names(), "CO2"]))
+
     def _validate_config(self) -> None:
         """Also validate the CO2 conversion and crossover options.
 
@@ -903,6 +1000,13 @@ class CO2ElectrolyzerData(ElectrolyzerData):
                 f"single_pass_conversion must lie in (0, 1], got {conversion}.",
                 field="single_pass_conversion",
                 value=conversion,
+            )
+        dissolved = self.config.co2_dissolved_fraction
+        if not 0.0 <= dissolved <= 1.0:
+            raise FlexConfigError(
+                f"co2_dissolved_fraction must lie in [0, 1], got {dissolved}.",
+                field="co2_dissolved_fraction",
+                value=dissolved,
             )
         if self.config.co2_crossover_per_electron < 0.0:
             raise FlexConfigError(
@@ -923,7 +1027,6 @@ class CO2ElectrolyzerData(ElectrolyzerData):
         """Also build CO2 consumption, crossover, and the CO2 feed."""
         super()._build_electrochemistry()
         tb = self._find_time_block()
-        products = self._products()
         conversion = self.declare_process_parameter(
             "single_pass_conversion",
             self.config.single_pass_conversion,
@@ -938,14 +1041,6 @@ class CO2ElectrolyzerData(ElectrolyzerData):
             "Moles of CO2 carried to the anode as carbonate per mole of electrons.",
             bounds=(0.0, None),
         )
-        self.co2_consumption = pyo.Expression(
-            tb.time_index,
-            rule=lambda b, t: sum(
-                p.co2_per_mol * b.find_component(f"production_{p.name}")[t]
-                for p in products
-            ),
-            doc="Molar CO2 consumed by the cell reactions.",
-        )
         self.co2_crossover = pyo.Expression(
             tb.time_index,
             rule=lambda b, t: crossover * b.electron_flow[t],
@@ -953,9 +1048,21 @@ class CO2ElectrolyzerData(ElectrolyzerData):
         )
         self.co2_unreacted = pyo.Expression(
             tb.time_index,
-            rule=lambda b, t: (b.co2_consumption[t] + b.co2_crossover[t])
+            rule=lambda b, t: (b.consumption_CO2[t] + b.co2_crossover[t])
             * (1 / conversion - 1),
-            doc="Molar CO2 leaving unreacted with the cathode gas.",
+            doc="Molar CO2 leaving the stack unreacted.",
+        )
+        dissolved = self.declare_process_parameter(
+            "co2_dissolved_fraction",
+            self.config.co2_dissolved_fraction,
+            pyunits.dimensionless,
+            "Fraction of the unreacted CO2 leaving dissolved in the electrolyte.",
+            bounds=(0.0, 1.0),
+        )
+        self.co2_dissolved = pyo.Expression(
+            tb.time_index,
+            rule=lambda b, t: dissolved * b.co2_unreacted[t],
+            doc="Molar unreacted CO2 leaving dissolved in the electrolyte.",
         )
         feed = self.inlet_co2_state.flow_vol_phase
         molar_volume = self._molar_volume()
@@ -966,12 +1073,12 @@ class CO2ElectrolyzerData(ElectrolyzerData):
         )
         def co2_feed_balance(b, t):
             return feed[t, self._gas_phases["co2_property_package"]] == pyunits.convert(
-                molar_volume * (b.co2_consumption[t] + b.co2_crossover[t]) / conversion,
+                molar_volume * (b.consumption_CO2[t] + b.co2_crossover[t]) / conversion,
                 pyunits.m**3 / pyunits.hr,
             )
 
     def _cathode_gas_extra(self, t):
-        """Return the unreacted CO2 leaving with the cathode gas.
+        """Return the undissolved unreacted CO2 leaving with the cathode gas.
 
         Args:
             t: Time point.
@@ -979,7 +1086,7 @@ class CO2ElectrolyzerData(ElectrolyzerData):
         Returns:
             The molar flow, mol/s.
         """
-        return self.co2_unreacted[t]
+        return self.co2_unreacted[t] - self.co2_dissolved[t]
 
     def _anode_gas_extra(self, t):
         """Return the crossover CO2 leaving with the anode gas.

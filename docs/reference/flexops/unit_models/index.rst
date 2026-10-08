@@ -49,7 +49,7 @@ Topology bases
 
 .. autosummary::
    :toctree: generated
-   :template: unit_model.rst
+   :template: autosummary/unit_model.rst
    :nosignatures:
 
    SISOBlock
@@ -58,7 +58,7 @@ Topology bases
 
 .. autosummary::
    :toctree: generated
-   :template: unit_model.rst
+   :template: autosummary/unit_model.rst
    :nosignatures:
 
    SIDOBlock
@@ -67,7 +67,7 @@ Topology bases
 
 .. autosummary::
    :toctree: generated
-   :template: unit_model.rst
+   :template: autosummary/unit_model.rst
    :nosignatures:
 
    DIDOBlock
@@ -79,7 +79,7 @@ Physical units
 
 .. autosummary::
    :toctree: generated
-   :template: unit_model.rst
+   :template: autosummary/unit_model.rst
    :nosignatures:
 
    Pump
@@ -88,7 +88,7 @@ Physical units
 
 .. autosummary::
    :toctree: generated
-   :template: unit_model.rst
+   :template: autosummary/unit_model.rst
    :nosignatures:
 
    Tank
@@ -97,7 +97,7 @@ Physical units
 
 .. autosummary::
    :toctree: generated
-   :template: unit_model.rst
+   :template: autosummary/unit_model.rst
    :nosignatures:
 
    BatteryModel
@@ -106,7 +106,7 @@ Physical units
 
 .. autosummary::
    :toctree: generated
-   :template: unit_model.rst
+   :template: autosummary/unit_model.rst
    :nosignatures:
 
    Exchanger
@@ -115,7 +115,7 @@ Physical units
 
 .. autosummary::
    :toctree: generated
-   :template: unit_model.rst
+   :template: autosummary/unit_model.rst
    :nosignatures:
 
    ReverseOsmosis
@@ -135,7 +135,7 @@ swap.
 
 .. autosummary::
    :toctree: generated
-   :template: unit_model.rst
+   :template: autosummary/unit_model.rst
    :nosignatures:
 
    Combustor
@@ -152,7 +152,7 @@ relation for the magnitude of generation the same way ``Combustor`` splits them.
 
 .. autosummary::
    :toctree: generated
-   :template: unit_model.rst
+   :template: autosummary/unit_model.rst
    :nosignatures:
 
    GenericRenewables
@@ -167,7 +167,7 @@ weighted by volume, depending on ``temperature_mixing``.
 
 .. autosummary::
    :toctree: generated
-   :template: unit_model.rst
+   :template: autosummary/unit_model.rst
    :nosignatures:
 
    Mixer
@@ -182,7 +182,7 @@ you want the split prescribed rather than optimized.
 
 .. autosummary::
    :toctree: generated
-   :template: unit_model.rst
+   :template: autosummary/unit_model.rst
    :nosignatures:
 
    Splitter
@@ -197,7 +197,7 @@ surrogate.
 
 .. autosummary::
    :toctree: generated
-   :template: unit_model.rst
+   :template: autosummary/unit_model.rst
    :nosignatures:
 
    Digestor
@@ -206,8 +206,9 @@ surrogate.
 
 An electrolyzer system whose boundary takes in the stack, the gas-liquid
 separators on both electrode sides, and the electrolyte recirculation loop, so
-every port carries a single phase. Stack current drives it: Faraday's law
-sets each product's molar rate, cell voltage sets the electrical draw, and both
+every port carries a single phase. Current density drives it: Faraday's law
+sets each product's molar rate, cell voltage sets the electrical draw (with an
+optional quadratic ohmic loss, ``ohmic_loss``), and both
 gas outlets leave at the fixed operating temperature and pressure. The
 separators hold a liquid inventory, so make-up water can be fed at a
 different time from when the stack consumes it. The per-product Faradaic relations and
@@ -216,14 +217,15 @@ fitted Faradaic-efficiency or polarization curve. The anode reaction is a
 second product table, ``anode_products``, which defaults to oxygen evolution.
 ``WaterElectrolyzer`` fixes the products to hydrogen and oxygen and takes its defaults from ``technology`` (PEM or AEM).
 ``CO2Electrolyzer`` takes a product table and adds the CO2 feed, set by
-single-pass conversion, along with carbonate crossover to the anode. Every gas
+single-pass conversion, along with carbonate crossover to the anode and a
+dissolved fraction of the unreacted CO2. Every gas
 port builds from ``gas_property_package`` unless it is given its own package
 (``cathode_gas_property_package``, ``anode_gas_property_package``, or
 ``co2_property_package``), so each stream can carry a different gas.
 
 .. autosummary::
    :toctree: generated
-   :template: unit_model.rst
+   :template: autosummary/unit_model.rst
    :nosignatures:
 
    Electrolyzer
@@ -258,7 +260,7 @@ contradict the declared basis raises ``FlexConfigError`` naming the config key.
 
 .. autosummary::
    :toctree: generated
-   :template: unit_model.rst
+   :template: autosummary/unit_model.rst
    :nosignatures:
 
    Feed
@@ -275,7 +277,7 @@ disposal) and negative is revenue (potable water sold).
 
 .. autosummary::
    :toctree: generated
-   :template: unit_model.rst
+   :template: autosummary/unit_model.rst
    :nosignatures:
 
    Product
@@ -290,7 +292,7 @@ such as a whole plant modeled as one surrogate, as in the frozen API script.
 
 .. autosummary::
    :toctree: generated
-   :template: unit_model.rst
+   :template: autosummary/unit_model.rst
    :nosignatures:
 
    ConstantEnergyIntensityModel
