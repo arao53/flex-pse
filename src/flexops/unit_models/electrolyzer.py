@@ -84,7 +84,11 @@ def _products_domain(value) -> tuple[ElectrochemicalProduct, ...]:
     """Coerce a list of products or product dicts into products.
 
     Args:
-        value: Products, or dicts of their fields.
+        value: Products, or dicts of their fields, e.g.
+            ``[HYDROGEN, {"name": "CO", "electrons": 2,
+            "faradaic_efficiency": 0.9, "phase": "gas",
+            "molar_mass": 28.01 * pyunits.g / pyunits.mol,
+            "reactants": {"CO2": 1.0}}]``.
 
     Returns:
         The products as a tuple.
@@ -244,6 +248,16 @@ class ElectrolyzerData(OpsBlockData):
             domain=_products_domain,
             description="Anode gas products, as ElectrochemicalProduct entries (or "
             "dicts of their fields). Faradaic efficiencies may sum to at most 1.",
+        ),
+    )
+    CONFIG.declare(
+        "balance_product",
+        ConfigValue(
+            default=None,
+            description="Name of the cathode product whose rate closes the charge "
+            "balance (the electron flow left after the other cathode products); "
+            "its configured faradaic efficiency is ignored and its relation is not "
+            "swappable. None gives every product its own Faradaic relation.",
         ),
     )
     CONFIG.declare(
@@ -446,6 +460,15 @@ class ElectrolyzerData(OpsBlockData):
                     field="has_liquid_outlet",
                     value=False,
                 )
+        balance = self.config.balance_product
+        if balance is not None and balance not in [p.name for p in self._products()]:
+            raise FlexConfigError(
+                f"balance_product {balance!r} must name a cathode product, got "
+                f"{[p.name for p in self._products()]!r}; pass None to give every "
+                "product its own Faradaic relation.",
+                field="balance_product",
+                value=balance,
+            )
         low, high = self.config.liquid_level_min, self.config.liquid_level_max
         capacity = _magnitude(self.config.separator_volume, pyunits.m**3)
         initial = _magnitude(self.config.initial_liquid_volume, pyunits.m**3)
@@ -525,8 +548,13 @@ class ElectrolyzerData(OpsBlockData):
         )
 
         products = (*self._products(), *self._anode_products())
+        balance = self.config.balance_product
         for p in products:
-            self._build_faradaic(p)
+            if p.name != balance:
+                self._build_faradaic(p)
+        for p in self._products():
+            if p.name == balance:
+                self._build_charge_balance(p)
         for r in self._reactant_names():
             self.add_component(
                 f"consumption_{r}",
@@ -641,6 +669,37 @@ class ElectrolyzerData(OpsBlockData):
         )
         self.register_relation(
             self.find_component(f"faradaic_relation_{p.name}"), target=production
+        )
+
+    def _build_charge_balance(self, p: ElectrochemicalProduct) -> None:
+        """Build the balance product's rate from the charge the other products leave.
+
+        Args:
+            p: The balance product, one of the cathode products.
+        """
+        tb = self._find_time_block()
+        others = [q for q in self._products() if q.name != p.name]
+        production = pyo.Var(
+            tb.time_index,
+            initialize=0.0,
+            domain=pyo.NonNegativeReals,
+            units=pyunits.mol / pyunits.s,
+            doc=f"Molar production rate of {p.name}.",
+        )
+        self.add_component(f"production_{p.name}", production)
+        self.add_component(
+            f"charge_balance_{p.name}",
+            pyo.Constraint(
+                tb.time_index,
+                rule=lambda b, t: p.electrons * production[t]
+                == b.electron_flow[t]
+                - sum(
+                    q.electrons * b.find_component(f"production_{q.name}")[t]
+                    for q in others
+                ),
+                doc=f"Charge balance: {p.electrons} * production_{p.name} == "
+                "electron_flow minus the other cathode products' charge.",
+            ),
         )
 
     # -- gas outlets -----------------------------------------------------------
@@ -910,12 +969,14 @@ class CO2ElectrolyzerData(ElectrolyzerData):
     """A CO2 reduction electrolyzer with a CO2 feed inlet.
 
     Config:
-        Inherits the Electrolyzer config; adds ``single_pass_conversion``,
-        ``co2_crossover_per_electron``, ``co2_dissolved_fraction``, and
-        ``co2_property_package``.
+        Inherits the Electrolyzer config with ``balance_product`` defaulting to
+        ``"H2"``; adds ``single_pass_conversion``, ``co2_crossover_per_electron``,
+        ``co2_dissolved_fraction``, ``mass_transfer_coefficient``,
+        ``co2_bulk_concentration``, and ``co2_property_package``.
     """
 
     # TODO: replace the fixed dissolved fraction with linearized CO2 kinetics.
+    # TODO: make mass_transfer_coefficient a decision variable set by electrolyte flow.
 
     CONFIG = ElectrolyzerData.CONFIG()
     CONFIG.get("products").set_default_value(
@@ -934,6 +995,25 @@ class CO2ElectrolyzerData(ElectrolyzerData):
     CONFIG.get("cell_voltage").set_default_value(3.0 * pyunits.V)
     CONFIG.get("thermoneutral_voltage").set_default_value(1.47 * pyunits.V)
     CONFIG.get("operating_temperature").set_default_value(298.15 * pyunits.K)
+    CONFIG.get("balance_product").set_default_value("H2")
+    CONFIG.declare(
+        "mass_transfer_coefficient",
+        ConfigValue(
+            default=None,
+            description="CO2 mass-transfer coefficient to the cathode, the CO2 "
+            "diffusivity over the boundary-layer thickness (a fixed, regressable "
+            "Var once built), m/s. None builds no transport limit.",
+        ),
+    )
+    CONFIG.declare(
+        "co2_bulk_concentration",
+        ConfigValue(
+            default=34.0 * pyunits.mol / pyunits.m**3,
+            description="CO2 concentration in the bulk electrolyte, used with "
+            "mass_transfer_coefficient (a fixed, regressable Var once built), "
+            "mol/m^3.",
+        ),
+    )
     CONFIG.declare(
         "single_pass_conversion",
         ConfigValue(
@@ -1015,6 +1095,13 @@ class CO2ElectrolyzerData(ElectrolyzerData):
                 field="co2_crossover_per_electron",
                 value=self.config.co2_crossover_per_electron,
             )
+        k_m = self.config.mass_transfer_coefficient
+        if k_m is not None and _magnitude(k_m, pyunits.m / pyunits.s) <= 0.0:
+            raise FlexConfigError(
+                f"mass_transfer_coefficient must be positive, got {k_m}.",
+                field="mass_transfer_coefficient",
+                value=k_m,
+            )
 
     def _build_ports(self) -> None:
         """Add the CO2 feed inlet to the base ports."""
@@ -1076,6 +1163,49 @@ class CO2ElectrolyzerData(ElectrolyzerData):
                 molar_volume * (b.consumption_CO2[t] + b.co2_crossover[t]) / conversion,
                 pyunits.m**3 / pyunits.hr,
             )
+
+        if self.config.mass_transfer_coefficient is not None:
+            self._build_co2_transport_limit()
+
+    def _build_co2_transport_limit(self) -> None:
+        """Build the local CO2 concentration and cap the CO2 flux at transport."""
+        tb = self._find_time_block()
+        k_m = self.declare_process_parameter(
+            "mass_transfer_coefficient",
+            self.config.mass_transfer_coefficient,
+            pyunits.m / pyunits.s,
+            "CO2 mass-transfer coefficient: diffusivity over boundary-layer thickness.",
+            bounds=(0.0, None),
+        )
+        c_bulk = self.declare_process_parameter(
+            "co2_bulk_concentration",
+            self.config.co2_bulk_concentration,
+            pyunits.mol / pyunits.m**3,
+            "CO2 concentration in the bulk electrolyte.",
+            bounds=(0.0, None),
+        )
+        area = (
+            self.config.n_cells
+            * _magnitude(self.config.electrode_area, pyunits.m**2)
+            * pyunits.m**2
+        )
+        self.co2_local_concentration = pyo.Expression(
+            tb.time_index,
+            rule=lambda b, t: c_bulk
+            - pyunits.convert(
+                (b.consumption_CO2[t] + b.co2_crossover[t]) / (k_m * area),
+                pyunits.mol / pyunits.m**3,
+            ),
+            doc="CO2 concentration at the cathode: bulk minus the CO2 flux over "
+            "mass_transfer_coefficient, mol/m^3.",
+        )
+        self.co2_transport_limit = pyo.Constraint(
+            tb.time_index,
+            rule=lambda b, t: b.consumption_CO2[t] + b.co2_crossover[t]
+            <= pyunits.convert(k_m * c_bulk * area, pyunits.mol / pyunits.s),
+            doc="CO2 consumed and crossed over cannot exceed what transport "
+            "delivers: mass_transfer_coefficient * co2_bulk_concentration * area.",
+        )
 
     def _cathode_gas_extra(self, t):
         """Return the undissolved unreacted CO2 leaving with the cathode gas.

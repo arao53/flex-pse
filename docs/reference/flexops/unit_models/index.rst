@@ -218,7 +218,9 @@ second product table, ``anode_products``, which defaults to oxygen evolution.
 ``WaterElectrolyzer`` fixes the products to hydrogen and oxygen and takes its defaults from ``technology`` (PEM or AEM).
 ``CO2Electrolyzer`` takes a product table and adds the CO2 feed, set by
 single-pass conversion, along with carbonate crossover to the anode and a
-dissolved fraction of the unreacted CO2. Every gas
+dissolved fraction of the unreacted CO2. Hydrogen evolution is its
+``balance_product`` by default, closing the charge balance, and
+``mass_transfer_coefficient`` adds an optional CO2 transport limit. Every gas
 port builds from ``gas_property_package`` unless it is given its own package
 (``cathode_gas_property_package``, ``anode_gas_property_package``, or
 ``co2_property_package``), so each stream can carry a different gas.
