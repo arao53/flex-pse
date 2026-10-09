@@ -38,6 +38,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- `parse_units` reads the chained divisions and unit numerators Pyomo prints (`kg/m^2/s`, `J/kg/K`, `1/s`); it previously stopped at one `/` and rejected a bare `1`.
 - A flat spec's list-valued price (`{"value": [...], "units": ...}`) and quantity-valued property-package options (e.g. `density`) now build; both previously raised.
 - **A tiered tariff charge could silently price at $0 in the objective** (issue #73). `opex.py` never forwarded a consumption estimate to EECO, which without one drops every tier other than a flat top tier. The new `CostingConfig.consumption_estimate` / `FlexCosting(consumption_estimate=...)`, a mapping of EECO utility (`"electric"`/`"gas"`) to the estimated total consumption over the horizon (kWh / m^3), is forwarded through `add_electricity_cost`/`add_fuel_cost`/`add_operating_cost`. The default `None` keeps the previous behaviour. A warning is now logged when a tariff tier would be zeroed because its utility has no estimate, and `CostingConfig.consumption_estimate` only accepts the keys `"electric"` and `"gas"`.
 

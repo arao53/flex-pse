@@ -154,6 +154,23 @@ def test_parse_units_multi_factor_and_exponent():
 
 
 @pytest.mark.unit
+@pytest.mark.parametrize(
+    ("text", "expected"),
+    [
+        ("kg/m^2/s", pyunits.kg / pyunits.m**2 / pyunits.s),
+        ("J/K/kg", pyunits.J / pyunits.K / pyunits.kg),
+        ("1/s", 1 / pyunits.s),
+        ("1/m^3", 1 / pyunits.m**3),
+    ],
+)
+def test_parse_units_reads_chained_division_and_unit_numerator(text, expected):
+    """Every '/' after the first divides again, and a bare '1' is dimensionless."""
+    assert pyo.value(pyunits.convert(1 * parse_units(text), expected)) == (
+        pytest.approx(1.0)
+    )
+
+
+@pytest.mark.unit
 def test_parse_units_unknown_token_becomes_currency():
     """A token pyomo does not know is registered as a currency.
 

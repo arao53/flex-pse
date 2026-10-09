@@ -32,6 +32,9 @@ class Color(enum.Enum):
         (pyunits.Pa, "Pa"),
         (pyunits.min, "min"),
         (pyunits.kg * pyunits.m / pyunits.s**2, "kg*m/s^2"),
+        (pyunits.kg / pyunits.m**2 / pyunits.s, "kg/m^2/s"),
+        (1 / pyunits.s, "1/s"),
+        (pyunits.J / pyunits.kg / pyunits.K, "J/kg/K"),
     ],
 )
 def test_units_to_str_writes_a_string_parse_units_reads_back(units, expected):
@@ -49,25 +52,9 @@ def test_units_to_str_handles_currency():
 
 
 @pytest.mark.unit
-@pytest.mark.xfail(
-    raises=FlexConfigError, strict=True, reason="parse_units allows one '/' only"
-)
-@pytest.mark.parametrize(
-    "units",
-    [
-        pyunits.kg / pyunits.m**2 / pyunits.s,
-        1 / pyunits.s,
-        pyunits.J / pyunits.kg / pyunits.K,
-    ],
-)
-def test_units_to_str_units_parse_units_cannot_read_yet(units):
-    units_to_str(units)
-
-
-@pytest.mark.unit
 def test_units_to_str_error_names_where():
     with pytest.raises(FlexConfigError, match="pump.flow") as info:
-        units_to_str(1 / pyunits.s, where="pump.flow")
+        units_to_str(pyunits.m**0.5, where="pump.flow")
 
     assert info.value.field == "pump.flow"
 

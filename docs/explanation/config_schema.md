@@ -182,9 +182,10 @@ Two kinds of reference keep a spec small and free of live objects:
   property package element of that name, for units that take more than one
   package (a digester's biogas and sludge outlets, for example).
 
-Units are written as Pyomo prints them, with `**` exponents changed to `^`.
-`parse_units` reads one `/` at most, so units such as `kg/m^2/s` or `1/s` can't
-be written yet, and `emit_model` raises a `FlexConfigError` naming the option.
+Units are written as Pyomo prints them, with `**` exponents changed to `^`, so
+`kg/m^2/s` (kilograms per square metre per second) and `1/s` both appear as
+written. A unit with a fractional exponent, such as `m^0.5`, can't be written
+yet, and `emit_model` raises a `FlexConfigError` naming the option.
 
 ## Field reference
 
