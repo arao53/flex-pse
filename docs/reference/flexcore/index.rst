@@ -104,8 +104,12 @@ A flowsheet as one flat list of elements, in any order. The nested
    SurrogateElement
    DispatchElement
    ObjectiveElement
+   SourceRef
+   SourcedPrice
 
 .. autodata:: SCHEMA_VERSION
+
+.. autodata:: PACKAGE_REF
 
 .. autodata:: KINDS
    :no-value:
@@ -130,6 +134,10 @@ Config I/O
 .. autofunction:: load_surrogate_source
 
 .. autofunction:: resolve_source_path
+
+.. autofunction:: read_source
+
+.. autofunction:: resolve_sources
 
 .. autodata:: MIGRATIONS
 
@@ -164,6 +172,8 @@ Exceptions
 .. autoexception:: FlexSolverError
 
 .. autoexception:: FlexDataError
+
+.. autoexception:: FlexEmitWarning
 
 Logging
 -------

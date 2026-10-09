@@ -132,4 +132,8 @@ def test_resolve_sources_replaces_refs_at_any_depth(tmp_path):
         "z": "kept",
     }
 
-    assert resolve_sources(value, tmp_path) == {"x": [1, 2], "y": [[1, 2], 3], "z": "kept"}
+    assert resolve_sources(value, tmp_path) == {
+        "x": [1, 2],
+        "y": [[1, 2], 3],
+        "z": "kept",
+    }

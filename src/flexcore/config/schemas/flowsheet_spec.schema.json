@@ -121,7 +121,7 @@
           "anyOf": [
             {
               "additionalProperties": {
-                "$ref": "#/$defs/PriceSpec"
+                "$ref": "#/$defs/SourcedPrice"
               },
               "type": "object"
             },
@@ -274,9 +274,12 @@
                 "type": "number"
               },
               "type": "object"
+            },
+            {
+              "$ref": "#/$defs/SourceRef"
             }
           ],
-          "description": "One value per time point as a list, or a mapping of time index to value.",
+          "description": "One value per time point as a list, a mapping of time index to value, or a $source reference to a file holding either.",
           "title": "Values"
         },
         "variable": {
@@ -434,38 +437,6 @@
       "title": "PlantElement",
       "type": "object"
     },
-    "PriceSpec": {
-      "additionalProperties": false,
-      "description": "A native price for one energy carrier or fuel: a number and its units.",
-      "properties": {
-        "units": {
-          "description": "Units of the price as a string, e.g. 'USD/kWh' for electricity or 'USD/m^3' for a fuel.",
-          "title": "Units",
-          "type": "string"
-        },
-        "value": {
-          "anyOf": [
-            {
-              "type": "number"
-            },
-            {
-              "items": {
-                "type": "number"
-              },
-              "type": "array"
-            }
-          ],
-          "description": "The numeric price, in the units below. One number is a flat price over the whole horizon; a list is one price per time point and must have exactly as many entries as the horizon has time points, which is checked when the model is built.",
-          "title": "Value"
-        }
-      },
-      "required": [
-        "value",
-        "units"
-      ],
-      "title": "PriceSpec",
-      "type": "object"
-    },
     "PropertyPackageElement": {
       "additionalProperties": false,
       "description": "A property package, built at the model root under its name.",
@@ -536,6 +507,57 @@
         "values"
       ],
       "title": "SetElement",
+      "type": "object"
+    },
+    "SourceRef": {
+      "additionalProperties": false,
+      "description": "Data kept in a JSON or gzipped JSON file beside the spec.",
+      "properties": {
+        "$source": {
+          "description": "Path of a .json or .json.gz file, relative to the spec file.",
+          "title": "$Source",
+          "type": "string"
+        }
+      },
+      "required": [
+        "$source"
+      ],
+      "title": "SourceRef",
+      "type": "object"
+    },
+    "SourcedPrice": {
+      "additionalProperties": false,
+      "description": "A native price whose values may sit in a file beside the spec.",
+      "properties": {
+        "units": {
+          "description": "Units of the price as a string, e.g. 'USD/kWh' for electricity or 'USD/m^3' for a fuel.",
+          "title": "Units",
+          "type": "string"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "$ref": "#/$defs/SourceRef"
+            }
+          ],
+          "description": "The numeric price: one number, one per time point, or a $source reference to a file holding that list.",
+          "title": "Value"
+        }
+      },
+      "required": [
+        "value",
+        "units"
+      ],
+      "title": "SourcedPrice",
       "type": "object"
     },
     "SurrogateElement": {
@@ -737,7 +759,7 @@
         },
         "construction_options": {
           "additionalProperties": true,
-          "description": "Keyword options passed to the unit-model constructor.",
+          "description": "Keyword options passed to the unit-model constructor. A value {'$package': name} passes the named property_package element.",
           "title": "Construction Options",
           "type": "object"
         },

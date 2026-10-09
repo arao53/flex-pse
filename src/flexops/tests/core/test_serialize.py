@@ -165,14 +165,16 @@ def test_to_jsonable_writes_a_known_package_as_a_reference():
     m = pyo.ConcreteModel()
     m.gas = SimpleAqueousFlow()
 
-    assert to_jsonable(
-        {"feed": m.gas}, where="opt", packages={"gas": m.gas}
-    ) == {"feed": {"$package": "gas"}}
+    assert to_jsonable({"feed": m.gas}, where="opt", packages={"gas": m.gas}) == {
+        "feed": {"$package": "gas"}
+    }
 
 
 @pytest.mark.unit
 def test_to_jsonable_rejects_anything_else_naming_the_option():
-    with pytest.raises(FlexConfigError, match="plant.pump.thing holds a object") as info:
+    with pytest.raises(
+        FlexConfigError, match="plant.pump.thing holds a object"
+    ) as info:
         to_jsonable(object(), where="plant.pump.thing")
 
     assert info.value.field == "plant.pump.thing"

@@ -37,7 +37,10 @@ def build() -> pyo.ConcreteModel:
     p.mix = fo.Mixer(property_package=m.properties, inlet_names=("t0", "t1", "t2"))
     p.train_to_split = Arc(
         p.trains,
-        rule=lambda b, i: {"source": b.train[i].outlet, "destination": b.split[i].inlet},
+        rule=lambda b, i: {
+            "source": b.train[i].outlet,
+            "destination": b.split[i].inlet,
+        },
     )
     p.split_to_out = Arc(
         p.trains, rule=lambda b, i: (b.split[i].outlet_a, b.out[i].inlet_a)

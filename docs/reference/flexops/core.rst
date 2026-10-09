@@ -88,6 +88,36 @@ side by side.
 
 .. autofunction:: parse_units
 
+Emitting a spec
+---------------
+
+.. currentmodule:: flexops.core.emit
+
+``emit_model`` is ``build_model`` in reverse: it reads the flat spec a live
+model was, or could have been, built from (see
+:doc:`../../explanation/config_schema`). Each component describes itself:
+:meth:`~flexops.core.time_block.TimeBlockData.to_element`,
+:meth:`~flexops.costing.flex_costing.FlexCostingData.to_element` and
+:meth:`~flexops.core.ops_block.OpsBlockData.to_unit_element`.
+
+.. autofunction:: emit_model
+
+.. autofunction:: property_package_element
+
+.. currentmodule:: flexops.core.serialize
+
+.. autofunction:: to_jsonable
+
+.. autofunction:: units_to_str
+
+.. autofunction:: unit_model_class_name
+
+.. autofunction:: relative_path
+
+.. currentmodule:: flexops.core.compare
+
+.. autofunction:: model_differences
+
 Build stages
 ------------
 

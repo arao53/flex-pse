@@ -10,6 +10,7 @@ through :data:`MIGRATIONS`), then validates against
 path.
 """
 
+import gzip
 import json
 import re
 import warnings
@@ -24,6 +25,7 @@ from flexcore.config.spec import (
     SCHEMA_VERSION,
     STAGE_ORDER,
     FlowsheetSpec,
+    SourceRef,
     element_target,
 )
 from flexcore.exceptions import FlexConfigError
@@ -291,6 +293,63 @@ def resolve_source_path(source: str, base_dir) -> Path:
         stacklevel=2,
     )
     return path
+
+
+def read_source(source: str, base_dir):
+    """Read the JSON data a ``$source`` reference names.
+
+    Args:
+        source: Path of a ``.json`` or ``.json.gz`` file.
+        base_dir: Directory a relative path resolves against, or None.
+
+    Returns:
+        The parsed JSON data.
+
+    Raises:
+        FlexConfigError: If the file has another suffix or cannot be read.
+    """
+    path = resolve_source_path(source, base_dir)
+    if not path.name.lower().endswith((".json", ".json.gz")):
+        raise FlexConfigError(
+            f"Unsupported $source format for {source!r}. Use a .json or .json.gz "
+            "file.",
+            field="$source",
+            value=source,
+        )
+    try:
+        raw = path.read_bytes()
+    except OSError as exc:
+        raise FlexConfigError(
+            f"Could not read the $source file {path}: {exc.strerror}.",
+            field="$source",
+            value=source,
+        ) from exc
+    return json.loads(gzip.decompress(raw) if path.suffix.lower() == ".gz" else raw)
+
+
+def resolve_sources(value, base_dir):
+    """Replace every ``$source`` reference in ``value`` with the data it names.
+
+    Args:
+        value: A :class:`~flexcore.config.spec.SourceRef`, a
+            ``{"$source": path}`` mapping, or any JSON data containing them.
+        base_dir: Directory a relative path resolves against, or None.
+
+    Returns:
+        ``value`` with each reference replaced; the input is not mutated.
+
+    Raises:
+        FlexConfigError: If a referenced file cannot be read.
+    """
+    if isinstance(value, SourceRef):
+        return read_source(value.source, base_dir)
+    if isinstance(value, dict):
+        if set(value) == {"$source"}:
+            return read_source(value["$source"], base_dir)
+        return {key: resolve_sources(item, base_dir) for key, item in value.items()}
+    if isinstance(value, list):
+        return [resolve_sources(item, base_dir) for item in value]
+    return value
 
 
 def load_surrogate_source(spec: SurrogateSpec, base_dir=None) -> SurrogateSpec:

@@ -14,7 +14,7 @@ JSON Schema, so keep them plain text.
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from pydantic import Field, PrivateAttr, model_validator
+from pydantic import ConfigDict, Field, PrivateAttr, model_validator
 
 from flexcore.config.schema import (
     CostingConfig,
@@ -51,6 +51,9 @@ STAGE_ORDER = tuple(dict.fromkeys(stage for stage, _ in KINDS.values()))
 AUTO = "auto"
 """Value of a unit's package field that means the model's only package."""
 
+PACKAGE_REF = "$package"
+"""Key of a construction option ``{"$package": name}`` naming a package element."""
+
 
 def _like(model: type[_StrictModel], name: str):
     """Return a Field with the default and description of ``model``'s field."""
@@ -58,6 +61,26 @@ def _like(model: type[_StrictModel], name: str):
     return Field(
         default=info.get_default(call_default_factory=True),
         description=info.description,
+    )
+
+
+class SourceRef(_StrictModel):
+    """Data kept in a JSON or gzipped JSON file beside the spec."""
+
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    source: str = Field(
+        alias="$source",
+        description="Path of a .json or .json.gz file, relative to the spec file.",
+    )
+
+
+class SourcedPrice(PriceSpec):
+    """A native price whose values may sit in a file beside the spec."""
+
+    value: float | list[float] | SourceRef = Field(
+        description="The numeric price: one number, one per time point, or a "
+        "$source reference to a file holding that list."
     )
 
 
@@ -82,7 +105,9 @@ class CostingElement(_StrictModel):
     tariff_source: str | list[str] | dict[str, str] | None = _like(
         CostingConfig, "tariff_source"
     )
-    energy_prices: dict[str, PriceSpec] | None = _like(CostingConfig, "energy_prices")
+    energy_prices: dict[str, SourcedPrice] | None = _like(
+        CostingConfig, "energy_prices"
+    )
     currency: str = _like(CostingConfig, "currency")
     dr: DRConfig | None = _like(CostingConfig, "dr")
     consumption_estimate: dict[Literal["electric", "gas"], float] | None = _like(
@@ -174,7 +199,8 @@ class UnitElement(_StrictModel):
     )
     construction_options: dict[str, Any] = Field(
         default_factory=dict,
-        description="Keyword options passed to the unit-model constructor.",
+        description="Keyword options passed to the unit-model constructor. A "
+        "value {'$package': name} passes the named property_package element.",
     )
     property_package: str | None = Field(
         default=AUTO,
@@ -239,9 +265,9 @@ class DispatchElement(_StrictModel):
     kind: Literal["dispatch"]
     unit: str = Field(description="Name of the unit element it applies to.")
     variable: str = Field(description="Name of the time-indexed variable on the unit.")
-    values: list[float] | dict[str, float] = Field(
-        description="One value per time point as a list, or a mapping of time "
-        "index to value."
+    values: list[float] | dict[str, float] | SourceRef = Field(
+        description="One value per time point as a list, a mapping of time "
+        "index to value, or a $source reference to a file holding either."
     )
     fix: bool = Field(
         default=True,
@@ -320,6 +346,24 @@ def element_target(element) -> tuple[str, ...]:
     if element.kind == "dispatch":
         return (element.unit, element.variable)
     return ()
+
+
+def package_refs(value) -> list[str]:
+    """Return every package name a construction-option value references.
+
+    Args:
+        value: A construction-option value (any JSON data).
+
+    Returns:
+        The names in each ``{"$package": name}`` found at any depth.
+    """
+    if isinstance(value, dict):
+        if set(value) == {PACKAGE_REF}:
+            return [value[PACKAGE_REF]]
+        return [name for item in value.values() for name in package_refs(item)]
+    if isinstance(value, list):
+        return [name for item in value for name in package_refs(item)]
+    return []
 
 
 def parent_name(name: str) -> str:
@@ -438,6 +482,20 @@ class FlowsheetSpec(_StrictModel):
             self._check_package(label, el.costing_package, "costing")
         for el in self.of_kind("objective"):
             self._check_package(f"objective {el.name!r}", el.costing_package, "costing")
+        return self
+
+    @model_validator(mode="after")
+    def _package_refs_resolve(self) -> "FlowsheetSpec":
+        """Require each $package construction option to name a package element."""
+        names = {el.name for el in self.of_kind("property_package")}
+        for el in self.of_kind("unit"):
+            for ref in package_refs(el.construction_options):
+                if ref not in names:
+                    raise ValueError(
+                        f"unit {el.name!r}: construction option {{'$package': "
+                        f"{ref!r}}} is not a property_package element. Available: "
+                        f"{sorted(names)}."
+                    )
         return self
 
     @model_validator(mode="after")

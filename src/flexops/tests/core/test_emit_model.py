@@ -46,7 +46,9 @@ def base_model(n_hours: int = 3, **costing_options) -> pyo.ConcreteModel:
 
 
 def emit_quietly(model, **kwargs):
-    """Emit ``model``, failing on any FlexEmitWarning."""
+    """Process costing as build_model does, then emit; fail on any FlexEmitWarning."""
+    if model.costing.find_component("aggregate_operating_cost") is None:
+        model.costing.cost_process()
     with warnings.catch_warnings():
         warnings.simplefilter("error", FlexEmitWarning)
         return emit_model(model, **kwargs)
@@ -68,7 +70,9 @@ def test_emits_time_package_costing_plant_and_units():
     m = base_model()
     m.p.tank = fo.Tank(property_package=m.properties)
     m.p.pump = fo.ConstantEnergyIntensityModel(
-        property_package=m.properties, energy_intensity=INTENSITY, costing_package=m.costing
+        property_package=m.properties,
+        energy_intensity=INTENSITY,
+        costing_package=m.costing,
     )
 
     spec = emit_quietly(m)
@@ -231,7 +235,12 @@ def test_indexed_members_that_differ_are_an_error_naming_both():
         m.p.trains,
         property_package=m.properties,
         energy_intensity=INTENSITY,
-        initialize={2: {"energy_intensity": 0.6 * pyunits.kWh / pyunits.m**3}},
+        initialize={
+            2: {
+                "property_package": m.properties,
+                "energy_intensity": 0.6 * pyunits.kWh / pyunits.m**3,
+            }
+        },
     )
 
     with pytest.raises(FlexConfigError, match=r"p\.ro\[0\] and p\.ro\[2\] differ"):
@@ -258,7 +267,9 @@ def test_tariff_object_is_an_error():
 @pytest.mark.unit
 def test_tariff_file_is_written_relative_to_the_spec_directory(tmp_path):
     shutil.copy(FIXTURES / "tariff_tou_demo.json", tmp_path)
-    m = base_model(energy_prices=None, tariff_file=str(tmp_path / "tariff_tou_demo.json"))
+    m = base_model(
+        energy_prices=None, tariff_file=str(tmp_path / "tariff_tou_demo.json")
+    )
 
     spec = emit_quietly(m, relative_to=tmp_path)
 
@@ -281,7 +292,9 @@ def test_custom_objective_warns_naming_it():
 def test_cost_objective_is_emitted():
     m = base_model()
     m.p.pump = fo.ConstantEnergyIntensityModel(
-        property_package=m.properties, energy_intensity=INTENSITY, costing_package=m.costing
+        property_package=m.properties,
+        energy_intensity=INTENSITY,
+        costing_package=m.costing,
     )
     m.costing.cost_process()
     m.obj = pyo.Objective(expr=m.costing.aggregate_operating_cost, sense=pyo.maximize)
@@ -300,6 +313,7 @@ def test_extra_constraint_warns_from_the_check():
     m = base_model()
     m.p.tank = fo.Tank(property_package=m.properties)
     m.p.extra = pyo.Constraint(expr=m.p.tank.volume[0] >= 1)
+    m.costing.cost_process()
 
     with pytest.warns(FlexEmitWarning, match=r"p\.extra"):
         emit_model(m)
@@ -320,7 +334,9 @@ def test_check_warns_when_the_rebuild_fails(tmp_path):
 def test_custom_surrogate_object_warns():
     m = base_model()
     m.p.pump = fo.Pump(property_package=m.properties)
-    m.p.pump.swap_relation("power_electrical_relation", MultilinearSurrogate(SURROGATE_DATA))
+    m.p.pump.swap_relation(
+        "power_electrical_relation", MultilinearSurrogate(SURROGATE_DATA)
+    )
 
     with pytest.warns(FlexEmitWarning, match="custom Surrogate object"):
         emit_model(m, check=False)
@@ -416,7 +432,9 @@ def test_emit_deterministic(tmp_path):
     m = base_model()
     m.p.tank = fo.Tank(property_package=m.properties)
     m.p.pump = fo.ConstantEnergyIntensityModel(
-        property_package=m.properties, energy_intensity=INTENSITY, costing_package=m.costing
+        property_package=m.properties,
+        energy_intensity=INTENSITY,
+        costing_package=m.costing,
     )
     m.p.feed = Arc(source=m.p.tank.outlet, destination=m.p.pump.inlet)
 
@@ -430,8 +448,11 @@ def test_emit_deterministic(tmp_path):
 def test_digestor_package_options_become_package_references():
     m = base_model()
     m.biogas = fo.SimpleGasFlow()
+    m.sludge = fo.SimpleAqueousFlow()
     m.p.digestor = fo.Digestor(
-        inlet_packages={"feed": m.properties}, biogas_property_package=m.biogas
+        inlet_packages={"feed": m.properties},
+        biogas_property_package=m.biogas,
+        sludge_property_package=m.sludge,
     )
 
     unit = elements(emit_quietly(m), "unit")["p.digestor"]
@@ -442,4 +463,15 @@ def test_digestor_package_options_become_package_references():
     assert unit.construction_options["biogas_property_package"] == {
         "$package": "biogas"
     }
+    assert unit.construction_options["sludge_property_package"] == {
+        "$package": "sludge"
+    }
     assert unit.property_package is None
+
+
+@pytest.mark.unit
+def test_unprocessed_costing_warns():
+    m = base_model()
+
+    with pytest.warns(FlexEmitWarning, match=r"costing has not run cost_process\(\)"):
+        emit_model(m, check=False)

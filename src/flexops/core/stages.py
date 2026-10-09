@@ -10,11 +10,12 @@ from pydantic import TypeAdapter
 from pyomo.network import Arc, Port
 
 from flexcore import nomenclature as nm
-from flexcore.config.io import load_spec, resolve_source_path
+from flexcore.config.io import load_spec, resolve_source_path, resolve_sources
 from flexcore.config.schema import SurrogateSpec, SurrogateType, UnitConfig
 from flexcore.config.spec import (
     AUTO,
     KINDS,
+    PACKAGE_REF,
     Connection,
     CostingElement,
     DispatchElement,
@@ -82,7 +83,8 @@ def parse_quantity(value, *, strict: bool = True):
     """Turn a persisted units-carrying value into a Pyomo expression.
 
     Args:
-        value: Either a ``{"value": ..., "units": ...}`` mapping, a
+        value: Either a ``{"value": ..., "units": ...}`` mapping (a list
+            ``value`` gives a list of quantities), a
             ``"<number> <units>"`` string (the form ``TimeConfig.time_step``
             uses), or any other value, which is returned unchanged.
         strict: Whether a string with no numeric magnitude is an error. Pass
@@ -98,7 +100,10 @@ def parse_quantity(value, *, strict: bool = True):
             magnitude.
     """
     if isinstance(value, dict) and set(value) == {"value", "units"}:
-        return value["value"] * parse_units(value["units"])
+        units = parse_units(value["units"])
+        if isinstance(value["value"], list):
+            return [item * units for item in value["value"]]
+        return value["value"] * units
     if isinstance(value, str):
         magnitude, _, units = value.strip().partition(" ")
         try:
@@ -191,7 +196,11 @@ def stage_declare(model, spec: FlowsheetSpec, ctx: BuildContext) -> None:
                 field=f"{element.name}.property_class",
                 value=element.property_class,
             )
-        model.add_component(element.name, package_class(**element.options))
+        options = {
+            key: parse_quantity(value, strict=False)
+            for key, value in element.options.items()
+        }
+        model.add_component(element.name, package_class(**options))
     for element in elements_of(spec, "costing"):
         model.add_component(element.name, _build_costing(model, element, ctx))
 
@@ -492,7 +501,12 @@ def _build_costing(model, element: CostingElement, ctx: BuildContext):
         The constructible ``FlexCosting`` block.
     """
     prices = {
-        name: parse_quantity({"value": price.value, "units": price.units})
+        name: parse_quantity(
+            {
+                "value": resolve_sources(price.value, ctx.base_dir),
+                "units": price.units,
+            }
+        )
         for name, price in (element.energy_prices or {}).items()
     }
     return FlexCosting(
@@ -523,7 +537,7 @@ def _build_unit(model, spec: FlowsheetSpec, element: UnitElement, ctx: BuildCont
             runtime[key] = _package(model, spec, choice, kind)
     unit_config = UnitConfig(
         unit_model_class=element.unit_model_class,
-        construction_options=element.construction_options,
+        construction_options=_with_packages(model, element.construction_options),
         io_variables=element.io_variables,
         unit_commitment=element.unit_commitment,
     )
@@ -533,6 +547,17 @@ def _build_unit(model, spec: FlowsheetSpec, element: UnitElement, ctx: BuildCont
     block = model.find_component(element.name)
     ctx.units[element.name] = block
     ctx.members[element.name] = list(block.values()) if index_set else [block]
+
+
+def _with_packages(model, value):
+    """Replace each ``{"$package": name}`` in ``value`` with that package block."""
+    if isinstance(value, dict):
+        if set(value) == {PACKAGE_REF}:
+            return model.find_component(value[PACKAGE_REF])
+        return {key: _with_packages(model, item) for key, item in value.items()}
+    if isinstance(value, list):
+        return [_with_packages(model, item) for item in value]
+    return value
 
 
 def _slug(text: str) -> str:
@@ -650,7 +675,7 @@ def _apply_surrogate(model, element: SurrogateElement, ctx: BuildContext) -> Non
     """
     relation = SurrogateSpec(
         surrogate_type=element.surrogate_type,
-        data=element.data,
+        data=resolve_sources(element.data, ctx.base_dir),
         provenance=element.provenance,
     )
     for member in _members(model, ctx, element.unit):
@@ -678,7 +703,7 @@ def _apply_dispatch(model, element: DispatchElement, ctx: BuildContext) -> None:
                 field="variable",
                 value=element.variable,
             )
-    raw = element.values
+    raw = resolve_sources(element.values, ctx.base_dir)
     # JSON keys are always strings; integer time indices come back as "0".
     series = (
         dict(enumerate(raw))

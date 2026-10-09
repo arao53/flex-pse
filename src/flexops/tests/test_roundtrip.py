@@ -1,4 +1,4 @@
-"""Round trip: a model built in code -> emit_model -> JSON -> build_model -> same model."""
+"""Round trip: build in code, emit_model, dump JSON, build_model, compare."""
 
 import json
 import random

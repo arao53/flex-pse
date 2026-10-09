@@ -159,6 +159,33 @@ invariant is that both produce equivalent behavior. The schema is
 versioned and serializable, and that's what makes this seam the place the
 monorepo splits into separate repositories later.
 
+## Writing a spec from a model built in code
+
+{func}`~flexops.core.emit.emit_model` goes the other way from `build_model`. Given a model
+built in Python, it returns the flat spec that rebuilds the same model. It reads
+each component's construction options back from its config, writes each arc as a
+connection on its source unit (an indexed arc becomes a `{i}` template, which is
+checked against every member), and keeps each surrogate swapped in from a spec.
+It then rebuilds the spec and compares the two models. Anything the spec can't
+express yet, such as a constraint added by hand, a custom objective, or a
+surrogate object built without a spec, raises a `FlexEmitWarning` that names
+it. Nothing is dropped silently.
+
+Two kinds of reference keep a spec small and free of live objects:
+
+- **`{"$source": "data/prices.json.gz"}`** stands in for a long list of
+  numbers: an energy price series, a dispatch series, or a list inside
+  surrogate data. The path is relative to the spec file and names a `.json` or
+  gzipped `.json.gz` file. `emit_model(..., data_dir=...)` writes every list
+  longer than `inline_limit` (2,000 by default) this way.
+- **`{"$package": "biogas"}`** as a unit construction option passes the
+  property package element of that name, for units that take more than one
+  package (a digester's biogas and sludge outlets, for example).
+
+Units are written as Pyomo prints them, with `**` exponents changed to `^`.
+`parse_units` reads one `/` at most, so units such as `kg/m^2/s` or `1/s` can't
+be written yet, and `emit_model` raises a `FlexConfigError` naming the option.
+
 ## Field reference
 
 ```{eval-rst}
