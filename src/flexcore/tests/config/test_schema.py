@@ -51,9 +51,7 @@ def _model_config() -> ModelConfig:
         external_dispatch=ExternalDispatchSpec(
             variable="power_electrical", source="dispatch.csv"
         ),
-        unit_commitment=UnitCommitmentConfig(
-            startup_shutdown=True, dwell=True, min_up=4, min_down=2
-        ),
+        unit_commitment=UnitCommitmentConfig(status=False),
     )
     return ModelConfig(
         schema_version=CURRENT_SCHEMA_VERSION,
@@ -374,3 +372,106 @@ def test_exported_descriptions_are_plain_text(tmp_path):
         assert "\n" not in desc, f"newline in description: {desc!r}"
         assert "§" not in desc, f"section sign in description: {desc!r}"
         assert "``" not in desc, f"RST literal in description: {desc!r}"
+
+
+def _minimal_dict(units=None, properties=None, version=CURRENT_SCHEMA_VERSION):
+    """A smallest valid config document as a plain dict."""
+    doc = {
+        "schema_version": version,
+        "time": {
+            "start_date": "2025-01-01",
+            "end_date": "2025-01-02",
+            "time_step": "1 hr",
+        },
+        "costing": {
+            "energy_prices": {"electrical": {"value": 0.1, "units": "USD/kWh"}}
+        },
+        "plant": {
+            "name": "p",
+            "units": units or {"tank": {"unit_model_class": "Tank"}},
+        },
+    }
+    if properties is not None:
+        doc["properties"] = properties
+    return doc
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(
+    "field, value",
+    [
+        ("startup_shutdown", True),
+        ("dwell", True),
+        ("min_up", 2),
+        ("min_down", 2),
+        ("delays", {"upstream": 1}),
+        ("conditional", {"unit": "on"}),
+    ],
+)
+def test_unsupported_unit_commitment_field_rejected(field, value):
+    """Each unit-commitment field nothing builds is rejected, naming the field."""
+    doc = _minimal_dict(
+        {"tank": {"unit_model_class": "Tank", "unit_commitment": {field: value}}}
+    )
+
+    with pytest.raises(FlexConfigError, match=f"unit_commitment.{field}"):
+        load_model_config(doc)
+
+
+@pytest.mark.unit
+def test_migration_0_0_3_rejects_unsupported_uc_field():
+    """An old config setting an unbuilt unit-commitment field names the unit."""
+    doc = _minimal_dict(
+        {
+            "tank": {
+                "unit_model_class": "Tank",
+                "unit_commitment": {"startup_shutdown": True},
+            }
+        },
+        version="0.0.3",
+    )
+
+    with pytest.raises(FlexConfigError, match="tank") as excinfo:
+        load_model_config(doc)
+    assert excinfo.value.field == "unit_commitment.startup_shutdown"
+
+
+@pytest.mark.unit
+def test_migration_0_0_3_properties_kwargs_become_spec():
+    """Old properties kwargs become the options of one SimpleAqueousFlow spec."""
+    doc = _minimal_dict(properties={"has_pressure": True}, version="0.0.3")
+
+    cfg = load_model_config(doc)
+
+    assert cfg.properties["properties"].property_class == "SimpleAqueousFlow"
+    assert cfg.properties["properties"].options == {"has_pressure": True}
+    assert doc["schema_version"] == "0.0.3"
+
+
+@pytest.mark.unit
+def test_property_package_auto_with_two_packages_errors():
+    """Two packages plus a unit left on 'auto' names the unit and the keys."""
+    doc = _minimal_dict(
+        properties={
+            "water": {"property_class": "SimpleAqueousFlow"},
+            "gas": {"property_class": "SimpleGasFlow"},
+        }
+    )
+
+    with pytest.raises(FlexConfigError) as excinfo:
+        load_model_config(doc)
+    assert "tank" in str(excinfo.value)
+    assert "water" in str(excinfo.value) and "gas" in str(excinfo.value)
+
+
+@pytest.mark.unit
+def test_unknown_property_package_key_errors():
+    """A unit naming a package that is not declared lists the valid keys."""
+    doc = _minimal_dict(
+        {"tank": {"unit_model_class": "Tank", "property_package": "nope"}}
+    )
+
+    with pytest.raises(FlexConfigError) as excinfo:
+        load_model_config(doc)
+    assert "nope" in str(excinfo.value)
+    assert "['properties']" in str(excinfo.value)

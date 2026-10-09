@@ -1,6 +1,7 @@
 """build_model: the config-driven path equals the imperative one (§2.3, R3)."""
 
 import json
+import warnings
 from pathlib import Path
 
 import pyomo.environ as pyo
@@ -19,6 +20,7 @@ from flexops import (
     FlexCosting,
     PlantBlock,
     SimpleAqueousFlow,
+    SimpleGasFlow,
     Tank,
     TimeBlock,
     build_model,
@@ -30,6 +32,7 @@ from flexops.core.build import (
     parse_units,
 )
 from flexops.core.ops_block import OpsBlock
+from flexops.properties import PROPERTY_PACKAGES
 
 _FIXTURES = Path(__file__).parent.parent / "fixtures"
 _CONFIG = _FIXTURES / "plant_config_demo.json"
@@ -270,3 +273,167 @@ def test_apply_external_dispatch_applies_series(tmp_path):
     for t in m.time_block.time_index:
         assert m.unit.power_electrical[t].fixed
         assert pyo.value(m.unit.power_electrical[t]) == pytest.approx(t + 1.0)
+
+
+def _demo_dict(**overrides) -> dict:
+    """The demo config as a dict, with top-level keys overridden."""
+    return {**json.loads(_CONFIG.read_text()), **overrides}
+
+
+def _prices_only() -> dict:
+    """A costing section that needs no tariff file."""
+    return {"energy_prices": {"electrical": {"value": 0.1, "units": "USD/kWh"}}}
+
+
+@pytest.mark.unit
+def test_build_model_gas_package():
+    """A SimpleGasFlow entry in properties builds as a named gas block."""
+    cfg = _demo_dict(
+        schema_version="0.0.4",
+        costing=_prices_only(),
+        properties={"gas": {"property_class": "SimpleGasFlow"}},
+        plant={
+            "name": "p",
+            "units": {
+                "battery": {
+                    "unit_model_class": "BatteryModel",
+                    "construction_options": {
+                        "capacity": {"value": 10.0, "units": "kWh"}
+                    },
+                    "property_package": None,
+                }
+            },
+        },
+    )
+
+    model = build_model(cfg)
+
+    assert isinstance(model.gas, SimpleGasFlow)
+
+
+@pytest.mark.unit
+def test_build_model_unknown_property_class():
+    """An unknown property_class lists the registered package names."""
+    cfg = _demo_dict(
+        schema_version="0.0.4",
+        properties={"properties": {"property_class": "Nope"}},
+    )
+
+    with pytest.raises(FlexConfigError) as excinfo:
+        build_model(cfg)
+    assert all(name in str(excinfo.value) for name in PROPERTY_PACKAGES)
+
+
+@pytest.mark.unit
+def test_unit_property_package_none():
+    """property_package null builds the unit with no property package."""
+    cfg = _demo_dict(
+        schema_version="0.0.4",
+        costing=_prices_only(),
+        plant={
+            "name": "p",
+            "units": {
+                "battery": {
+                    "unit_model_class": "BatteryModel",
+                    "construction_options": {
+                        "capacity": {"value": 10.0, "units": "kWh"}
+                    },
+                    "property_package": None,
+                }
+            },
+        },
+    )
+
+    model = build_model(cfg)
+
+    assert model.p.battery.config.property_package is None
+
+
+@pytest.mark.unit
+def test_unit_costing_false():
+    """costing false leaves one unit uncosted while its neighbor stays costed."""
+    cfg = _demo_dict(
+        schema_version="0.0.4",
+        costing=_prices_only(),
+        plant={
+            "name": "p",
+            "units": {
+                "free": {
+                    "unit_model_class": "BatteryModel",
+                    "construction_options": {
+                        "capacity": {"value": 10.0, "units": "kWh"}
+                    },
+                    "property_package": None,
+                    "costing": False,
+                },
+                "billed": {
+                    "unit_model_class": "BatteryModel",
+                    "construction_options": {
+                        "capacity": {"value": 10.0, "units": "kWh"}
+                    },
+                    "property_package": None,
+                },
+            },
+        },
+    )
+
+    model = build_model(cfg)
+
+    assert model.p.free.config.costing_package is None
+    assert model.p.billed.config.costing_package is model.costing
+
+
+def _write_demo_in(directory: Path, **overrides) -> Path:
+    """Write the demo config and its tariff into ``directory``; return the config."""
+    directory.mkdir()
+    (directory / "tariff_tou_demo.json").write_text(
+        (_FIXTURES / "tariff_tou_demo.json").read_text()
+    )
+    path = directory / "config.json"
+    path.write_text(json.dumps(_demo_dict(**overrides)))
+    return path
+
+
+@pytest.mark.unit
+def test_tariff_path_resolves_against_config_dir(tmp_path, monkeypatch):
+    """A tariff beside the config loads even when the working directory is elsewhere."""
+    path = _write_demo_in(tmp_path / "sub")
+    monkeypatch.chdir(tmp_path)
+
+    with warnings.catch_warnings():
+        warnings.filterwarnings("error", message="Path ")
+        model = build_model(load_model_config(path))
+
+    assert model.costing is not None
+
+
+@pytest.mark.unit
+def test_relative_path_cwd_fallback_warns(tmp_path, monkeypatch):
+    """A tariff found only relative to the working directory warns and still builds."""
+    path = _write_demo_in(tmp_path / "sub")
+    (tmp_path / "sub" / "tariff_tou_demo.json").rename(
+        tmp_path / "tariff_tou_demo.json"
+    )
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.warns(DeprecationWarning, match="relative to the config file"):
+        build_model(load_model_config(path))
+
+
+@pytest.mark.unit
+def test_dispatch_path_resolves_against_config_dir(tmp_path, monkeypatch):
+    """An external-dispatch series beside the config loads from another cwd."""
+    plant = json.loads(_CONFIG.read_text())["plant"]
+    plant["units"]["surrogate"]["external_dispatch"] = {
+        "variable": "power_electrical",
+        "source": "series.json",
+    }
+    path = _write_demo_in(tmp_path / "sub", plant=plant)
+    (tmp_path / "sub" / "series.json").write_text(
+        json.dumps({str(t): 1.0 for t in range(24)})
+    )
+    monkeypatch.chdir(tmp_path)
+
+    model = build_model(load_model_config(path))
+
+    assert model.demo.surrogate.power_electrical[0].fixed

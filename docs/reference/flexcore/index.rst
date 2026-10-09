@@ -66,6 +66,7 @@ authority, and :data:`CURRENT_SCHEMA_VERSION` tags what this build writes.
    NetworkConfig
    PlantConfig
    UnitConfig
+   PropertyPackageSpec
    IOVariableSpec
    SurrogateSpec
    SurrogateType
@@ -89,6 +90,8 @@ Config I/O
 .. autofunction:: dump_model_config
 
 .. autofunction:: load_surrogate_source
+
+.. autofunction:: resolve_source_path
 
 .. autodata:: MIGRATIONS
 

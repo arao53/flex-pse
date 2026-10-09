@@ -12,6 +12,7 @@ path.
 
 import json
 import re
+import warnings
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
@@ -38,14 +39,14 @@ def _to_0_0_2(data: dict) -> dict:
 
 
 def _iter_unit_configs(data: dict):
-    """Yield every unit config dict in a raw (pre-validation) config document.
+    """Yield every (name, unit config dict) in a raw (pre-validation) config.
 
     Args:
         data: The parsed config document.
 
     Yields:
-        Each unit's raw config mapping, wherever it sits (a bare plant, or
-        every plant of a network).
+        Each unit's attribute name and raw config mapping, wherever it sits (a
+        bare plant, or every plant of a network).
     """
     network = data.get("network")
     plants = (
@@ -54,7 +55,7 @@ def _iter_unit_configs(data: dict):
         else [data.get("plant") or {}]
     )
     for plant in plants:
-        yield from (plant or {}).get("units", {}).values()
+        yield from (plant or {}).get("units", {}).items()
 
 
 def _to_0_0_3(data: dict) -> dict:
@@ -78,7 +79,7 @@ def _to_0_0_3(data: dict) -> dict:
         FlexConfigError: If any unit carries a surrogate in the old
             (``functional_form``) shape.
     """
-    for unit in _iter_unit_configs(data):
+    for _, unit in _iter_unit_configs(data):
         surrogate = unit.get("surrogate")
         if surrogate is not None and "surrogate_type" not in surrogate:
             raise FlexConfigError(
@@ -91,9 +92,60 @@ def _to_0_0_3(data: dict) -> dict:
     return {**data, "schema_version": "0.0.3"}
 
 
+_UNBUILT_UC_DEFAULTS = {
+    "startup_shutdown": False,
+    "dwell": False,
+    "min_up": None,
+    "min_down": None,
+    "delays": None,
+    "conditional": None,
+}
+
+
+def _to_0_0_4(data: dict) -> dict:
+    """Upgrade a 0.0.3 config to 0.0.4, rejecting unit-commitment fields nothing built.
+
+    0.0.4 rejects the ``unit_commitment`` fields the builder never read, and
+    turned ``properties`` from a dict of constructor kwargs into named
+    ``PropertyPackageSpec`` entries. The old kwargs become the ``options`` of a
+    single ``SimpleAqueousFlow`` package named ``properties``.
+
+    Args:
+        data: The parsed 0.0.3 config.
+
+    Returns:
+        A new mapping stamped 0.0.4; the input is not mutated.
+
+    Raises:
+        FlexConfigError: If any unit sets an unsupported ``unit_commitment``
+            field to a non-default value.
+    """
+    for unit_name, unit in _iter_unit_configs(data):
+        uc = unit.get("unit_commitment") or {}
+        for name, default in _UNBUILT_UC_DEFAULTS.items():
+            if name in uc and uc[name] != default:
+                raise FlexConfigError(
+                    f"Unit {unit_name!r} sets unit_commitment.{name}, which was never "
+                    "built from config and is rejected as of 0.0.4. Remove it, "
+                    "or build this logic in code with "
+                    "flexops.logic.add_startup_shutdown.",
+                    field=f"unit_commitment.{name}",
+                    value=uc[name],
+                )
+    options = dict(data.get("properties") or {})
+    return {
+        **data,
+        "schema_version": "0.0.4",
+        "properties": {
+            "properties": {"property_class": "SimpleAqueousFlow", "options": options}
+        },
+    }
+
+
 MIGRATIONS: dict[str, Callable[[dict], dict]] = {
     "0.0.1": _to_0_0_2,
     "0.0.2": _to_0_0_3,
+    "0.0.3": _to_0_0_4,
 }
 """Source version -> upgrade hook, applied in sequence on load. Each hook must
 set the new ``schema_version`` on the dict it returns."""
@@ -171,6 +223,38 @@ def _read(path: Path) -> dict:
 _SURROGATE_SOURCE_FIELDS = ("data",)
 
 
+def resolve_source_path(source: str, base_dir) -> Path:
+    """Resolve a config-relative path against the config file's directory.
+
+    Absolute paths are returned unchanged. A relative path resolves against
+    ``base_dir``. If ``base_dir`` is None (the config came in as a dict), or the
+    file does not exist there but does exist relative to the working directory,
+    the working directory is used and a DeprecationWarning is emitted.
+
+    Args:
+        source: The path as written in the config.
+        base_dir: The config file's directory, or None.
+
+    Returns:
+        The resolved path.
+
+    Warns:
+        DeprecationWarning: When the path falls back to the working directory.
+    """
+    path = Path(source)
+    if path.is_absolute():
+        return path
+    if base_dir is not None and ((Path(base_dir) / path).exists() or not path.exists()):
+        return Path(base_dir) / path
+    warnings.warn(
+        f"Path {source!r} resolved against the working directory; write it "
+        "relative to the config file instead.",
+        DeprecationWarning,
+        stacklevel=2,
+    )
+    return path
+
+
 def load_surrogate_source(spec: SurrogateSpec, base_dir=None) -> SurrogateSpec:
     """Fill a surrogate in from the sidecar file its ``source`` names.
 
@@ -197,9 +281,7 @@ def load_surrogate_source(spec: SurrogateSpec, base_dir=None) -> SurrogateSpec:
     """
     if spec.source is None:
         return spec
-    path = Path(spec.source)
-    if base_dir is not None and not path.is_absolute():
-        path = Path(base_dir) / path
+    path = resolve_source_path(spec.source, base_dir)
     if path.suffix.lower() != ".json":
         raise FlexConfigError(
             f"Unsupported surrogate source format {path.suffix!r} for "
@@ -332,6 +414,7 @@ def load_model_config(source) -> ModelConfig:
         cfg = ModelConfig.model_validate(data)
     except ValidationError as exc:
         raise FlexConfigError(_format_validation_error(exc)) from exc
+    cfg._base_dir = None if base_dir is None else Path(base_dir)
     return _resolve_surrogate_sources(cfg, base_dir)
 
 

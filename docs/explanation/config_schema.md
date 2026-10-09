@@ -41,7 +41,8 @@ The schema shrinks from the top level
 
 - {class}`~flexcore.config.schema.ModelConfig` is the top level artifact.
   It holds `schema_version`, a
-  {class}`~flexcore.config.schema.TimeConfig`, a `properties` spec, a
+  {class}`~flexcore.config.schema.TimeConfig`, a dict of named
+  {class}`~flexcore.config.schema.PropertyPackageSpec` entries, a
   {class}`~flexcore.config.schema.CostingConfig`, and **exactly one** of a
   {class}`~flexcore.config.schema.NetworkConfig` **or** a
   {class}`~flexcore.config.schema.PlantConfig` (a validator enforces the
@@ -126,7 +127,9 @@ on both sides at once.
 
 When a relationship is too large to inline, `source` names a JSON sidecar
 that supplies `data`. A relative path resolves against the config file's
-own directory, and {func}`~flexcore.config.io.load_model_config` fills it
+own directory (see {func}`~flexcore.config.io.resolve_source_path`, which
+also covers tariff, demand response, and dispatch paths and falls back to the
+working directory with a `DeprecationWarning`), and {func}`~flexcore.config.io.load_model_config` fills it
 in at the boundary, so nothing downstream ever sees a half loaded
 relationship.
 

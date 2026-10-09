@@ -20,12 +20,11 @@ step, as in the frozen script.
 """
 
 import json
-from pathlib import Path
 
 import pyomo.environ as pyo
 from pyomo.network import Arc
 
-from flexcore.config.io import load_model_config
+from flexcore.config.io import load_model_config, resolve_source_path
 from flexcore.config.schema import ModelConfig, PlantConfig
 from flexcore.exceptions import FlexConfigError
 from flexops.core.network_block import NetworkBlock
@@ -34,7 +33,7 @@ from flexops.core.plant_block import PlantBlock
 from flexops.core.time_block import TimeBlock
 from flexops.core.units import parse_units
 from flexops.costing import FlexCosting
-from flexops.properties.simple_aqueous import SimpleAqueousFlow
+from flexops.properties import PROPERTY_PACKAGES
 
 _QUANTITY_KEYS = {"value", "units"}
 
@@ -87,7 +86,7 @@ def build_model(config) -> pyo.ConcreteModel:
 
     Returns:
         The constructed ``ConcreteModel``, carrying ``time_block``,
-        ``properties``, ``costing``, the plant or network tree, and
+        the named property packages, ``costing``, the plant or network tree, and
         ``objective``. Arcs are declared but not expanded.
 
     Raises:
@@ -103,21 +102,66 @@ def build_model(config) -> pyo.ConcreteModel:
         end_date=cfg.time.end_date,
         time_step=parse_quantity(cfg.time.time_step),
     )
-    model.properties = SimpleAqueousFlow(**cfg.properties)
+    packages = {}
+    for name, spec in cfg.properties.items():
+        package_class = PROPERTY_PACKAGES.get(spec.property_class)
+        if package_class is None:
+            raise FlexConfigError(
+                f"Unknown property_class {spec.property_class!r}. Known property "
+                f"packages: {', '.join(sorted(PROPERTY_PACKAGES))}.",
+                field=f"properties.{name}.property_class",
+                value=spec.property_class,
+            )
+        model.add_component(name, package_class(**spec.options))
+        packages[name] = model.find_component(name)
     model.costing = _build_costing(model, cfg)
 
     if cfg.network is not None:
         model.add_component(cfg.network.name, NetworkBlock(time_block=model.time_block))
         network = model.find_component(cfg.network.name)
         for name, plant_cfg in cfg.network.plants.items():
-            _build_plant(network, name, plant_cfg, model)
+            _build_plant(network, name, plant_cfg, model, packages, cfg._base_dir)
         _build_arcs(network, cfg.network.arcs)
     else:
-        _build_plant(model, cfg.plant.name, cfg.plant, model)
+        _build_plant(model, cfg.plant.name, cfg.plant, model, packages, cfg._base_dir)
 
     model.costing.cost_process()
     model.objective = pyo.Objective(expr=model.costing.aggregate_operating_cost)
     return model
+
+
+def _resolve_source(source, base_dir):
+    """Resolve a file path against the config directory, passing tags through.
+
+    Args:
+        source: A path or tag as written in the config, or None.
+        base_dir: The config file's directory, or None.
+
+    Returns:
+        The resolved path string, or ``source`` unchanged when it is None or not
+        a ``.json``/``.csv`` file name.
+    """
+    # A source may name a historian tag rather than a file; only resolve files.
+    if source is None or not source.lower().endswith((".json", ".csv")):
+        return source
+    return str(resolve_source_path(source, base_dir))
+
+
+def _resolve_tariff_source(source, base_dir):
+    """Resolve every file path in a ``tariff_source`` of any shape.
+
+    Args:
+        source: A string, list of strings, mapping of utility to string, or None.
+        base_dir: The config file's directory, or None.
+
+    Returns:
+        ``source`` with the same shape and each file path resolved.
+    """
+    if isinstance(source, list):
+        return [_resolve_source(item, base_dir) for item in source]
+    if isinstance(source, dict):
+        return {key: _resolve_source(item, base_dir) for key, item in source.items()}
+    return _resolve_source(source, base_dir)
 
 
 def _build_costing(model, cfg: ModelConfig):
@@ -135,12 +179,15 @@ def _build_costing(model, cfg: ModelConfig):
         name: parse_quantity({"value": spec.value, "units": spec.units})
         for name, spec in (costing.energy_prices or {}).items()
     }
+    base_dir = cfg._base_dir
     return FlexCosting(
         time_block=model.time_block,
-        tariff_file=costing.tariff_source,
+        tariff_file=_resolve_tariff_source(costing.tariff_source, base_dir),
         energy_prices=prices or None,
         currency=costing.currency,
-        dr_event_file=None if costing.dr is None else costing.dr.events_source,
+        dr_event_file=_resolve_source(
+            None if costing.dr is None else costing.dr.events_source, base_dir
+        ),
         consumption_estimate=costing.consumption_estimate,
         fixed_operating_cost=costing.fixed_operating_cost,
         prorate_monthly_charges=costing.prorate_monthly_charges,
@@ -150,7 +197,9 @@ def _build_costing(model, cfg: ModelConfig):
     )
 
 
-def _build_plant(parent, name: str, plant_cfg: PlantConfig, model) -> None:
+def _build_plant(
+    parent, name: str, plant_cfg: PlantConfig, model, packages: dict, base_dir=None
+) -> None:
     """Attach a PlantBlock named ``name`` to ``parent`` and populate it.
 
     Args:
@@ -158,19 +207,25 @@ def _build_plant(parent, name: str, plant_cfg: PlantConfig, model) -> None:
         name: The plant's attribute name on ``parent``.
         plant_cfg: The validated plant config.
         model: The whole model, supplying the TimeBlock, properties, costing.
+        packages: The built property packages, keyed by their config name.
+        base_dir: The config file's directory, for relative dispatch sources.
     """
     parent.add_component(name, PlantBlock(time_block=model.time_block))
     plant = parent.find_component(name)
     for unit_name, unit_cfg in plant_cfg.units.items():
+        runtime = {}
+        if unit_cfg.property_package is not None:
+            key = unit_cfg.property_package
+            # The config validator guarantees 'auto' means exactly one package.
+            runtime["property_package"] = (
+                next(iter(packages.values())) if key == "auto" else packages[key]
+            )
+        if unit_cfg.costing:
+            runtime["costing_package"] = model.costing
         plant.add_component(
-            unit_name,
-            OpsBlockData.build_from_config(
-                unit_cfg,
-                property_package=model.properties,
-                costing_package=model.costing,
-            ),
+            unit_name, OpsBlockData.build_from_config(unit_cfg, **runtime)
         )
-        _apply_external_dispatch(plant.find_component(unit_name), unit_cfg)
+        _apply_external_dispatch(plant.find_component(unit_name), unit_cfg, base_dir)
     _build_arcs(plant, plant_cfg.arcs)
 
 
@@ -200,12 +255,13 @@ def _build_arcs(block, arcs) -> None:
         block.add_component(f"arc_{index}", Arc(**endpoints))
 
 
-def _apply_external_dispatch(unit, unit_cfg) -> None:
+def _apply_external_dispatch(unit, unit_cfg, base_dir=None) -> None:
     """Fix a unit's actuator to a declared external (DERMS) command series.
 
     Args:
         unit: The built unit block.
         unit_cfg: Its validated ``UnitConfig``.
+        base_dir: The config file's directory, for a relative source.
 
     Raises:
         FlexConfigError: If the declared variable is not on the unit, or the
@@ -223,7 +279,7 @@ def _apply_external_dispatch(unit, unit_cfg) -> None:
             value=spec.variable,
         )
     try:
-        raw = json.loads(Path(spec.source).read_text())
+        raw = json.loads(resolve_source_path(spec.source, base_dir).read_text())
     except (OSError, ValueError) as exc:
         raise FlexConfigError(
             f"Could not read external-dispatch series {spec.source!r}: {exc}. "

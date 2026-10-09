@@ -7,6 +7,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **`UnitConfig.costing`** opts a unit out of the costing block (`false` builds it with no costing package). Known difference: the frozen `api_freeze_config.json` still costs its Tank.
+- First migration fixture `fixtures/configs/0.0.3.json` and a versioning policy in `CONTRIBUTING.md`.
 - **Surrogate coefficient management API.** `OpsBlockData` now exposes `list_surrogate_blocks(relation_name=None)`, `current_surrogate_block(relation_name=None)`, `switch_surrogate_block(block_name)`, `fix_surrogate_coefficients(relation_name=None)`, and `unfix_surrogate_coefficients(relation_name=None)`. When called without `relation_name`, list/current operate across all relations on the unit, matching the common case of a single-relation unit.
 - **`CoefficientRegistry` supports indexed Vars.** The registry now accepts both scalar `pyo.Var` and indexed `pyo.Var` objects. `register_coefficients` detects an indexed Var and iterates over its index set automatically, surfacing a flat `name → VarData` view to callers. This removes the need for per-coefficient name sanitization in `MultilinearSurrogate`.
 - **`MultilinearSurrogate` uses a single indexed Var for coefficients.** Instead of creating one scalar `pyo.Var` per coefficient (requiring `alphanum_label_from_name` sanitization that could collide), `build()` now creates one `coefficient_vars = pyo.Var(index_set, initialize=1.0)` keyed by the raw coefficient strings including `"intercept"`. Raw keys like `"flow_out*outlet_state.pressure"` are preserved exactly.
@@ -16,6 +18,9 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **BREAKING: configs setting `unit_commitment.{startup_shutdown,dwell,min_up,min_down,delays,conditional}` now fail to load.** These fields were accepted but never built; a clear error replaces the silent no-op. Schema is now `0.0.4`; the `0.0.3` migration rejects them naming the unit.
+- **`ModelConfig.properties` is now a dict of named `PropertyPackageSpec` entries** (`property_class` + `options`), so a config can build `SimpleGasFlow` or several packages. Each unit picks one with the new `UnitConfig.property_package` (`"auto"`, a key, or `null`). Old kwargs dicts migrate to a single `SimpleAqueousFlow` named `properties`.
+- **`tariff_source`, `dr.events_source`, and `external_dispatch.source` resolve against the config file's directory**, like surrogate sources, via the new `flexcore.config.io.resolve_source_path`. A path found only relative to the working directory still works but emits a `DeprecationWarning`.
 - **`register_surrogate_coefficients` now uses registry key names for `ParameterRecord`.** When coefficients are stored in an indexed Var, the parameter name stored in the IO registry is the raw coefficient key (e.g. `"flow_out*outlet_state.pressure"`), not the parent block's `local_name`. This makes target removal and parameter lookup correct for all coefficient storage modes.
 - **`swap_relation` fitted constraint activation.** `switch_surrogate_block` now explicitly activates the fitted `Constraint` after `block.activate()`, because Pyomo `Block.activate()` does not cascade to child `Constraint` objects that were explicitly deactivated.
 - **EECO pinned to `eeco==0.4.1`** (from `0.4.0`). 0.4.1 prices a top tier at one constant rate exactly in the objective, with no estimate, so the demo tariff's `tier2` surcharge is no longer dropped.
