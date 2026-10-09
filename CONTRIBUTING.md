@@ -76,6 +76,8 @@ AI-assisted contributions (code, docs, or issue text) are welcome, but the same 
 - A renamed, reshaped, newly required, or newly rejected field is a bump with a `MIGRATIONS` hook in the same PR, plus a fixture `fixtures/configs/<old version>.json`.
 - A migration that cannot translate raises `FlexConfigError` naming the field and how to fix it.
 - Regenerate `schemas/model_config.schema.json` in the same PR.
+- There is one schema, the flat `FlowsheetSpec`, versioned by `SCHEMA_VERSION`. Versions up to 0.0.4 are the old nested `ModelConfig`; the `0.0.4` entry in `MIGRATIONS` converts them to the flat spec. Keep a fixture `fixtures/specs/<old version>.json` for each flat version and regenerate `schemas/flowsheet_spec.schema.json`.
+- A new element kind must be added to `KINDS` with its stage and mutability.
 
 ## Review & Verification by Maintainers
 

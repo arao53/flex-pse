@@ -1,5 +1,7 @@
 """Structural comparison of two Pyomo models."""
 
+import hashlib
+import json
 import math
 
 import pyomo.environ as pyo
@@ -168,3 +170,43 @@ def assert_models_equivalent(
         if rest:
             shown.append(f"... and {rest} more")
         raise AssertionError(f"Models differ ({len(diffs)}):\n" + "\n".join(shown))
+
+
+def model_fingerprint(model) -> dict:
+    """Summarize a model's components, Vars and Constraints as small plain data.
+
+    Args:
+        model: The Pyomo model to summarize.
+
+    Returns:
+        A JSON-serializable dict: sorted component names, plus a digest per Var
+        and active Constraint component covering every entry's bounds, fixed
+        state and body terms.
+    """
+    entries: dict[str, dict] = {"vars": {}, "constraints": {}}
+    for name, var in _collect(model, pyo.Var).items():
+        state = [var.lb, var.ub, var.fixed, var.value if var.fixed else None]
+        entries["vars"].setdefault(_name(var.parent_component(), model), {})[
+            name
+        ] = state
+    for name, con in _collect(model, pyo.Constraint, active=True).items():
+        constant, linear, quadratic, nonlinear = _repn_key(con.body, model)
+        state = [con.lower, con.upper, constant, linear, quadratic, nonlinear]
+        entries["constraints"].setdefault(_name(con.parent_component(), model), {})[
+            name
+        ] = state
+    digest = {
+        kind: {
+            component: hashlib.sha1(
+                json.dumps(states, sort_keys=True, default=str).encode()
+            ).hexdigest()
+            for component, states in components.items()
+        }
+        for kind, components in entries.items()
+    }
+    return {
+        "components": sorted(
+            _name(c, model) for c in model.component_objects(descend_into=True)
+        ),
+        **digest,
+    }

@@ -1509,7 +1509,7 @@ class OpsBlockData(UnitModelBlockData):
     # -- config-driven construction ---------------------------------
 
     @classmethod
-    def build_from_config(cls, cfg: UnitConfig, **kwargs):
+    def build_from_config(cls, cfg: UnitConfig, *, index_set=None, **kwargs):
         """Construct a unit from a validated ``UnitConfig``.
 
         The per-unit primitive behind
@@ -1532,6 +1532,8 @@ class OpsBlockData(UnitModelBlockData):
 
         Args:
             cfg: A ``UnitConfig``, or a mapping/path to validate into one.
+            index_set: A Pyomo Set to build one unit per member over; omitted
+                builds a single unit.
             **kwargs: Extra runtime construction options.
 
         Returns:
@@ -1566,6 +1568,7 @@ class OpsBlockData(UnitModelBlockData):
         if cfg.unit_commitment is not None:
             options["unit_commitment"] = cfg.unit_commitment
         return block_class(
+            *(() if index_set is None else (index_set,)),
             **options,
             external_dispatch=cfg.external_dispatch,
             flexops_config=cfg,

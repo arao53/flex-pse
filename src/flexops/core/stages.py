@@ -1,21 +1,30 @@
-"""The ordered build stages build_model runs, and apply_stages for live models."""
+"""The ordered build stages build_model runs, and apply_stages/apply_spec."""
 
-import json
-from collections.abc import Iterator, Sequence
-from dataclasses import dataclass
+import re
+from collections.abc import Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pyomo.environ as pyo
-from pyomo.network import Arc
+from pydantic import TypeAdapter
+from pyomo.network import Arc, Port
 
 from flexcore import nomenclature as nm
-from flexcore.config.io import resolve_source_path
-from flexcore.config.schema import (
-    ModelConfig,
-    PlantConfig,
-    SurrogateSpec,
-    SurrogateType,
-    UnitConfig,
+from flexcore.config.io import load_spec, resolve_source_path
+from flexcore.config.schema import SurrogateSpec, SurrogateType, UnitConfig
+from flexcore.config.spec import (
+    AUTO,
+    KINDS,
+    Connection,
+    CostingElement,
+    DispatchElement,
+    Element,
+    FlowsheetSpec,
+    SurrogateElement,
+    UnitElement,
+    element_target,
+    find_unit,
+    parent_name,
 )
 from flexcore.exceptions import FlexConfigError
 from flexops.core.network_block import NetworkBlock
@@ -55,15 +64,18 @@ class BuildContext:
     """What the build stages share.
 
     Attributes:
-        base_dir: The config file's directory, for relative source paths.
+        base_dir: The spec file's directory, for relative source paths.
         expand_arcs: Whether the topology stage expands arcs.
-        units: Each unit's config path (``"plant.unit"``, or
-            ``"network.plant.unit"`` for a network) mapped to its built block.
+        units: Each unit element's name mapped to its built block (the indexed
+            component for an indexed unit).
+        members: Each unit element's name mapped to its block data: one for a
+            scalar unit, one per index for an indexed unit.
     """
 
     base_dir: Path | None
-    expand_arcs: bool
-    units: dict[str, OpsBlockData]
+    expand_arcs: bool = False
+    units: dict[str, OpsBlockData] = field(default_factory=dict)
+    members: dict[str, list[OpsBlockData]] = field(default_factory=dict)
 
 
 def parse_quantity(value, *, strict: bool = True):
@@ -102,142 +114,180 @@ def parse_quantity(value, *, strict: bool = True):
     return value
 
 
-def _unit_configs(cfg: ModelConfig) -> Iterator[tuple[str, UnitConfig]]:
-    """Yield each unit's config path and its ``UnitConfig``."""
-    if cfg.network is None:
-        plants = {cfg.plant.name: cfg.plant}
-        prefix = ""
-    else:
-        plants = cfg.network.plants
-        prefix = f"{cfg.network.name}."
-    for plant_name, plant_cfg in plants.items():
-        for unit_name, unit_cfg in plant_cfg.units.items():
-            yield f"{prefix}{plant_name}.{unit_name}", unit_cfg
-
-
-def _resolve_units(model, cfg: ModelConfig) -> dict[str, OpsBlockData]:
-    """Map each config unit path to its block on ``model``.
+def elements_of(spec: FlowsheetSpec, *kinds: str) -> list:
+    """Return the spec's elements of the given kinds in build order.
 
     Args:
-        model: The model holding the units.
-        cfg: The config naming them.
+        spec: The flat spec.
+        kinds: Element kinds to return.
 
     Returns:
-        Unit config path to built block.
-
-    Raises:
-        FlexConfigError: If a unit path does not resolve on the model.
+        The elements sorted by name depth, then name, then what they target;
+        the order of the file is never used.
     """
-    units = {}
-    for path, _ in _unit_configs(cfg):
-        unit = model.find_component(path)
+
+    def build_order(element):
+        target = element_target(element)
+        name = "" if target or element.kind == "time" else element.name
+        return (name.count("."), name, target)
+
+    return sorted(spec.of_kind(*kinds), key=build_order)
+
+
+def _attach(model, name: str, component) -> None:
+    """Add ``component`` under the last segment of ``name`` on its parent block."""
+    parent = parent_name(name)
+    block = model.find_component(parent) if parent else model
+    block.add_component(name.rpartition(".")[2], component)
+
+
+def _package(model, spec: FlowsheetSpec, choice: str | None, kind: str):
+    """Return the package component a unit's ``choice`` names, or None."""
+    if choice is None:
+        return None
+    return model.find_component(
+        spec.of_kind(kind)[0].name if choice == AUTO else choice
+    )
+
+
+def _members(model, ctx: BuildContext, unit_name: str) -> list[OpsBlockData]:
+    """Return the block data of a unit element, looking it up on the model if needed."""
+    if unit_name not in ctx.members:
+        unit = model.find_component(unit_name)
         if unit is None:
             raise FlexConfigError(
-                f"Config unit {path!r} is not on the model.", field=path, value=path
+                f"Unit {unit_name!r} is not on the model. Name a unit element "
+                "that was built.",
+                field="unit",
+                value=unit_name,
             )
-        units[path] = unit
-    return units
+        ctx.members[unit_name] = list(unit.values()) if unit.is_indexed() else [unit]
+    return ctx.members[unit_name]
 
 
-def stage_declare(model, cfg: ModelConfig, ctx: BuildContext) -> None:
-    """Add the TimeBlock, property packages and unprocessed costing block.
+def stage_declare(model, spec: FlowsheetSpec, ctx: BuildContext) -> None:
+    """Add the TimeBlock, property packages and unprocessed costing blocks.
 
     Args:
         model: The empty model to populate.
-        cfg: The validated config.
+        spec: The validated spec.
         ctx: The shared build context.
 
     Raises:
         FlexConfigError: If a property package class is unknown.
     """
+    (time,) = spec.of_kind("time")
     model.time_block = TimeBlock(
-        start_date=cfg.time.start_date,
-        end_date=cfg.time.end_date,
-        time_step=parse_quantity(cfg.time.time_step),
+        start_date=time.start_date,
+        end_date=time.end_date,
+        time_step=parse_quantity(time.time_step),
     )
-    for name, spec in cfg.properties.items():
-        package_class = PROPERTY_PACKAGES.get(spec.property_class)
+    for element in elements_of(spec, "property_package"):
+        package_class = PROPERTY_PACKAGES.get(element.property_class)
         if package_class is None:
             raise FlexConfigError(
-                f"Unknown property_class {spec.property_class!r}. Known property "
+                f"Unknown property_class {element.property_class!r}. Known property "
                 f"packages: {', '.join(sorted(PROPERTY_PACKAGES))}.",
-                field=f"properties.{name}.property_class",
-                value=spec.property_class,
+                field=f"{element.name}.property_class",
+                value=element.property_class,
             )
-        model.add_component(name, package_class(**spec.options))
-    model.costing = _build_costing(model, cfg)
+        model.add_component(element.name, package_class(**element.options))
+    for element in elements_of(spec, "costing"):
+        model.add_component(element.name, _build_costing(model, element, ctx))
 
 
-def stage_topology(model, cfg: ModelConfig, ctx: BuildContext) -> None:
-    """Build the units, plants, network and arcs, expanding arcs if requested.
+def stage_topology(model, spec: FlowsheetSpec, ctx: BuildContext) -> None:
+    """Build networks, plants, sets, units and connections, expanding arcs if asked.
 
     Args:
         model: The model with its declared blocks.
-        cfg: The validated config.
-        ctx: The shared build context; its ``units`` is filled here.
+        spec: The validated spec.
+        ctx: The shared build context; its ``units`` and ``members`` are filled.
 
     Raises:
-        FlexConfigError: If an arc endpoint is not a port.
+        FlexConfigError: If a connection endpoint is not a port.
     """
-    packages = {name: model.find_component(name) for name in cfg.properties}
-    if cfg.network is not None:
-        model.add_component(cfg.network.name, NetworkBlock(time_block=model.time_block))
-        network = model.find_component(cfg.network.name)
-        for name, plant_cfg in cfg.network.plants.items():
-            _build_plant(network, name, plant_cfg, model, packages)
-        _build_arcs(network, cfg.network.arcs)
-    else:
-        _build_plant(model, cfg.plant.name, cfg.plant, model, packages)
-    ctx.units = _resolve_units(model, cfg)
+    for element in elements_of(spec, "network"):
+        _attach(model, element.name, NetworkBlock(time_block=model.time_block))
+    for element in elements_of(spec, "plant"):
+        _attach(model, element.name, PlantBlock(time_block=model.time_block))
+    for element in elements_of(spec, "set"):
+        _attach(model, element.name, pyo.Set(initialize=element.values, ordered=True))
+    units = elements_of(spec, "unit")
+    for element in units:
+        _build_unit(model, spec, element, ctx)
+    for element in units:
+        for connection in sorted(element.connections, key=lambda c: (c.port, c.to)):
+            _build_connection(model, element.name, connection, ctx)
     if ctx.expand_arcs:
         pyo.TransformationFactory("network.expand_arcs").apply_to(model)
 
 
-def stage_surrogates(model, cfg: ModelConfig, ctx: BuildContext) -> None:
-    """Reserved: swaps registered relations from config (schema 0.1.0, PR 4)."""
-
-
-def stage_degradation(model, cfg: ModelConfig, ctx: BuildContext) -> None:
-    """Reserved: builds degradation terms from config (schema 0.1.0, PR 4)."""
-
-
-def stage_ramping(model, cfg: ModelConfig, ctx: BuildContext) -> None:
-    """Reserved: builds ramp limits from config (schema 0.1.0, PR 4)."""
-
-
-def stage_logic(model, cfg: ModelConfig, ctx: BuildContext) -> None:
-    """Reserved: builds status, startup, shutdown logic (schema 0.1.0, PR 4)."""
-
-
-def stage_state(model, cfg: ModelConfig, ctx: BuildContext) -> None:
-    """Apply each unit's external dispatch.
+def stage_surrogates(model, spec: FlowsheetSpec, ctx: BuildContext) -> None:
+    """Swap each surrogate element's relation into its unit.
 
     Args:
         model: The model with built units.
-        cfg: The validated config.
+        spec: The validated spec.
+        ctx: The shared build context.
+    """
+    for element in elements_of(spec, "surrogate"):
+        _apply_surrogate(model, element, ctx)
+
+
+def stage_degradation(model, spec: FlowsheetSpec, ctx: BuildContext) -> None:
+    """Reserved: builds degradation terms from the spec."""
+
+
+def stage_ramping(model, spec: FlowsheetSpec, ctx: BuildContext) -> None:
+    """Reserved: builds ramp limits from the spec (planned for schema 0.1.x)."""
+
+
+def stage_logic(model, spec: FlowsheetSpec, ctx: BuildContext) -> None:
+    """Reserved: builds status, startup, shutdown logic (planned for 0.1.x)."""
+
+
+def stage_state(model, spec: FlowsheetSpec, ctx: BuildContext) -> None:
+    """Apply each dispatch element to its unit.
+
+    Args:
+        model: The model with built units.
+        spec: The validated spec.
         ctx: The shared build context.
 
     Raises:
         FlexConfigError: If a dispatch variable or source is invalid.
     """
-    for path, unit_cfg in _unit_configs(cfg):
-        _apply_external_dispatch(ctx.units[path], unit_cfg, ctx.base_dir)
+    for element in elements_of(spec, "dispatch"):
+        _apply_dispatch(model, element, ctx)
 
 
-def stage_extensions(model, cfg: ModelConfig, ctx: BuildContext) -> None:
-    """Reserved: runs user-supplied constraint builders (schema 0.1.0, PR 4)."""
+def stage_extensions(model, spec: FlowsheetSpec, ctx: BuildContext) -> None:
+    """Reserved: runs user-supplied constraint builders (planned for 0.1.x)."""
 
 
-def stage_costing(model, cfg: ModelConfig, ctx: BuildContext) -> None:
-    """Process the costing block and add the objective.
+def stage_costing(model, spec: FlowsheetSpec, ctx: BuildContext) -> None:
+    """Process every costing block and add the objective, if the spec has one.
 
     Args:
         model: The model with every cost term already registered.
-        cfg: The validated config.
+        spec: The validated spec.
         ctx: The shared build context.
     """
-    model.costing.cost_process()
-    model.objective = pyo.Objective(expr=model.costing.aggregate_operating_cost)
+    for element in elements_of(spec, "costing"):
+        model.find_component(element.name).cost_process()
+    for element in elements_of(spec, "objective"):
+        costing = model.find_component(
+            spec.of_kind("costing")[0].name
+            if element.costing_package == AUTO
+            else element.costing_package
+        )
+        sense = pyo.minimize if element.sense == "minimize" else pyo.maximize
+        _attach(
+            model,
+            element.name,
+            pyo.Objective(expr=costing.aggregate_operating_cost, sense=sense),
+        )
 
 
 STAGE_FUNCTIONS = {name: globals()[f"stage_{name}"] for name in STAGES}
@@ -316,28 +366,52 @@ def apply_relation_spec(
     return False, {INTENSITY_PARAMETER: coefficient}
 
 
-def apply_stages(
-    model, cfg: ModelConfig, stages: Sequence[str] = POST_TOPOLOGY_STAGES
-) -> None:
+def _resolve_units(model, spec: FlowsheetSpec) -> dict[str, OpsBlockData]:
+    """Map each spec unit element name to its block on ``model``.
+
+    Args:
+        model: The model holding the units.
+        spec: The spec naming them.
+
+    Returns:
+        Unit element name to built block.
+
+    Raises:
+        FlexConfigError: If a unit name does not resolve on the model.
+    """
+    units = {}
+    for element in spec.of_kind("unit"):
+        unit = model.find_component(element.name)
+        if unit is None:
+            raise FlexConfigError(
+                f"Spec unit {element.name!r} is not on the model.",
+                field=element.name,
+                value=element.name,
+            )
+        units[element.name] = unit
+    return units
+
+
+def apply_stages(model, config, stages: Sequence[str] = POST_TOPOLOGY_STAGES) -> None:
     """Run build stages on a model that already exists, without rebuilding it.
 
     The model must have been built by ``build_model`` (it carries
     ``model._flex_build_context``), or have the same component layout the
-    config describes. Stages always run in ``STAGES`` order, whatever order
+    spec describes. Stages always run in ``STAGES`` order, whatever order
     they are passed in.
 
     Args:
         model: The built model to update in place.
-        cfg: The validated config describing the stages' inputs.
+        config: Anything :func:`~flexcore.config.io.load_spec` accepts.
         stages: The stage names to run.
 
     Raises:
         FlexConfigError: If ``stages`` names ``declare`` or ``topology`` (those
             build the model, they can't be re-run on it); if a name is not in
-            ``STAGES``; if a config unit path is not on the model; or if
-            ``costing`` is requested on a model whose costing block has
-            already been processed.
+            ``STAGES``; if a spec unit is not on the model; or if ``costing`` is
+            requested on a model whose costing block has already been processed.
     """
+    spec = load_spec(config)
     unknown = sorted(set(stages) - set(STAGES))
     if unknown:
         raise FlexConfigError(
@@ -353,9 +427,10 @@ def apply_stages(
             field="stages",
             value=building,
         )
-    if (
-        "costing" in stages
-        and model.costing.find_component("aggregate_operating_cost") is not None
+    if "costing" in stages and any(
+        model.find_component(element.name).find_component("aggregate_operating_cost")
+        is not None
+        for element in spec.of_kind("costing")
     ):
         raise FlexConfigError(
             "Stage 'costing' already ran on this model; running cost_process() "
@@ -365,12 +440,10 @@ def apply_stages(
         )
     ctx = getattr(model, "_flex_build_context", None)
     if ctx is None:
-        ctx = BuildContext(
-            base_dir=cfg._base_dir, expand_arcs=False, units=_resolve_units(model, cfg)
-        )
+        ctx = BuildContext(base_dir=spec._base_dir, units=_resolve_units(model, spec))
     for name in STAGES:
         if name in stages:
-            STAGE_FUNCTIONS[name](model, cfg, ctx)
+            STAGE_FUNCTIONS[name](model, spec, ctx)
 
 
 def _resolve_source(source, base_dir):
@@ -407,130 +480,245 @@ def _resolve_tariff_source(source, base_dir):
     return _resolve_source(source, base_dir)
 
 
-def _build_costing(model, cfg: ModelConfig):
-    """Build the FlexCosting block from a ``CostingConfig``.
+def _build_costing(model, element: CostingElement, ctx: BuildContext):
+    """Build the FlexCosting block a costing element describes.
 
     Args:
         model: The model being built (supplies the TimeBlock).
-        cfg: The validated whole-model config.
+        element: The validated costing element.
+        ctx: The shared build context, resolving file paths.
 
     Returns:
         The constructible ``FlexCosting`` block.
     """
-    costing = cfg.costing
     prices = {
-        name: parse_quantity({"value": spec.value, "units": spec.units})
-        for name, spec in (costing.energy_prices or {}).items()
+        name: parse_quantity({"value": price.value, "units": price.units})
+        for name, price in (element.energy_prices or {}).items()
     }
-    base_dir = cfg._base_dir
     return FlexCosting(
         time_block=model.time_block,
-        tariff_file=_resolve_tariff_source(costing.tariff_source, base_dir),
+        tariff_file=_resolve_tariff_source(element.tariff_source, ctx.base_dir),
         energy_prices=prices or None,
-        currency=costing.currency,
+        currency=element.currency,
         dr_event_file=_resolve_source(
-            None if costing.dr is None else costing.dr.events_source, base_dir
+            None if element.dr is None else element.dr.events_source, ctx.base_dir
         ),
-        consumption_estimate=costing.consumption_estimate,
-        fixed_operating_cost=costing.fixed_operating_cost,
-        prorate_monthly_charges=costing.prorate_monthly_charges,
-        lifetime_years=costing.lifetime_years,
-        discount_rate=costing.discount_rate,
-        interest_rate=costing.interest_rate,
+        consumption_estimate=element.consumption_estimate,
+        fixed_operating_cost=element.fixed_operating_cost,
+        prorate_monthly_charges=element.prorate_monthly_charges,
+        lifetime_years=element.lifetime_years,
+        discount_rate=element.discount_rate,
+        interest_rate=element.interest_rate,
     )
 
 
-def _build_plant(
-    parent, name: str, plant_cfg: PlantConfig, model, packages: dict
+def _build_unit(model, spec: FlowsheetSpec, element: UnitElement, ctx: BuildContext):
+    """Build one unit element onto its parent and record it in the context."""
+    runtime = {}
+    for key, kind, choice in (
+        ("property_package", "property_package", element.property_package),
+        ("costing_package", "costing", element.costing_package),
+    ):
+        if choice is not None:
+            runtime[key] = _package(model, spec, choice, kind)
+    unit_config = UnitConfig(
+        unit_model_class=element.unit_model_class,
+        construction_options=element.construction_options,
+        io_variables=element.io_variables,
+        unit_commitment=element.unit_commitment,
+    )
+    index_set = None if element.index is None else model.find_component(element.index)
+    block = OpsBlockData.build_from_config(unit_config, index_set=index_set, **runtime)
+    _attach(model, element.name, block)
+    block = model.find_component(element.name)
+    ctx.units[element.name] = block
+    ctx.members[element.name] = list(block.values()) if index_set else [block]
+
+
+def _slug(text: str) -> str:
+    """Drop ``[...]`` and ``{i}`` from a path and join its segments with ``_``."""
+    return re.sub(r"\[[^\]]*\]|\{i\}", "", text).replace(".", "_")
+
+
+def _port(model, ctx: BuildContext, unit_name: str, path: str):
+    """Return the port at ``path``, or raise listing the unit's ports."""
+    port = model.find_component(path)
+    if port is None:
+        unit = _members(model, ctx, unit_name)[0]
+        ports = unit.component_objects(Port, descend_into=False)
+        raise FlexConfigError(
+            f"Unit {unit_name!r} has no port at {path!r}. Available ports: "
+            f"{sorted(p.local_name for p in ports)}. Check the connection's port, "
+            "or the unit's unit_model_class.",
+            field="port",
+            value=path,
+        )
+    return port
+
+
+def _fill(template: str, member) -> str:
+    """Put an index member into a ``{i}`` template; None leaves it unchanged."""
+    return template if member is None else template.replace("{i}", str(member))
+
+
+def _build_connection(
+    model, unit_name: str, conn: Connection, ctx: BuildContext
 ) -> None:
-    """Attach a PlantBlock named ``name`` to ``parent`` and populate it.
+    """Build the arc a unit's connection describes.
 
     Args:
-        parent: The model or NetworkBlock the plant is attached to.
-        name: The plant's attribute name on ``parent``.
-        plant_cfg: The validated plant config.
-        model: The whole model, supplying the TimeBlock, properties, costing.
-        packages: The built property packages, keyed by their config name.
-    """
-    parent.add_component(name, PlantBlock(time_block=model.time_block))
-    plant = parent.find_component(name)
-    for unit_name, unit_cfg in plant_cfg.units.items():
-        runtime = {}
-        if unit_cfg.property_package is not None:
-            key = unit_cfg.property_package
-            # The config validator guarantees 'auto' means exactly one package.
-            runtime["property_package"] = (
-                next(iter(packages.values())) if key == "auto" else packages[key]
-            )
-        if unit_cfg.costing:
-            runtime["costing_package"] = model.costing
-        plant.add_component(
-            unit_name, OpsBlockData.build_from_config(unit_cfg, **runtime)
-        )
-    _build_arcs(plant, plant_cfg.arcs)
-
-
-def _build_arcs(block, arcs) -> None:
-    """Build the declared arcs on ``block`` as ``arc_0``, ``arc_1``, ....
-
-    Args:
-        block: The plant or network the arcs belong to.
-        arcs: The validated :class:`~flexcore.config.schema.ArcSpec` list.
+        model: The model with every unit built.
+        unit_name: Element name of the connection's source unit.
+        conn: The connection.
+        ctx: The shared build context.
 
     Raises:
-        FlexConfigError: If an endpoint does not resolve to a port on ``block``.
+        FlexConfigError: If a port is missing, or the arc's name is taken.
     """
-    for index, arc in enumerate(arcs):
-        endpoints = {}
-        for role, path in (("source", arc.source), ("destination", arc.destination)):
-            port = block.find_component(path)
-            if port is None:
-                raise FlexConfigError(
-                    f"Arc {role} {path!r} is not a port on {block.name!r}. Write "
-                    "it as 'unit.port' relative to the plant (or "
-                    "'plant.unit.port' relative to the network).",
-                    field=role,
-                    value=path,
-                )
-            endpoints[role] = port
-        block.add_component(f"arc_{index}", Arc(**endpoints))
-
-
-def _apply_external_dispatch(unit, unit_cfg, base_dir=None) -> None:
-    """Fix a unit's actuator to a declared external (DERMS) command series.
-
-    Args:
-        unit: The built unit block.
-        unit_cfg: Its validated ``UnitConfig``.
-        base_dir: The config file's directory, for a relative source.
-
-    Raises:
-        FlexConfigError: If the declared variable is not on the unit, or the
-            source file cannot be read as a time-indexed series.
-    """
-    spec = unit_cfg.external_dispatch
-    if spec is None:
-        return
-    var = unit.find_component(spec.variable)
-    if var is None:
+    source_unit = ctx.units[unit_name]
+    if conn.index is not None:
+        index_set = model.find_component(conn.index)
+    else:
+        index_set = source_unit.index_set() if source_unit.is_indexed() else None
+    destination_unit, destination_port = find_unit(ctx.units, conn.to)
+    parent = _common_parent(unit_name, destination_unit)
+    block = model.find_component(parent) if parent else model
+    start = len(parent) + 1 if parent else 0
+    name = conn.name or _slug(
+        f"{unit_name[start:]}_{conn.port}_to_{destination_unit[start:]}"
+        f"_{destination_port}"
+    )
+    if block.find_component(name) is not None:
         raise FlexConfigError(
-            f"external_dispatch names variable {spec.variable!r}, which is not "
-            f"on {unit.name!r}.",
-            field="external_dispatch.variable",
-            value=spec.variable,
+            f"Cannot name the arc {name!r} on {parent or 'the model'!r}: that name "
+            f"is taken. Set an explicit 'name' on the connection {conn.port!r} -> "
+            f"{conn.to!r}.",
+            field="name",
+            value=name,
         )
-    try:
-        raw = json.loads(resolve_source_path(spec.source, base_dir).read_text())
-    except (OSError, ValueError) as exc:
-        raise FlexConfigError(
-            f"Could not read external-dispatch series {spec.source!r}: {exc}. "
-            "Provide a JSON mapping of time index (or timestamp) to value.",
-            field="external_dispatch.source",
-            value=spec.source,
-        ) from exc
-    # JSON keys are always strings; integer time indices come back as "0".
-    series = {
-        int(key) if key.lstrip("-").isdigit() else key: value
-        for key, value in raw.items()
+    source_template = f"{unit_name}.{conn.port}"
+    if source_unit.is_indexed():
+        source_template = f"{unit_name}[{{i}}].{conn.port}"
+    endpoints = {
+        member: (
+            _port(model, ctx, unit_name, _fill(source_template, member)),
+            _port(model, ctx, destination_unit, _fill(conn.to, member)),
+        )
+        for member in ([None] if index_set is None else list(index_set))
     }
-    unit.set_external_dispatch(var, series, fix=spec.fix)
+    if index_set is None:
+        source, destination = endpoints[None]
+        if conn.directed:
+            arc = Arc(source=source, destination=destination, doc=conn.doc)
+        else:
+            arc = Arc(ports=(source, destination), doc=conn.doc)
+    else:
+        arc = Arc(
+            index_set,
+            rule=lambda b, i: (
+                {"source": endpoints[i][0], "destination": endpoints[i][1]}
+                if conn.directed
+                else endpoints[i]
+            ),
+            doc=conn.doc,
+        )
+    block.add_component(name, arc)
+
+
+def _common_parent(first: str, second: str) -> str:
+    """Return the deepest dotted path that is a parent of both unit names."""
+    shared = []
+    for a, b in zip(
+        parent_name(first).split("."), parent_name(second).split("."), strict=False
+    ):
+        if a != b:
+            break
+        shared.append(a)
+    return ".".join(shared)
+
+
+def _apply_surrogate(model, element: SurrogateElement, ctx: BuildContext) -> None:
+    """Swap a surrogate element's relation into every block of its unit.
+
+    Args:
+        model: The built model.
+        element: The surrogate element.
+        ctx: The shared build context.
+
+    Raises:
+        FlexConfigError: If the unit is missing or the data is invalid.
+    """
+    relation = SurrogateSpec(
+        surrogate_type=element.surrogate_type,
+        data=element.data,
+        provenance=element.provenance,
+    )
+    for member in _members(model, ctx, element.unit):
+        apply_relation_spec(member, relation, relation_name=element.relation)
+
+
+def _apply_dispatch(model, element: DispatchElement, ctx: BuildContext) -> None:
+    """Set and fix a variable of every block of a unit to a dispatch series.
+
+    Args:
+        model: The built model.
+        element: The dispatch element.
+        ctx: The shared build context.
+
+    Raises:
+        FlexConfigError: If the unit or variable is missing, or the values cannot
+            be read as a time-indexed series.
+    """
+    members = _members(model, ctx, element.unit)
+    for member in members:
+        if member.find_component(element.variable) is None:
+            raise FlexConfigError(
+                f"dispatch names variable {element.variable!r}, which is not on "
+                f"{member.name!r}.",
+                field="variable",
+                value=element.variable,
+            )
+    raw = element.values
+    # JSON keys are always strings; integer time indices come back as "0".
+    series = (
+        dict(enumerate(raw))
+        if isinstance(raw, list)
+        else {int(k) if k.lstrip("-").isdigit() else k: v for k, v in raw.items()}
+    )
+    for member in members:
+        member.set_external_dispatch(
+            member.find_component(element.variable), series, fix=element.fix
+        )
+
+
+APPLIERS = {"surrogate": _apply_surrogate, "dispatch": _apply_dispatch}
+"""Mutable element kind -> function applying one such element to a model."""
+
+
+def apply_spec(model, elements) -> None:
+    """Apply mutable spec elements to a built model, without rebuilding it.
+
+    Args:
+        model: The built model, updated in place.
+        elements: Element models or dicts, validated as spec elements.
+
+    Raises:
+        FlexConfigError: If any element's kind is immutable (checked before
+            anything is applied), a unit is not on the model, or an element
+            fails to apply.
+    """
+    parsed = TypeAdapter(list[Element]).validate_python(elements)
+    for element in parsed:
+        if not KINDS[element.kind][1]:
+            raise FlexConfigError(
+                f"'{element.kind}' elements are immutable; change them in the spec "
+                "and rebuild with build_model",
+                field="kind",
+                value=element.kind,
+            )
+    ctx = BuildContext(base_dir=None)
+    if not hasattr(model, "_flex_applied"):
+        model._flex_applied = []
+    for element in sorted(parsed, key=lambda e: list(APPLIERS).index(e.kind)):
+        APPLIERS[element.kind](model, element, ctx)
+        model._flex_applied.append(element)

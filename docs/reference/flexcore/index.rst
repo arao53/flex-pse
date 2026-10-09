@@ -80,10 +80,48 @@ authority, and :data:`CURRENT_SCHEMA_VERSION` tags what this build writes.
 
 .. autodata:: CURRENT_SCHEMA_VERSION
 
+Flat flowsheet spec
+~~~~~~~~~~~~~~~~~~~
+
+.. currentmodule:: flexcore.config.spec
+
+A flowsheet as one flat list of elements, in any order. The nested
+``ModelConfig`` above is the legacy input format and converts to this one.
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   FlowsheetSpec
+   TimeElement
+   PropertyPackageElement
+   CostingElement
+   NetworkElement
+   PlantElement
+   SetElement
+   UnitElement
+   Connection
+   SurrogateElement
+   DispatchElement
+   ObjectiveElement
+
+.. autodata:: SCHEMA_VERSION
+
+.. autodata:: KINDS
+   :no-value:
+
+.. currentmodule:: flexcore.config.convert
+
+.. autofunction:: nested_to_spec
+
 Config I/O
 ~~~~~~~~~~
 
 .. currentmodule:: flexcore.config.io
+
+.. autofunction:: load_spec
+
+.. autofunction:: dump_spec
 
 .. autofunction:: load_model_config
 

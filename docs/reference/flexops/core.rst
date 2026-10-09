@@ -95,7 +95,9 @@ Build stages
 
 ``build_model`` runs the stages in :data:`STAGES` in order. Costing is last
 because ``cost_process()`` aggregates only the terms registered when it runs.
-:func:`apply_stages` runs the post-topology stages on a model that already exists.
+:func:`apply_stages` runs the post-topology stages on a model that already exists,
+and :func:`apply_spec` applies the mutable spec elements (surrogates and dispatches)
+to one.
 
 .. autodata:: STAGES
    :no-value:
@@ -106,6 +108,10 @@ because ``cost_process()`` aggregates only the terms registered when it runs.
 .. autoclass:: BuildContext
 
 .. autofunction:: apply_stages
+
+.. autofunction:: apply_spec
+
+.. autofunction:: elements_of
 
 .. autofunction:: apply_relation_spec
 

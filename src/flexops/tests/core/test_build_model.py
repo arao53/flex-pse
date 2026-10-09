@@ -10,8 +10,8 @@ from pyomo.environ import units as pyunits
 from pyomo.network import Arc, Port
 from pyomo.opt import assert_optimal_termination
 
-from flexcore.config.io import load_model_config
-from flexcore.config.schema import ArcSpec, ExternalDispatchSpec, UnitConfig
+from flexcore.config.io import load_model_config, load_spec
+from flexcore.config.spec import Connection, DispatchElement
 from flexcore.exceptions import FlexConfigError
 from flexcore.solvers import get_solver
 from flexops import (
@@ -25,13 +25,10 @@ from flexops import (
     TimeBlock,
     build_model,
 )
-from flexops.core.build import (
-    _apply_external_dispatch,
-    _build_arcs,
-    parse_quantity,
-    parse_units,
-)
+from flexops.core import stages as stages_module
+from flexops.core.build import parse_quantity, parse_units
 from flexops.core.ops_block import OpsBlock
+from flexops.core.stages import BuildContext, _apply_dispatch, _build_connection
 from flexops.properties import PROPERTY_PACKAGES
 
 _FIXTURES = Path(__file__).parent.parent / "fixtures"
@@ -126,8 +123,8 @@ def test_build_model_network_branch(monkeypatch):
 
 
 @pytest.mark.unit
-def test_build_arcs_bad_port_raises():
-    """An arc endpoint that does not resolve to a port is a config error."""
+def test_build_connection_bad_port_raises():
+    """A connection endpoint that does not resolve to a port is a config error."""
     m = pyo.ConcreteModel()
     m.time_block = TimeBlock(
         start_date="2025-01-01", end_date="2025-01-01T01:00", time_step=15 * pyunits.min
@@ -136,8 +133,10 @@ def test_build_arcs_bad_port_raises():
     m.unit.outlet = pyo.Var()
     m.unit.outlet_port = Port(initialize={"x": m.unit.outlet})
 
-    with pytest.raises(FlexConfigError, match="is not a port on"):
-        _build_arcs(m, [ArcSpec(source="unit.outlet_port", destination="unit.nope")])
+    context = BuildContext(base_dir=None, units={"unit": m.unit})
+    connection = Connection(port="outlet_port", to="unit.nope")
+    with pytest.raises(FlexConfigError, match="has no port"):
+        _build_connection(m, "unit", connection, context)
 
 
 @pytest.mark.unit
@@ -202,55 +201,35 @@ def test_parse_quantity_passes_through_non_dict_non_string_values():
 
 
 @pytest.mark.unit
-def test_apply_external_dispatch_noop_when_none():
-    """A unit config with no external_dispatch spec is a no-op."""
+def test_apply_dispatch_noop_without_dispatch_elements():
+    """A spec with no dispatch elements leaves every variable free."""
     m = pyo.ConcreteModel()
     m.time_block = TimeBlock(
         start_date="2025-01-01", end_date="2025-01-01T01:00", time_step=15 * pyunits.min
     )
     m.unit = OpsBlock()
     m.unit.power_electrical = pyo.Var(m.time_block.time_index, units=pyunits.kW)
-    _apply_external_dispatch(m.unit, UnitConfig(unit_model_class="OpsBlock"))
+    stages_module.stage_state(m, load_spec(_demo_dict()), BuildContext(base_dir=None))
     assert not m.unit.power_electrical[0].fixed
 
 
 @pytest.mark.unit
-def test_apply_external_dispatch_unknown_variable_raises():
+def test_apply_dispatch_unknown_variable_raises():
     """A dispatched variable that is not on the unit is a config error."""
     m = pyo.ConcreteModel()
     m.time_block = TimeBlock(
         start_date="2025-01-01", end_date="2025-01-01T01:00", time_step=15 * pyunits.min
     )
     m.unit = OpsBlock()
-    cfg = UnitConfig(
-        unit_model_class="OpsBlock",
-        external_dispatch=ExternalDispatchSpec(variable="nope", source="x.json"),
+    element = DispatchElement(
+        kind="dispatch", unit="unit", variable="nope", values=[1.0]
     )
     with pytest.raises(FlexConfigError, match="not on"):
-        _apply_external_dispatch(m.unit, cfg)
+        _apply_dispatch(m, element, BuildContext(base_dir=None))
 
 
 @pytest.mark.unit
-def test_apply_external_dispatch_missing_file_raises(tmp_path):
-    """An unreadable external-dispatch source file is a config error."""
-    m = pyo.ConcreteModel()
-    m.time_block = TimeBlock(
-        start_date="2025-01-01", end_date="2025-01-01T01:00", time_step=15 * pyunits.min
-    )
-    m.unit = OpsBlock()
-    m.unit.power_electrical = pyo.Var(m.time_block.time_index, units=pyunits.kW)
-    cfg = UnitConfig(
-        unit_model_class="OpsBlock",
-        external_dispatch=ExternalDispatchSpec(
-            variable="power_electrical", source=str(tmp_path / "missing.json")
-        ),
-    )
-    with pytest.raises(FlexConfigError, match="Could not read"):
-        _apply_external_dispatch(m.unit, cfg)
-
-
-@pytest.mark.unit
-def test_apply_external_dispatch_applies_series(tmp_path):
+def test_apply_dispatch_applies_series(tmp_path):
     """A JSON dispatch series fixes the named var, coercing string keys to ints."""
     m = pyo.ConcreteModel()
     m.time_block = TimeBlock(
@@ -261,14 +240,14 @@ def test_apply_external_dispatch_applies_series(tmp_path):
 
     series_file = tmp_path / "series.json"
     series_file.write_text(json.dumps({"0": 1.0, "1": 2.0, "2": 3.0, "3": 4.0}))
-    cfg = UnitConfig(
-        unit_model_class="OpsBlock",
-        external_dispatch=ExternalDispatchSpec(
-            variable="power_electrical", source=str(series_file)
-        ),
+    element = DispatchElement(
+        kind="dispatch",
+        unit="unit",
+        variable="power_electrical",
+        values=json.loads(series_file.read_text()),
     )
 
-    _apply_external_dispatch(m.unit, cfg)
+    _apply_dispatch(m, element, BuildContext(base_dir=None))
 
     for t in m.time_block.time_index:
         assert m.unit.power_electrical[t].fixed

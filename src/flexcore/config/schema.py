@@ -31,7 +31,9 @@ from pydantic import (
 )
 
 CURRENT_SCHEMA_VERSION = "0.0.4"
-"""str: the semantic schema version this build writes and validates against."""
+"""str: the last nested-format version. New configs use the flat spec's
+``flexcore.config.spec.SCHEMA_VERSION``; this stays until flexparameterize
+writes flat specs."""
 
 
 class _StrictModel(BaseModel):
@@ -412,7 +414,7 @@ class CostingConfig(_StrictModel):
 
 # Architecture references: the config artifact is plan/01_architecture.md §2.3.
 class ModelConfig(_StrictModel):
-    """The top-level config artifact the whole model and run are built from."""
+    """Legacy nested format; new specs use flexcore.config.spec.FlowsheetSpec."""
 
     schema_version: str = Field(
         pattern=r"^\d+\.\d+\.\d+$",

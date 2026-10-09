@@ -16,13 +16,20 @@ import warnings
 from collections.abc import Callable, Mapping
 from pathlib import Path
 
-from pydantic import ValidationError
+from pydantic import BaseModel, ValidationError
 
 from flexcore.config.schema import CURRENT_SCHEMA_VERSION, ModelConfig, SurrogateSpec
+from flexcore.config.spec import (
+    KINDS,
+    SCHEMA_VERSION,
+    STAGE_ORDER,
+    FlowsheetSpec,
+    element_target,
+)
 from flexcore.exceptions import FlexConfigError
 
 
-def _to_0_0_2(data: dict) -> dict:
+def _to_0_0_2(data: dict, base_dir: Path | None) -> dict:
     """Upgrade a 0.0.1 config to 0.0.2 by re-stamping its version.
 
     0.0.2 only widened ``SurrogateSpec``: ``functional_form`` became an open
@@ -31,6 +38,7 @@ def _to_0_0_2(data: dict) -> dict:
 
     Args:
         data: The parsed 0.0.1 config.
+        base_dir: Unused; every migration takes the document's directory.
 
     Returns:
         The same mapping, stamped 0.0.2.
@@ -58,7 +66,7 @@ def _iter_unit_configs(data: dict):
         yield from (plant or {}).get("units", {}).items()
 
 
-def _to_0_0_3(data: dict) -> dict:
+def _to_0_0_3(data: dict, base_dir: Path | None) -> dict:
     """Reject a 0.0.2 config carrying a surrogate; re-stamp the rest.
 
     0.0.3 reshaped ``SurrogateSpec``: ``functional_form``/``coefficients``/
@@ -70,6 +78,7 @@ def _to_0_0_3(data: dict) -> dict:
 
     Args:
         data: The parsed 0.0.2 config.
+        base_dir: Unused; every migration takes the document's directory.
 
     Returns:
         The same mapping, stamped 0.0.3, when it names no legacy-shaped
@@ -102,7 +111,7 @@ _UNBUILT_UC_DEFAULTS = {
 }
 
 
-def _to_0_0_4(data: dict) -> dict:
+def _to_0_0_4(data: dict, base_dir: Path | None) -> dict:
     """Upgrade a 0.0.3 config to 0.0.4, rejecting unit-commitment fields nothing built.
 
     0.0.4 rejects the ``unit_commitment`` fields the builder never read, and
@@ -112,6 +121,7 @@ def _to_0_0_4(data: dict) -> dict:
 
     Args:
         data: The parsed 0.0.3 config.
+        base_dir: Unused; every migration takes the document's directory.
 
     Returns:
         A new mapping stamped 0.0.4; the input is not mutated.
@@ -142,13 +152,41 @@ def _to_0_0_4(data: dict) -> dict:
     }
 
 
-MIGRATIONS: dict[str, Callable[[dict], dict]] = {
+def _to_0_1_0(data: dict, base_dir: Path | None) -> dict:
+    """Upgrade a nested 0.0.4 config to the flat 0.1.0 flowsheet spec.
+
+    Args:
+        data: The parsed 0.0.4 config.
+        base_dir: Directory the config's surrogate and dispatch files resolve
+            against; their numbers are copied into the spec.
+
+    Returns:
+        The equivalent flat spec as a plain mapping.
+
+    Raises:
+        FlexConfigError: If the nested config fails validation or names a file
+            that cannot be read.
+    """
+    # Local import: the converter reads legacy files through this module.
+    from flexcore.config.convert import nested_to_spec
+
+    try:
+        cfg = ModelConfig.model_validate(data)
+    except ValidationError as exc:
+        raise FlexConfigError(_format_validation_error(exc)) from exc
+    cfg._base_dir = base_dir
+    return nested_to_spec(cfg).model_dump(mode="json")
+
+
+MIGRATIONS: dict[str, Callable[[dict, Path | None], dict]] = {
     "0.0.1": _to_0_0_2,
     "0.0.2": _to_0_0_3,
     "0.0.3": _to_0_0_4,
+    "0.0.4": _to_0_1_0,
 }
-"""Source version -> upgrade hook, applied in sequence on load. Each hook must
-set the new ``schema_version`` on the dict it returns."""
+"""Source version -> upgrade hook, applied in sequence on load. Each hook takes
+the document and its directory, and must set the new ``schema_version`` on the
+dict it returns. Versions up to 0.0.4 are the nested format; 0.1.0 is flat."""
 
 _SCHEMA_FILENAME = "model_config.schema.json"
 _SEMVER = re.compile(r"^\d+\.\d+\.\d+$")
@@ -344,61 +382,48 @@ def _resolve_surrogate_sources(cfg: ModelConfig, base_dir) -> ModelConfig:
     return cfg
 
 
-def load_model_config(source) -> ModelConfig:
-    """Load and validate a config file or dict into a model config.
-
-    Any unit surrogate naming a ``source`` sidecar is filled in here, at the
-    config boundary, so nothing downstream sees a half-loaded relationship. A
-    relative source resolves against the config file's own directory, or the
-    working directory when the config came in as a dict.
+def _upgrade(data: dict, name: str, current: str, base_dir: Path | None) -> dict:
+    """Step a parsed document up to ``current`` through ``MIGRATIONS``.
 
     Args:
-        source: Path to a ``.json`` config file, or an already-parsed config
-            mapping (which is not mutated).
+        data: The parsed document, with a ``schema_version``.
+        name: Where the document came from, for error messages.
+        current: The version to reach.
+        base_dir: The document's directory, passed to each migration.
 
     Returns:
-        The validated :class:`~flexcore.config.schema.ModelConfig`.
+        The document at ``current``.
 
     Raises:
-        FlexConfigError: If the format is unsupported, ``schema_version`` is
-            missing, malformed, or newer than this build, a migration step is
-            missing, the config fails validation (the message names the bad
-            field path), or a surrogate ``source`` cannot be loaded.
+        FlexConfigError: If the version is missing, malformed or newer than
+            ``current``, a migration is missing, or one does not advance it.
     """
-    if isinstance(source, Mapping):
-        data, name, base_dir = dict(source), "the config dict", None
-    else:
-        path = Path(source)
-        data, name, base_dir = _read(path), str(path), path.parent
-
     version = data.get("schema_version")
     if version is None:
         raise FlexConfigError(
             f"Config {name} has no 'schema_version'. Every persisted config "
-            f"must declare one (this build writes version "
-            f"{CURRENT_SCHEMA_VERSION!r}).",
+            f"must declare one (this build writes version {current!r}).",
             field="schema_version",
         )
     parsed = _parse_version(version, name)
-    current = _parse_version(CURRENT_SCHEMA_VERSION, "this build")
-    if parsed > current:
+    target = _parse_version(current, "this build")
+    if parsed > target:
         raise FlexConfigError(
             f"Config {name} declares schema_version {version!r}, newer than "
-            f"this build supports ({CURRENT_SCHEMA_VERSION!r}). Upgrade "
-            f"flex-pse.",
+            f"this build supports ({current!r}). Upgrade flex-pse.",
             field="schema_version",
             value=version,
         )
-    while parsed < current:
+    while parsed < target:
         migrate = MIGRATIONS.get(version)
         if migrate is None:
             raise FlexConfigError(
                 f"No migration registered from schema_version {version!r}; "
-                f"cannot upgrade {name} to {CURRENT_SCHEMA_VERSION!r}.",
+                f"cannot upgrade {name} to {current!r}.",
                 field="schema_version",
                 value=version,
             )
-        data = migrate(data)
+        data = migrate(data, base_dir)
         new_version = data.get("schema_version")
         new_parsed = _parse_version(new_version, name)
         if new_parsed <= parsed:
@@ -409,13 +434,98 @@ def load_model_config(source) -> ModelConfig:
                 value=new_version,
             )
         version, parsed = new_version, new_parsed
+    return data
 
+
+def _is_flat_version(version) -> bool:
+    """Return whether ``version`` is a valid version at or after the flat spec's."""
+    return (
+        isinstance(version, str)
+        and bool(_SEMVER.match(version))
+        and _parse_version(version, "") >= (0, 1, 0)
+    )
+
+
+def _source_document(source) -> tuple[dict, str, Path | None]:
+    """Return a path or mapping as (parsed dict, display name, base directory)."""
+    if isinstance(source, Mapping):
+        return dict(source), "the config dict", None
+    path = Path(source)
+    return _read(path), str(path), path.parent
+
+
+def load_model_config(source) -> ModelConfig:
+    """Load and validate a legacy nested config file or dict (0.0.4 or older).
+
+    Any unit surrogate naming a ``source`` sidecar is filled in here, at the
+    config boundary, so nothing downstream sees a half-loaded relationship. A
+    relative source resolves against the config file's own directory, or the
+    working directory when the config came in as a dict.
+
+    Args:
+        source: Path to a ``.json`` config file, or an
+            already-parsed config mapping (which is not mutated).
+
+    Returns:
+        The validated :class:`~flexcore.config.schema.ModelConfig`.
+
+    Raises:
+        FlexConfigError: If the format is unsupported, ``schema_version`` is
+            missing, malformed, newer than this build, or belongs to a flat
+            spec (use :func:`load_spec`), a migration step is missing, the
+            config fails validation (the message names the bad field path), or
+            a surrogate ``source`` cannot be loaded.
+    """
+    data, name, base_dir = _source_document(source)
+    if _is_flat_version(data.get("schema_version")):
+        raise FlexConfigError(
+            f"Config {name} is a flat FlowsheetSpec (schema_version "
+            f"{data['schema_version']!r}); load it with load_spec.",
+            field="schema_version",
+            value=data["schema_version"],
+        )
+    data = _upgrade(data, name, CURRENT_SCHEMA_VERSION, base_dir)
     try:
         cfg = ModelConfig.model_validate(data)
     except ValidationError as exc:
         raise FlexConfigError(_format_validation_error(exc)) from exc
     cfg._base_dir = None if base_dir is None else Path(base_dir)
     return _resolve_surrogate_sources(cfg, base_dir)
+
+
+def load_spec(source) -> FlowsheetSpec:
+    """Load any supported config as a validated flat spec.
+
+    An older document, including a nested config at 0.0.4 or earlier, steps
+    through :data:`MIGRATIONS` to the current version first.
+
+    Args:
+        source: A ``.json`` path, a parsed mapping (not mutated), a
+            :class:`~flexcore.config.spec.FlowsheetSpec` (returned as is), or a
+            nested :class:`~flexcore.config.schema.ModelConfig`.
+
+    Returns:
+        The validated flat spec, with its base directory set for relative paths.
+
+    Raises:
+        FlexConfigError: If the document is unreadable, has a missing,
+            malformed or too-new ``schema_version``, lacks a migration, or fails
+            validation (the message names the bad field path).
+    """
+    if isinstance(source, FlowsheetSpec):
+        return source
+    if isinstance(source, ModelConfig):
+        data, name = source.model_dump(mode="json"), "the ModelConfig"
+        base_dir = source._base_dir
+    else:
+        data, name, base_dir = _source_document(source)
+    data = _upgrade(data, name, SCHEMA_VERSION, base_dir)
+    try:
+        spec = FlowsheetSpec.model_validate(data)
+    except ValidationError as exc:
+        raise FlexConfigError(_format_validation_error(exc)) from exc
+    spec._base_dir = None if base_dir is None else Path(base_dir)
+    return spec
 
 
 def dump_model_config(cfg: ModelConfig, path) -> None:
@@ -438,6 +548,41 @@ def dump_model_config(cfg: ModelConfig, path) -> None:
     path.write_text(cfg.model_dump_json(indent=2))
 
 
+def dump_spec(spec: FlowsheetSpec, path) -> None:
+    """Write a flat spec to disk as indented JSON, elements in canonical order.
+
+    Elements are sorted by build stage, kind and name so files diff cleanly;
+    defaults are left out.
+
+    Args:
+        spec: The spec to serialize; it is not reordered.
+        path: Destination path ending in ``.json``.
+
+    Raises:
+        FlexConfigError: For any other suffix.
+    """
+    path = Path(path)
+    if path.suffix.lower() != ".json":
+        raise FlexConfigError(
+            f"Unsupported config format {path.suffix!r} for {path}. Use a "
+            ".json file.",
+            value=str(path),
+        )
+    ordered = sorted(
+        spec.elements,
+        key=lambda el: (
+            STAGE_ORDER.index(KINDS[el.kind][0]),
+            el.kind,
+            getattr(el, "name", None) or "",
+            element_target(el),
+        ),
+    )
+    text = spec.model_copy(update={"elements": ordered}).model_dump_json(
+        indent=2, by_alias=True, exclude_defaults=True
+    )
+    path.write_text(text)
+
+
 def _plain_descriptions(node) -> None:
     """Collapse every ``description`` in an exported schema to one line."""
     if isinstance(node, dict):
@@ -451,10 +596,12 @@ def _plain_descriptions(node) -> None:
             _plain_descriptions(value)
 
 
-def export_json_schemas(directory, filename: str = _SCHEMA_FILENAME) -> None:
-    """Write the exported JSON Schema for the model config to ``directory``.
+def export_json_schemas(
+    directory, filename: str = _SCHEMA_FILENAME, model: type[BaseModel] = ModelConfig
+) -> None:
+    """Write the exported JSON Schema for a config model to ``directory``.
 
-    Serializes :class:`~flexcore.config.schema.ModelConfig`'s JSON Schema with
+    Serializes ``model``'s JSON Schema with
     ``indent=2`` and ``sort_keys=True`` so the checked-in schema diffs only on
     real schema changes (pitfall 7). Descriptions are collapsed to single-line
     plain text — line wrapping is the documentation builder's job, not the
@@ -465,10 +612,12 @@ def export_json_schemas(directory, filename: str = _SCHEMA_FILENAME) -> None:
         directory: Destination directory for the schema file.
         filename: Output filename; override it to keep schemas for several
             versions side by side in one directory.
+        model: The config model to export; the nested ``ModelConfig`` by
+            default, or :class:`~flexcore.config.spec.FlowsheetSpec`.
     """
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
-    schema = ModelConfig.model_json_schema()
+    schema = model.model_json_schema()
     _plain_descriptions(schema)
     text = json.dumps(schema, indent=2, sort_keys=True)
     (directory / filename).write_text(text)

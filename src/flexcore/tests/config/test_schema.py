@@ -26,6 +26,7 @@ from flexcore.config.schema import (
     UnitCommitmentConfig,
     UnitConfig,
 )
+from flexcore.config.spec import FlowsheetSpec
 from flexcore.exceptions import FlexConfigError
 
 
@@ -315,21 +316,24 @@ def test_unknown_key_rejected():
     assert not hasattr(loose, "mystery_key")
 
 
+SCHEMAS = [
+    pytest.param(ModelConfig, "model_config.schema.json", id="model_config"),
+    pytest.param(FlowsheetSpec, "flowsheet_spec.schema.json", id="flowsheet_spec"),
+]
+
+
 @pytest.mark.unit
-def test_exported_schema_up_to_date(tmp_path):
-    """The checked-in JSON Schema matches the in-memory model."""
+@pytest.mark.parametrize(("model", "filename"), SCHEMAS)
+def test_exported_schema_up_to_date(tmp_path, model, filename):
+    """The checked-in JSON Schemas match the in-memory models."""
     from importlib.resources import files
 
-    export_json_schemas(tmp_path)
-    current = (tmp_path / "model_config.schema.json").read_text()
-    checked_in = (
-        files("flexcore.config.schemas")
-        .joinpath("model_config.schema.json")
-        .read_text()
-    )
+    export_json_schemas(tmp_path, filename=filename, model=model)
+    current = (tmp_path / filename).read_text()
+    checked_in = files("flexcore.config.schemas").joinpath(filename).read_text()
     assert current == checked_in, (
         "Checked-in JSON Schema is stale; re-run export_json_schemas and commit "
-        "src/flexcore/config/schemas/model_config.schema.json."
+        f"src/flexcore/config/schemas/{filename}."
     )
 
 
@@ -352,10 +356,11 @@ def test_export_json_schemas_custom_filename(tmp_path):
 
 
 @pytest.mark.unit
-def test_exported_descriptions_are_plain_text(tmp_path):
+@pytest.mark.parametrize(("model", "filename"), SCHEMAS)
+def test_exported_descriptions_are_plain_text(tmp_path, model, filename):
     """No exported description carries newlines or formatting codes (§, RST)."""
-    export_json_schemas(tmp_path)
-    schema = json.loads((tmp_path / "model_config.schema.json").read_text())
+    export_json_schemas(tmp_path, filename=filename, model=model)
+    schema = json.loads((tmp_path / filename).read_text())
 
     def walk(node):
         if isinstance(node, dict):
