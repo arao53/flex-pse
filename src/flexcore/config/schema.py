@@ -218,9 +218,11 @@ class UnitConfig(_StrictModel):
         default=None,
         description="Optional fitted energy/IO relationship for the unit.",
     )
-    unit_commitment: UnitCommitmentConfig = Field(
-        default_factory=UnitCommitmentConfig,
-        description="Per-unit unit-commitment configuration.",
+    unit_commitment: UnitCommitmentConfig | None = Field(
+        default=None,
+        description="Per-unit unit-commitment configuration. Unset (null) "
+        "leaves the unit model's own default in force (a battery or tank has "
+        "no status binary unless asked for one).",
     )
     external_dispatch: ExternalDispatchSpec | None = Field(
         default=None,

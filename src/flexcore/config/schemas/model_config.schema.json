@@ -612,8 +612,16 @@
           "description": "Optional fitted energy/IO relationship for the unit."
         },
         "unit_commitment": {
-          "$ref": "#/$defs/UnitCommitmentConfig",
-          "description": "Per-unit unit-commitment configuration."
+          "anyOf": [
+            {
+              "$ref": "#/$defs/UnitCommitmentConfig"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Per-unit unit-commitment configuration. Unset (null) leaves the unit model's own default in force (a battery or tank has no status binary unless asked for one)."
         },
         "unit_model_class": {
           "description": "Name of the flexops unit-model class to construct.",

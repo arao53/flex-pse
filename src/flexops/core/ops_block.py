@@ -1563,9 +1563,10 @@ class OpsBlockData(UnitModelBlockData):
             name: parse_quantity(value, strict=False)
             for name, value in cfg.construction_options.items()
         }
+        if cfg.unit_commitment is not None:
+            options["unit_commitment"] = cfg.unit_commitment
         return block_class(
             **options,
-            unit_commitment=cfg.unit_commitment,
             external_dispatch=cfg.external_dispatch,
             flexops_config=cfg,
             **kwargs,

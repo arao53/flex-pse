@@ -7,6 +7,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **`build_model` now runs nine named stages** in a fixed order (`flexops.core.stages.STAGES`: declare, topology, surrogates, degradation, ramping, logic, state, extensions, costing), with costing last so it sees every registered term. New `apply_stages(model, cfg, stages)` runs the post-topology stages on a live model without rebuilding it, `apply_relation_spec` is the one shared path that attaches a `SurrogateSpec` to a live unit (now used by `flexparameterize.apply_to_model`), `flexops.testing.assert_models_equivalent` compares two models structurally by component path, and `build_model(expand_arcs=False)` can expand arcs itself. External dispatch is now applied after all units and arcs are built. Non-breaking; no schema change.
 - **`UnitConfig.costing`** opts a unit out of the costing block (`false` builds it with no costing package). Known difference: the frozen `api_freeze_config.json` still costs its Tank.
 - First migration fixture `fixtures/configs/0.0.3.json` and a versioning policy in `CONTRIBUTING.md`.
 - **Surrogate coefficient management API.** `OpsBlockData` now exposes `list_surrogate_blocks(relation_name=None)`, `current_surrogate_block(relation_name=None)`, `switch_surrogate_block(block_name)`, `fix_surrogate_coefficients(relation_name=None)`, and `unfix_surrogate_coefficients(relation_name=None)`. When called without `relation_name`, list/current operate across all relations on the unit, matching the common case of a single-relation unit.
@@ -18,6 +19,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **`UnitConfig.unit_commitment` now defaults to `null`** (was an all-defaults `UnitCommitmentConfig` with `status=true`), so a unit that omits it keeps its own default: a config-built `BatteryModel` no longer gets a status binary the imperative one lacks. Units whose own default is `status=true` are unchanged. The JSON Schema is regenerated; the schema version stays `0.0.4`.
 - **BREAKING: configs setting `unit_commitment.{startup_shutdown,dwell,min_up,min_down,delays,conditional}` now fail to load.** These fields were accepted but never built; a clear error replaces the silent no-op. Schema is now `0.0.4`; the `0.0.3` migration rejects them naming the unit.
 - **`ModelConfig.properties` is now a dict of named `PropertyPackageSpec` entries** (`property_class` + `options`), so a config can build `SimpleGasFlow` or several packages. Each unit picks one with the new `UnitConfig.property_package` (`"auto"`, a key, or `null`). Old kwargs dicts migrate to a single `SimpleAqueousFlow` named `properties`.
 - **`tariff_source`, `dr.events_source`, and `external_dispatch.source` resolve against the config file's directory**, like surrogate sources, via the new `flexcore.config.io.resolve_source_path`. A path found only relative to the working directory still works but emits a `DeprecationWarning`.

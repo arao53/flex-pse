@@ -88,6 +88,27 @@ side by side.
 
 .. autofunction:: parse_units
 
+Build stages
+------------
+
+.. currentmodule:: flexops.core.stages
+
+``build_model`` runs the stages in :data:`STAGES` in order. Costing is last
+because ``cost_process()`` aggregates only the terms registered when it runs.
+:func:`apply_stages` runs the post-topology stages on a model that already exists.
+
+.. autodata:: STAGES
+   :no-value:
+
+.. autodata:: POST_TOPOLOGY_STAGES
+   :no-value:
+
+.. autoclass:: BuildContext
+
+.. autofunction:: apply_stages
+
+.. autofunction:: apply_relation_spec
+
 Registration
 ------------
 
