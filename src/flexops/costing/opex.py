@@ -69,7 +69,7 @@ else:  # pragma: no cover - see above
     _ELECTRIC = _GAS = _CUSTOMER = _DEMAND = _ASSESSED = None
 
 # Fuel type -> underlying EECO utility. "gas" is the only fuel utility EECO
-# 0.4.1 exposes; every registered fuel (natural gas, biogas, ...) bills through
+# 0.4.2 exposes; every registered fuel (natural gas, biogas, ...) bills through
 # it today. Add an entry here once EECO exposes a hydrogen utility.
 _FUEL_UTILITY = {"gas": _GAS}
 
@@ -273,7 +273,7 @@ def load_tariff(source: str | Path | dict | list | pd.DataFrame) -> pd.DataFrame
     ``source`` is what a ``CostingConfig.tariff_source`` string resolves to: a
     JSON or CSV file path, an in-memory dict/records structure, or an already
     built rate_data ``DataFrame`` (passed through after validation). A ``.csv``
-    path is routed through :func:`tariff_csv_to_dict` first. EECO 0.4.1 has no
+    path is routed through :func:`tariff_csv_to_dict` first. EECO 0.4.2 has no
     tariff loader of its own — its cost functions consume a ``rate_data``
     DataFrame directly — so that DataFrame *is* the EECO tariff object here.
 
@@ -410,7 +410,7 @@ def merge_tariffs(sources: Any) -> pd.DataFrame:
 def load_dr_program(source: str | Path | dict | None) -> dict | None:
     """Load a demand-response program (v0: containers-only; None-safe).
 
-    EECO 0.4.1 exposes no DR API, so a DR program is a plain records structure
+    EECO 0.4.2 exposes no DR API, so a DR program is a plain records structure
     (a flex-pse placeholder) loaded into a :class:`DRConfig` container. No DR
     constraints are built from it in v0.
 
@@ -641,7 +641,7 @@ def _index_dt_hours(index: pd.DatetimeIndex) -> float:
 def price_series(tariff: pd.DataFrame, index: pd.DatetimeIndex) -> pd.Series:
     """Base energy price ($/kWh) at each stamp (flex-pse helper over EECO).
 
-    A flex-pse helper: EECO 0.4.1 has no per-stamp price accessor, so this sums
+    A flex-pse helper: EECO 0.4.2 has no per-stamp price accessor, so this sums
     EECO's own ``get_charge_dict`` electric-energy charge arrays (base tier).
 
     Args:
@@ -1001,6 +1001,7 @@ def add_fuel_cost(
     fuel_type: str = "gas",
     dr_config: "DRConfig | None" = None,
     prorate: bool = True,
+    decomposition_type: str | None = None,
     consumption_estimate: "dict[str, float] | None" = None,
 ) -> OperatingCostHandles:
     """Build EECO's convex-relaxed in-objective fuel cost on ``block``.
@@ -1018,11 +1019,13 @@ def add_fuel_cost(
         dt_hours: Timestep length in hours; passed to EECO once.
         tariff: An EECO rate_data DataFrame (must carry the utility's rows).
         fuel_type: The fuel's EECO utility. ``"gas"`` (the default) is the only
-            value EECO 0.4.1 supports; every registered fuel (natural gas,
+            value EECO 0.4.2 supports; every registered fuel (natural gas,
             biogas, ...) bills through it today.
         dr_config: Optional DR container (v0: no constraints built).
         prorate: Prorate monthly demand and fixed charges to the horizon length
             (see :func:`monthly_scale_factor`).
+        decomposition_type: See :func:`add_electricity_cost`; splits fuel usage
+            into imports and exports so a tariff's ``export`` charges apply.
         consumption_estimate: See :func:`add_operating_cost`; only the
             entry for ``fuel_type``'s EECO utility, if any, applies here.
 
@@ -1036,7 +1039,7 @@ def add_fuel_cost(
     """
     if fuel_type not in _FUEL_UTILITY:
         raise FlexConfigError(
-            f"Unsupported fuel_type={fuel_type!r}; EECO 0.4.1 supports "
+            f"Unsupported fuel_type={fuel_type!r}; EECO 0.4.2 supports "
             f"{sorted(_FUEL_UTILITY)}.",
             field="fuel_type",
             value=fuel_type,
@@ -1050,6 +1053,7 @@ def add_fuel_cost(
         utility=_FUEL_UTILITY[fuel_type],
         dr_config=dr_config,
         prorate=prorate,
+        decomposition_type=decomposition_type,
         consumption_estimate=consumption_estimate,
     )
 
@@ -1347,6 +1351,7 @@ def evaluate_fuel_cost(
     time_index: "pd.DatetimeIndex | None" = None,
     prorate: bool = True,
     prev_demand_dict: "dict | None" = None,
+    decomposition_type: str | None = None,
 ) -> float:
     """Compute the TRUE (de-relaxed) fuel cost on a fixed realized usage array.
 
@@ -1366,6 +1371,7 @@ def evaluate_fuel_cost(
         prev_demand_dict: Optional prior-demand carry for billing this horizon as
             one slice of a longer billing period (see :func:`evaluate_cost`).
             ``None`` (default) bills the horizon standalone.
+        decomposition_type: See :func:`evaluate_cost`.
 
     Returns:
         The horizon-total fuel cost in dollars.
@@ -1375,7 +1381,7 @@ def evaluate_fuel_cost(
     """
     if fuel_type not in _FUEL_UTILITY:
         raise FlexConfigError(
-            f"Unsupported fuel_type={fuel_type!r}; EECO 0.4.1 supports "
+            f"Unsupported fuel_type={fuel_type!r}; EECO 0.4.2 supports "
             f"{sorted(_FUEL_UTILITY)}.",
             field="fuel_type",
             value=fuel_type,
@@ -1389,5 +1395,6 @@ def evaluate_fuel_cost(
             time_index=time_index,
             prorate=prorate,
             prev_demand_dict=prev_demand_dict,
+            decomposition_type=decomposition_type,
         )["total"]
     )

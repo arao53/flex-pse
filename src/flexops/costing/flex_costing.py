@@ -439,8 +439,9 @@ class FlexCostingData(FlowsheetCostingBlockData):
         "decomposition_type",
         ConfigValue(
             default=None,
-            description="Optional EECO decomposition of net electrical power into "
-            "imports and exports on the tariff path, e.g. 'absolute_value', so "
+            description="Optional EECO decomposition of net electrical power and "
+            "fuel usage into imports and exports on the tariff path, e.g. "
+            "'linear', so "
             "the tariff's export charges apply to an exporting site. Passed "
             "straight to EECO, which owns the available types and whether they "
             "are linear. None skips the decomposition. Has no effect on native "
@@ -1044,7 +1045,7 @@ class FlexCostingData(FlowsheetCostingBlockData):
                     "The tariff has an electric 'export' charge, but "
                     "decomposition_type is None. EECO then bills the net power as "
                     "both imports and exports, which misprices any site that "
-                    "exports. Set decomposition_type (e.g. 'absolute_value'), or "
+                    "exports. Set decomposition_type (e.g. 'linear'), or "
                     "price electricity natively with energy_prices and export_prices.",
                     field="decomposition_type",
                     value=None,
@@ -1284,14 +1285,17 @@ class FlexCostingData(FlowsheetCostingBlockData):
             return
 
         gas_charges = self._tariff[self._tariff["utility"] == "gas"]
-        if (gas_charges["type"] == "export").any():
+        if (
+            gas_charges["type"] == "export"
+        ).any() and self.config.decomposition_type is None:
             raise FlexConfigError(
-                "The tariff has a gas 'export' charge, but EECO's gas leg cannot "
-                "split net usage into imports and exports, so it would misprice "
-                f"any {name!r} the site sells. Remove the gas export rows, or price "
-                f"{name!r} natively with energy_prices and export_prices.",
-                field="tariff",
-                value=name,
+                "The tariff has a gas 'export' charge, but decomposition_type is "
+                f"None. EECO then bills the net {name!r} usage as both imports and "
+                "exports, which misprices any site that sells it. Set "
+                f"decomposition_type (e.g. 'linear'), or price {name!r} natively "
+                "with energy_prices and export_prices.",
+                field="decomposition_type",
+                value=None,
             )
 
         # EECO namespaces its gas_* components by utility, not by fuel; give each
@@ -1324,6 +1328,7 @@ class FlexCostingData(FlowsheetCostingBlockData):
             tariff=self._tariff,
             dr_config=self.dr,
             prorate=self.config.prorate_monthly_charges,
+            decomposition_type=self.config.decomposition_type,
             consumption_estimate=self.config.consumption_estimate,
         )
         opex.add_component(
@@ -1689,6 +1694,7 @@ class FlexCostingData(FlowsheetCostingBlockData):
                     time_index=tb.datetime_index,
                     prorate=self.config.prorate_monthly_charges,
                     prev_demand_dict=prev_demand_dict,
+                    decomposition_type=self.config.decomposition_type,
                 )
 
         fixed = float(pyo.value(self.opex.fixed_operating_cost))

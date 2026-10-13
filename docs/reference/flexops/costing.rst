@@ -17,7 +17,7 @@ when EECO's API moves.
 EECO owns all cost math. These wrappers are glue. They marshal inputs, rename
 EECO's outputs to stable flex-pse names, and translate EECO/pandas errors into
 the flex-pse exception hierarchy. A flex-pse tariff object is simply an EECO
-``rate_data`` ``DataFrame`` (EECO 0.4.1 has no tariff loader of its own, so its
+``rate_data`` ``DataFrame`` (EECO 0.4.2 has no tariff loader of its own, so its
 cost functions consume that frame directly).
 
 .. note:: **EECO is only needed for tariffs.** The ``eeco`` import is soft, so
@@ -91,7 +91,7 @@ Tariff signal helpers
 
 Plain pandas signals over a tariff, for writing logic or heuristic
 constraints. Each is a flex-pse helper built on EECO's ``get_charge_dict``
-charge arrays (the source of the price data). EECO 0.4.1 exposes no per-stamp
+charge arrays (the source of the price data). EECO 0.4.2 exposes no per-stamp
 price accessor.
 
 .. autosummary::
@@ -129,7 +129,7 @@ conversion as a plain float factor and constrains its own dimensionless Vars
 to the series it is given. The builders for a single utility,
 :func:`add_electricity_cost` and :func:`add_fuel_cost`, remain available for
 building one leg alone. :func:`add_fuel_cost` takes a ``fuel_type`` (default
-``"gas"``, the only value EECO 0.4.1 supports). A hydrogen utility is
+``"gas"``, the only value EECO 0.4.2 supports). A hydrogen utility is
 expected upstream and will add a second value.
 
 Post-optimization evaluators
@@ -157,7 +157,7 @@ Demand response (containers-only in v0)
    :class:`DRConfig` holds a loaded DR program so the wiring exists, and the
    internal DR hook is a no-op. Supplying a DR file never changes the
    objective. Building DR event, curtailment, incentive, and capacity
-   constraints comes after v0. EECO 0.4.1 exposes no DR API, so the DR file
+   constraints comes after v0. EECO 0.4.2 exposes no DR API, so the DR file
    format is a flex-pse placeholder loaded into the container only.
 
 In-objective vs. reported cost
@@ -459,16 +459,16 @@ Every cost lives in one of two sub-blocks built by
 
    An EECO tariff can carry ``export`` charges, but EECO only applies them once
    net power is split into imports and exports. Pass
-   ``decomposition_type="absolute_value"`` (or any type EECO supports) to
-   ``FlexCosting`` and it is handed to EECO for both the in-objective cost and
-   the post-solve bill (``report_cost``). The default ``None`` skips the split.
-   A tariff with an electric ``export`` charge requires it: with ``None`` EECO
-   bills the net power as both imports and exports, so ``FlexCosting`` raises
+   ``decomposition_type="linear"`` (or any type EECO supports) to
+   ``FlexCosting`` and it is handed to EECO for the electric and gas legs, in
+   both the in-objective cost and the post-solve bill (``report_cost``). The
+   default ``None`` skips the split. A tariff with an electric or gas
+   ``export`` charge requires it: with ``None`` EECO bills the net series as
+   both imports and exports, so ``FlexCosting`` raises
    :class:`~flexcore.exceptions.FlexConfigError` instead of misbilling.
-   EECO owns the available types and whether a type keeps the problem linear;
-   its ``"absolute_value"`` type is nonlinear, so use ``export_prices`` above
-   when you need an LP. EECO's gas leg takes no decomposition, so a tariff
-   with a gas ``export`` charge raises too.
+   EECO owns the available types and whether a type keeps the problem linear:
+   ``"linear"`` stays an LP and is exact when no export charge exceeds its
+   energy charge, while ``"absolute_value"`` is nonlinear.
 
 .. note:: **Reporting rule.**
 

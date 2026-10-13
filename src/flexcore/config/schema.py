@@ -287,8 +287,8 @@ class CostingConfig(_StrictModel):
     )
     decomposition_type: str | None = Field(
         default=None,
-        description="Optional EECO decomposition of net electrical power into "
-        "imports and exports on the tariff path (e.g. 'absolute_value'), so the "
+        description="Optional EECO decomposition of net electrical power and fuel "
+        "usage into imports and exports on the tariff path (e.g. 'linear'), so the "
         "tariff's export charges apply. Passed straight to EECO.",
     )
     currency: str = Field(

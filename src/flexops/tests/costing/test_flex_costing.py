@@ -1708,3 +1708,35 @@ def test_gas_tariff_export_charge_raises():
     _add_fuel_usage(m, "gas", _NET_BIOGAS)
     with pytest.raises(FlexConfigError, match="gas"):
         m.costing.cost_process()
+
+
+def _gas_export_tariff_costing() -> pyo.ConcreteModel:
+    """A linear-decomposed tariff model that buys and then sells gas."""
+    tariff = load_tariff(
+        _electric_only_records() + _tariff_with_export_charge("gas", "$/m3")
+    )
+    m = _pump_tank_costing(
+        tariff=tariff, decomposition_type="linear", run_cost_process=False
+    )
+    _add_fuel_usage(m, "gas", _NET_BIOGAS).fix()
+    m.costing.cost_process()
+    return m
+
+
+@pytest.mark.unit
+def test_gas_tariff_export_charge_with_decomposition_builds():
+    """A decomposition type lets EECO's gas leg split net usage into import/export."""
+    m = _gas_export_tariff_costing()
+    leg = m.costing.opex.find_component("fuel_gas")
+    assert leg.find_component("gas_positive") is not None
+    assert leg.find_component("gas_negative") is not None
+
+
+@pytest.mark.unit
+def test_report_cost_credits_gas_exports_with_decomposition():
+    """The post-solve gas bill credits exports at the tariff's export charge."""
+    m = _gas_export_tariff_costing()
+    for t, flow in _NET_BIOGAS.items():
+        m.costing.aggregate_fuel_usage[t, "gas"].set_value(flow)
+    # 12 h x 10 m3/hr x $0.10 - 12 h x 4 m3/hr x $0.05 = 12 - 2.4
+    assert m.costing.report_cost(m).operating.fuel == pytest.approx(9.6)
