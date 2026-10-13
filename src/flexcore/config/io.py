@@ -180,11 +180,17 @@ def _to_0_1_0(data: dict, base_dir: Path | None) -> dict:
     return nested_to_spec(cfg).model_dump(mode="json")
 
 
+def _to_0_1_1(data: dict, base_dir: Path | None) -> dict:
+    """Restamp a 0.1.0 spec as 0.1.1, which only adds element kinds."""
+    return {**data, "schema_version": "0.1.1"}
+
+
 MIGRATIONS: dict[str, Callable[[dict, Path | None], dict]] = {
     "0.0.1": _to_0_0_2,
     "0.0.2": _to_0_0_3,
     "0.0.3": _to_0_0_4,
     "0.0.4": _to_0_1_0,
+    "0.1.0": _to_0_1_1,
 }
 """Source version -> upgrade hook, applied in sequence on load. Each hook takes
 the document and its directory, and must set the new ``schema_version`` on the

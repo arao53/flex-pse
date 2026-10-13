@@ -28,7 +28,7 @@ from flexcore.config.schema import (
     _StrictModel,
 )
 
-SCHEMA_VERSION = "0.1.0"
+SCHEMA_VERSION = "0.1.1"
 """str: the schema version this build writes and validates against."""
 
 KINDS: dict[str, tuple[str, bool]] = {
@@ -40,7 +40,16 @@ KINDS: dict[str, tuple[str, bool]] = {
     "set": ("topology", False),
     "unit": ("topology", False),
     "surrogate": ("surrogates", True),
+    "ramp": ("ramping", False),
+    "status": ("logic", False),
+    "startup_shutdown": ("logic", False),
+    "dwell": ("logic", False),
+    "bypass": ("logic", False),
+    "startup_delay": ("logic", False),
+    "conditional": ("logic", False),
+    "parallel_group": ("logic", False),
     "dispatch": ("state", True),
+    "extension": ("extensions", False),
     "objective": ("costing", False),
 }
 """Element kind -> (build stage, whether it can change on a live model)."""
@@ -53,6 +62,15 @@ AUTO = "auto"
 
 PACKAGE_REF = "$package"
 """Key of a construction option ``{"$package": name}`` naming a package element."""
+
+SELF_STATUS_CLASSES = {"BatteryModel"}
+"""Unit classes that build their own status when unit_commitment.status is true.
+
+See ``BatteryModel.build`` in ``flexops/unit_models/storage/battery.py``.
+"""
+
+NO_STATUS_CLASSES = {"Tank", "BatteryModel"}
+"""Unit classes a status element may not target, since they manage their own."""
 
 
 def _like(model: type[_StrictModel], name: str):
@@ -283,13 +301,188 @@ class DispatchElement(_StrictModel):
     )
 
 
+class Quantity(_StrictModel):
+    """A number with units, e.g. {"value": 0.5, "units": "kWh/m^3"}."""
+
+    value: float = Field(description="The magnitude.")
+    units: str = Field(description="Units as parse_units reads them, e.g. 'kW'.")
+
+
+def _unit_field():
+    return Field(
+        description="Name of the unit element, or 'name[i]' for one member of an "
+        "indexed unit."
+    )
+
+
+def _variable_field():
+    return Field(
+        description="Path of the time-indexed variable relative to the unit, e.g. "
+        "'flow_in'."
+    )
+
+
+def _label_field():
+    return Field(
+        default=None, description="Optional label; not used to build anything."
+    )
+
+
+class StatusElement(_StrictModel):
+    """An on/off status binary gating a unit's output between two limits."""
+
+    kind: Literal["status"]
+    unit: str = _unit_field()
+    variable: str = _variable_field()
+    min_output: float | Quantity = Field(
+        description="Output when on, lower limit: a number or a quantity."
+    )
+    max_output: float | Quantity = Field(
+        description="Output when on, upper limit: a number or a quantity."
+    )
+    name: str | None = _label_field()
+
+
+class StartupShutdownElement(_StrictModel):
+    """Startup and shutdown binaries with minimum up and down times."""
+
+    kind: Literal["startup_shutdown"]
+    unit: str = _unit_field()
+    min_up: int = Field(
+        default=1, ge=1, description="Minimum steps on after a startup."
+    )
+    min_down: int = Field(
+        default=1, ge=1, description="Minimum steps off after a shutdown."
+    )
+    name: str | None = _label_field()
+
+
+class DwellElement(_StrictModel):
+    """Hold a continuous variable constant within blocks of k steps."""
+
+    kind: Literal["dwell"]
+    unit: str = _unit_field()
+    variable: str = _variable_field()
+    k: int = Field(ge=1, description="Block length in steps.")
+    name: str | None = _label_field()
+
+
+class BypassElement(_StrictModel):
+    """Let part of a flow bypass the unit's energy relation."""
+
+    kind: Literal["bypass"]
+    unit: str = _unit_field()
+    variable: str = _variable_field()
+    max: float | Quantity = Field(
+        description="Upper limit on the bypassed flow: a number or a quantity."
+    )
+    name: str | None = _label_field()
+
+
+class RampElement(_StrictModel):
+    """A limit on how fast a variable may change."""
+
+    kind: Literal["ramp"]
+    unit: str = _unit_field()
+    variable: str = _variable_field()
+    ramp_up: float | None = Field(
+        default=None, ge=0, description="Largest increase per step, in units."
+    )
+    ramp_down: float | None = Field(
+        default=None, ge=0, description="Largest decrease per step, in units."
+    )
+    units: str = Field(description="Units of ramp_up and ramp_down, e.g. 'kW/h'.")
+    window: int = Field(
+        default=1, ge=1, description="Number of steps the ramp is measured across."
+    )
+    component_name: str | None = Field(
+        default=None,
+        description="Stem of the built component names; omitted: '<variable>_ramp'.",
+    )
+    name: str | None = _label_field()
+
+    @model_validator(mode="after")
+    def _some_direction(self) -> "RampElement":
+        """Require at least one of ramp_up and ramp_down."""
+        if self.ramp_up is None and self.ramp_down is None:
+            raise ValueError(
+                f"ramp on {self.unit!r}.{self.variable}: give ramp_up, ramp_down "
+                "or both."
+            )
+        return self
+
+
+class StartupDelayElement(_StrictModel):
+    """Allow a unit on only once an upstream unit has been on for k steps."""
+
+    kind: Literal["startup_delay"]
+    unit: str = _unit_field()
+    upstream: str = Field(description="Name of the unit element that must run first.")
+    k: int = Field(ge=0, description="Steps the unit lags behind the upstream unit.")
+    initially_on: bool = Field(
+        default=True,
+        description="Whether the upstream unit counts as already warmed up at the "
+        "start of the horizon.",
+    )
+    name: str | None = _label_field()
+
+
+class ConditionalElement(_StrictModel):
+    """When a unit is on, another unit is on (or off)."""
+
+    kind: Literal["conditional"]
+    unit: str = _unit_field()
+    implies: str = Field(description="Name of the unit element whose state follows.")
+    state: Literal["on", "off"] = Field(
+        default="on", description="State of the implied unit while this one is on."
+    )
+    name: str | None = _label_field()
+
+
+class ParallelGroupElement(_StrictModel):
+    """Interchangeable units ordered so the first listed runs first."""
+
+    kind: Literal["parallel_group"]
+    units: list[str] = Field(
+        min_length=2, description="Unit element names, in priority order."
+    )
+    variables: list[str] = Field(
+        default_factory=list,
+        description="Variables ordered the same way across the group.",
+    )
+    order_status: bool = Field(
+        default=True, description="Whether to order the units' status binaries."
+    )
+    name: str | None = _label_field()
+
+
+class ExtensionElement(_StrictModel):
+    """A user function that adds constraints or an objective to the model.
+
+    The spec only names the function, so a spec that uses one builds only where
+    the package defining it is installed.
+    """
+
+    kind: Literal["extension"]
+    name: str = Field(description="Name of this call; unique among extensions.")
+    entry_point: str = Field(
+        description="'package.module:function', or the name of an entry point in "
+        "the 'flexpse.extensions' group."
+    )
+    options: dict[str, Any] = Field(
+        default_factory=dict, description="Keyword options passed to the function."
+    )
+
+
 class ObjectiveElement(_StrictModel):
     """The objective the model optimizes."""
 
     kind: Literal["objective"]
     name: str = Field(default="objective", description="Name on the model.")
-    expression: Literal["cost"] = Field(
-        default="cost", description="Quantity to optimize (only cost today)."
+    expression: Literal["cost", "extension"] = Field(
+        default="cost",
+        description="'cost' optimizes a costing element's cost; 'extension' means "
+        "an extension adds the objective.",
     )
     costing_package: str = Field(
         default=AUTO,
@@ -310,7 +503,16 @@ Element = Annotated[
     | SetElement
     | UnitElement
     | SurrogateElement
+    | RampElement
+    | StatusElement
+    | StartupShutdownElement
+    | DwellElement
+    | BypassElement
+    | StartupDelayElement
+    | ConditionalElement
+    | ParallelGroupElement
     | DispatchElement
+    | ExtensionElement
     | ObjectiveElement,
     Field(discriminator="kind"),
 ]
@@ -336,20 +538,45 @@ PARENT_KINDS: dict[str, tuple[str, ...]] = {
 """Kinds of element each kind may sit under; the model root is always allowed."""
 
 
+LOGIC_KINDS = (
+    "ramp",
+    "status",
+    "startup_shutdown",
+    "dwell",
+    "bypass",
+    "startup_delay",
+    "conditional",
+    "parallel_group",
+)
+"""Kinds that add operating logic to units they name."""
+
+TARGET_FIELDS: dict[str, tuple[str, ...]] = {
+    "surrogate": ("unit", "relation"),
+    "dispatch": ("unit", "variable"),
+    "ramp": ("unit", "variable", "component_name"),
+    "status": ("unit",),
+    "startup_shutdown": ("unit",),
+    "dwell": ("unit", "variable"),
+    "bypass": ("unit",),
+    "startup_delay": ("unit",),
+    "conditional": ("unit",),
+    "parallel_group": ("units",),
+}
+"""Kind -> the fields that say what an element sets; two equal targets clash."""
+
+
 def element_target(element) -> tuple[str, ...]:
-    """Return what a surrogate or dispatch sets, ``(unit, relation|variable)``.
+    """Return what an element sets, e.g. ``(unit, relation)`` for a surrogate.
 
     Args:
         element: Any spec element.
 
     Returns:
-        The tuple for a surrogate or dispatch, an empty tuple for other kinds.
+        The values of the kind's ``TARGET_FIELDS`` as strings, or an empty tuple
+        for kinds that are identified by name.
     """
-    if element.kind == "surrogate":
-        return (element.unit, element.relation)
-    if element.kind == "dispatch":
-        return (element.unit, element.variable)
-    return ()
+    values = [getattr(element, f) for f in TARGET_FIELDS.get(element.kind, ())]
+    return tuple(",".join(v) if isinstance(v, list) else str(v or "") for v in values)
 
 
 def package_refs(value) -> list[str]:
@@ -485,7 +712,9 @@ class FlowsheetSpec(_StrictModel):
             self._check_package(label, el.property_package, "property_package")
             self._check_package(label, el.costing_package, "costing")
         for el in self.of_kind("objective"):
-            self._check_package(f"objective {el.name!r}", el.costing_package, "costing")
+            if el.expression == "cost":
+                label = f"objective {el.name!r}"
+                self._check_package(label, el.costing_package, "costing")
         return self
 
     @model_validator(mode="after")
@@ -572,4 +801,97 @@ class FlowsheetSpec(_StrictModel):
             raise ValueError(
                 f"At most one 'objective' element is allowed, found {names}."
             )
+        return self
+
+    def _members(self, ref: str) -> list[str]:
+        """Return the member names a unit reference covers, or raise naming it."""
+        units = {el.name: el for el in self.of_kind("unit")}
+        sets = {el.name: [str(v) for v in el.values] for el in self.of_kind("set")}
+        base, _, member = ref.partition("[")
+        unit = units.get(base)
+        if unit is None:
+            raise ValueError(f"{ref!r}: no such unit element. Units: {sorted(units)}.")
+        if unit.index is None:
+            if member:
+                raise ValueError(f"{ref!r}: unit {base!r} is not indexed.")
+            return [ref]
+        values = sets[unit.index]
+        if not member:
+            return [f"{base}[{v}]" for v in values]
+        if member.removesuffix("]") not in values:
+            raise ValueError(f"{ref!r}: {member[:-1]!r} is not in set {unit.index!r}.")
+        return [ref]
+
+    @model_validator(mode="after")
+    def _logic_is_consistent(self) -> "FlowsheetSpec":
+        """Require logic to name units, find a status, and never repeat."""
+        units = {el.name: el for el in self.of_kind("unit")}
+
+        def unit_of(member: str):
+            return units[member.partition("[")[0]]
+
+        def refs(el) -> list[str]:
+            if el.kind == "parallel_group":
+                return el.units
+            extra = {"conditional": "implies", "startup_delay": "upstream"}.get(el.kind)
+            return [el.unit] + ([getattr(el, extra)] if extra else [])
+
+        logic = self.of_kind(*LOGIC_KINDS)
+        members = {}
+        for el in logic:
+            for ref in refs(el):
+                try:
+                    members[ref] = self._members(ref)
+                except ValueError as exc:
+                    raise ValueError(f"{el.kind}: {exc}") from None
+
+        with_status = set()
+        for el in self.of_kind("status"):
+            unit_class = units[el.unit.partition("[")[0]].unit_model_class
+            if unit_class in NO_STATUS_CLASSES:
+                raise ValueError(
+                    f"status on {el.unit!r}: {unit_class} manages its own status; "
+                    "set unit_commitment.status on the unit instead."
+                )
+            with_status.update(members[el.unit])
+
+        def has_status(member: str) -> bool:
+            unit = unit_of(member)
+            own = unit.unit_commitment is not None and unit.unit_commitment.status
+            return member in with_status or (
+                unit.unit_model_class in SELF_STATUS_CLASSES and own
+            )
+
+        needs_status = {"startup_shutdown", "startup_delay", "conditional"}
+        for el in logic:
+            if el.kind in needs_status or (
+                el.kind == "parallel_group" and el.order_status
+            ):
+                for ref in refs(el):
+                    missing = [m for m in members[ref] if not has_status(m)]
+                    if missing:
+                        raise ValueError(
+                            f"{el.kind} on {ref!r} needs a status element on "
+                            f"{missing[0]!r}."
+                        )
+
+        seen = set()
+        for el in logic:
+            if el.kind == "parallel_group":
+                continue
+            rest = element_target(el)[1:]
+            for member in members[el.unit]:
+                key = (el.kind, member, *rest)
+                if key in seen:
+                    raise ValueError(f"{el.kind} on {member!r} is set twice; keep one.")
+                seen.add(key)
+        return self
+
+    @model_validator(mode="after")
+    def _extension_names_are_unique(self) -> "FlowsheetSpec":
+        """Require every extension name to be unique."""
+        names = [el.name for el in self.of_kind("extension")]
+        repeated = sorted({n for n in names if names.count(n) > 1})
+        if repeated:
+            raise ValueError(f"extension names {repeated} are used twice; keep one.")
         return self

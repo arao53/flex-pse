@@ -166,9 +166,10 @@ built in Python, it returns the flat spec that rebuilds the same model. It reads
 each component's construction options back from its config, writes each arc as a
 connection on its source unit (an indexed arc becomes a `{i}` template, which is
 checked against every member), and keeps each surrogate swapped in from a spec.
-It then rebuilds the spec and compares the two models. Anything the spec can't
-express yet, such as a constraint added by hand, a custom objective, or a
-surrogate object built without a spec, raises a `FlexEmitWarning` that names
+It also writes the logic and extensions recorded on the model (see below). It
+then rebuilds the spec and compares the two models. Anything the spec can't
+express yet, such as a constraint added by hand, an objective no extension made,
+or a surrogate object built without a spec, raises a `FlexEmitWarning` that names
 it. Nothing is dropped silently.
 
 Two kinds of reference keep a spec small and free of live objects:
@@ -181,6 +182,29 @@ Two kinds of reference keep a spec small and free of live objects:
 - **`{"$package": "biogas"}`** as a unit construction option passes the
   property package element of that name, for units that take more than one
   package (a digester's biogas and sludge outlets, for example).
+
+### Logic, ramps and extensions
+
+Operating logic added after construction is part of the spec too. Each
+`flexops.logic` helper (except `relax` and `unrelax`, which are solve strategy)
+has one element kind: `status`, `startup_shutdown`, `dwell`, `bypass`, `ramp`,
+`startup_delay`, `conditional` and `parallel_group`. An element names its unit
+and never sits inside it. A unit name covers every member of an indexed unit,
+and `"plant.ro[0]"` covers one member. The build adds ramps first, then the logic
+kinds in a fixed order (status first, logic between units last), whatever order
+the file lists them in. These kinds are immutable: change them in the spec and
+rebuild.
+
+The spec checks that every unit named exists, that logic needing an on/off
+status has one (a battery with `unit_commitment.status` builds its own), and
+that nothing is set twice on the same unit.
+
+An `extension` element names a user function, as `"package.module:function"` or
+an entry point in the `flexpse.extensions` group, with JSON options. Decorating
+a function with `@flexops.extension` makes calling it record the element. An
+objective with `"expression": "extension"` means an extension adds the
+objective. A spec that uses an extension builds only where its package is
+installed.
 
 Units are written as Pyomo prints them, with `**` exponents changed to `^`, so
 `kg/m^2/s` (kilograms per square metre per second) and `1/s` both appear as
@@ -219,4 +243,40 @@ yet, and `emit_model` raises a `FlexConfigError` naming the option.
 
 ```{eval-rst}
 .. flexops-config-table:: flexcore.config.schema.SurrogateSpec
+```
+
+```{eval-rst}
+.. flexops-config-table:: flexcore.config.spec.StatusElement
+```
+
+```{eval-rst}
+.. flexops-config-table:: flexcore.config.spec.StartupShutdownElement
+```
+
+```{eval-rst}
+.. flexops-config-table:: flexcore.config.spec.DwellElement
+```
+
+```{eval-rst}
+.. flexops-config-table:: flexcore.config.spec.BypassElement
+```
+
+```{eval-rst}
+.. flexops-config-table:: flexcore.config.spec.RampElement
+```
+
+```{eval-rst}
+.. flexops-config-table:: flexcore.config.spec.StartupDelayElement
+```
+
+```{eval-rst}
+.. flexops-config-table:: flexcore.config.spec.ConditionalElement
+```
+
+```{eval-rst}
+.. flexops-config-table:: flexcore.config.spec.ParallelGroupElement
+```
+
+```{eval-rst}
+.. flexops-config-table:: flexcore.config.spec.ExtensionElement
 ```

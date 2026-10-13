@@ -118,6 +118,20 @@ model was, or could have been, built from (see
 
 .. autofunction:: model_differences
 
+Extensions
+----------
+
+.. currentmodule:: flexops.core.extensions
+
+An extension is a user function that adds constraints or an objective. Decorate
+it with :func:`extension` (exported as ``flexops.extension``) and calling it
+records an ``extension`` element, so ``emit_model`` writes it back. The spec only
+names the function, so it builds only where the defining package is installed.
+
+.. autofunction:: extension
+
+.. autofunction:: resolve_extension
+
 Build stages
 ------------
 
@@ -125,6 +139,8 @@ Build stages
 
 ``build_model`` runs the stages in :data:`STAGES` in order. Costing is last
 because ``cost_process()`` aggregates only the terms registered when it runs.
+The logic stage builds its kinds in :data:`LOGIC_ORDER`, status first and
+cross-unit logic last.
 :func:`apply_stages` runs the post-topology stages on a model that already exists,
 and :func:`apply_spec` applies the mutable spec elements (surrogates and dispatches)
 to one.
@@ -133,6 +149,9 @@ to one.
    :no-value:
 
 .. autodata:: POST_TOPOLOGY_STAGES
+   :no-value:
+
+.. autodata:: LOGIC_ORDER
    :no-value:
 
 .. autoclass:: BuildContext

@@ -102,8 +102,18 @@ A flowsheet as one flat list of elements, in any order. The nested
    UnitElement
    Connection
    SurrogateElement
+   RampElement
+   StatusElement
+   StartupShutdownElement
+   DwellElement
+   BypassElement
+   StartupDelayElement
+   ConditionalElement
+   ParallelGroupElement
    DispatchElement
+   ExtensionElement
    ObjectiveElement
+   Quantity
    SourceRef
    SourcedPrice
 
@@ -113,6 +123,12 @@ A flowsheet as one flat list of elements, in any order. The nested
 
 .. autodata:: KINDS
    :no-value:
+
+.. autodata:: LOGIC_KINDS
+
+.. autodata:: SELF_STATUS_CLASSES
+
+.. autodata:: NO_STATUS_CLASSES
 
 .. currentmodule:: flexcore.config.convert
 

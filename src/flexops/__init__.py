@@ -5,6 +5,7 @@ from importlib.metadata import version as _dist_version
 from flexcore.nomenclature import PowerKind
 from flexops.core.build import build_model
 from flexops.core.emit import emit_model
+from flexops.core.extensions import extension
 from flexops.core.network_block import NetworkBlock
 from flexops.core.plant_block import PlantBlock
 from flexops.core.registration import BoundaryKind
@@ -70,4 +71,5 @@ __all__ = [
     "apply_stages",
     "build_model",
     "emit_model",
+    "extension",
 ]

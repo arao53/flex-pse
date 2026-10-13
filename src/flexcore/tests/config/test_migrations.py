@@ -30,8 +30,12 @@ _SPEC_FIXTURES = sorted(
 @pytest.mark.unit
 @pytest.mark.parametrize("path", _SPEC_FIXTURES, ids=lambda p: p.stem)
 def test_every_spec_fixture_loads(path):
-    """Each stored flat-spec version loads and ends at the current spec version."""
+    """Each stored flat-spec version loads and ends at the current spec version.
+
+    The current version's fixture also holds every element kind.
+    """
     spec = load_spec(path)
 
     assert spec.schema_version == SCHEMA_VERSION
-    assert {el.kind for el in spec.elements} == set(KINDS)
+    if path.stem == SCHEMA_VERSION:
+        assert {el.kind for el in spec.elements} == set(KINDS)

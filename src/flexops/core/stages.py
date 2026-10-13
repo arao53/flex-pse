@@ -28,6 +28,8 @@ from flexcore.config.spec import (
     parent_name,
 )
 from flexcore.exceptions import FlexConfigError
+from flexops import logic
+from flexops.core.extensions import resolve_extension
 from flexops.core.network_block import NetworkBlock
 from flexops.core.ops_block import OpsBlockData
 from flexops.core.plant_block import PlantBlock
@@ -49,6 +51,17 @@ STAGES: tuple[str, ...] = (
     "costing",
 )
 """Build order. Changing it is a schema-contract change (see CONTRIBUTING.md)."""
+
+LOGIC_ORDER: tuple[str, ...] = (
+    "status",
+    "bypass",
+    "dwell",
+    "startup_shutdown",
+    "startup_delay",
+    "conditional",
+    "parallel_group",
+)
+"""Order the logic stage builds kinds in, status first and cross-unit logic last."""
 
 POST_TOPOLOGY_STAGES = STAGES[2:]
 """Stages that can run on an already-built model."""
@@ -257,11 +270,129 @@ def stage_degradation(model, spec: FlowsheetSpec, ctx: BuildContext) -> None:
 
 
 def stage_ramping(model, spec: FlowsheetSpec, ctx: BuildContext) -> None:
-    """Reserved: builds ramp limits from the spec (planned for schema 0.1.x)."""
+    """Add each ramp element's limit to every member of its unit.
+
+    Args:
+        model: The model with built units.
+        spec: The validated spec.
+        ctx: The shared build context.
+
+    Raises:
+        FlexConfigError: If a ramp's variable is not on its unit.
+    """
+    for element in elements_of(spec, "ramp"):
+        for member in _members(model, ctx, element.unit):
+            logic.add_ramp_rate(
+                _variable(member, element),
+                name=element.component_name,
+                ramp_up=element.ramp_up,
+                ramp_down=element.ramp_down,
+                ramp_rate_units=parse_units(element.units),
+                window=element.window,
+            )
 
 
 def stage_logic(model, spec: FlowsheetSpec, ctx: BuildContext) -> None:
-    """Reserved: builds status, startup, shutdown logic (planned for 0.1.x)."""
+    """Build the logic elements, kind by kind in ``LOGIC_ORDER``.
+
+    A unit name covers every member of an indexed unit; ``'name[i]'`` covers one.
+
+    Args:
+        model: The model with built units.
+        spec: The validated spec.
+        ctx: The shared build context.
+
+    Raises:
+        FlexConfigError: If a variable is not on its unit, or two indexed units
+            paired by a cross-unit element have different member counts.
+    """
+    for kind in LOGIC_ORDER:
+        for element in elements_of(spec, kind):
+            if kind == "parallel_group":
+                units = [m for u in element.units for m in _members(model, ctx, u)]
+                logic.register_parallel_group(
+                    units,
+                    variables=element.variables,
+                    order_status=element.order_status,
+                )
+            elif kind in ("conditional", "startup_delay"):
+                other = element.implies if kind == "conditional" else element.upstream
+                for unit, partner in _pairs(model, ctx, element.unit, other):
+                    if kind == "conditional":
+                        logic.add_conditional(unit, partner, then=element.state)
+                    else:
+                        logic.add_startup_delay(
+                            unit, partner, element.k, element.initially_on
+                        )
+            else:
+                for member in _members(model, ctx, element.unit):
+                    _add_unit_logic(member, element)
+
+
+def _variable(member, element):
+    """Return the variable an element names on ``member``, or raise naming it."""
+    var = member.find_component(element.variable)
+    if var is None:
+        raise FlexConfigError(
+            f"{element.kind} names variable {element.variable!r}, which is not on "
+            f"{member.name!r}.",
+            field="variable",
+            value=element.variable,
+        )
+    return var
+
+
+def _limit(value):
+    """Return a spec limit (a number or a ``Quantity``) as a Pyomo value."""
+    return value if isinstance(value, float) else value.value * parse_units(value.units)
+
+
+def _add_unit_logic(member, element) -> None:
+    """Build one unit-level logic element on one unit member."""
+    if element.kind == "status":
+        logic.add_status(
+            member,
+            _variable(member, element),
+            _limit(element.min_output),
+            _limit(element.max_output),
+        )
+    elif element.kind == "bypass":
+        logic.add_bypass(member, _variable(member, element), _limit(element.max))
+    elif element.kind == "dwell":
+        logic.add_dwell(_variable(member, element), element.k)
+    else:
+        logic.add_startup_shutdown(
+            member, member.status, element.min_up, element.min_down
+        )
+
+
+def _pairs(model, ctx: BuildContext, first: str, second: str) -> list[tuple]:
+    """Pair the members of two unit references for a cross-unit element.
+
+    Args:
+        model: The built model.
+        ctx: The shared build context.
+        first: The reference the constraint is built on.
+        second: The other reference.
+
+    Returns:
+        Each member of ``first`` with the single member of ``second``, or with
+        the member of ``second`` at the same position.
+
+    Raises:
+        FlexConfigError: If both have several members, in different numbers.
+    """
+    firsts, seconds = _members(model, ctx, first), _members(model, ctx, second)
+    if len(seconds) == 1:
+        return [(unit, seconds[0]) for unit in firsts]
+    if len(firsts) != len(seconds):
+        raise FlexConfigError(
+            f"{first!r} has {len(firsts)} members and {second!r} has "
+            f"{len(seconds)}; pair them member by member, e.g. '{first}[0]'.",
+            field="unit",
+            value=first,
+        )
+    return list(zip(firsts, seconds, strict=True))
 
 
 def stage_state(model, spec: FlowsheetSpec, ctx: BuildContext) -> None:
@@ -280,7 +411,21 @@ def stage_state(model, spec: FlowsheetSpec, ctx: BuildContext) -> None:
 
 
 def stage_extensions(model, spec: FlowsheetSpec, ctx: BuildContext) -> None:
-    """Reserved: runs user-supplied constraint builders (planned for 0.1.x)."""
+    """Call each extension element's function on the model, sorted by name.
+
+    Args:
+        model: The model with units, logic and dispatch built.
+        spec: The validated spec.
+        ctx: The shared build context.
+
+    Raises:
+        FlexConfigError: If an extension can't be imported.
+    """
+    for element in sorted(spec.of_kind("extension"), key=lambda e: e.name):
+        fn = resolve_extension(element.entry_point)
+        # A decorated extension records itself; keep the spec's name for it.
+        pinned = {"_name": element.name} if getattr(fn, "flex_extension", False) else {}
+        fn(model, **element.options, **pinned)
 
 
 def stage_costing(model, spec: FlowsheetSpec, ctx: BuildContext) -> None:
@@ -290,10 +435,24 @@ def stage_costing(model, spec: FlowsheetSpec, ctx: BuildContext) -> None:
         model: The model with every cost term already registered.
         spec: The validated spec.
         ctx: The shared build context.
+
+    Raises:
+        FlexConfigError: If the objective is ``'extension'`` but the model doesn't
+            hold exactly one active Objective.
     """
     for element in elements_of(spec, "costing"):
         model.find_component(element.name).cost_process()
     for element in elements_of(spec, "objective"):
+        if element.expression == "extension":
+            active = list(model.component_data_objects(pyo.Objective, active=True))
+            if len(active) != 1:
+                raise FlexConfigError(
+                    "objective expression 'extension' needs an extension that adds "
+                    f"an Objective; the model holds {len(active)} active objectives.",
+                    field="expression",
+                    value="extension",
+                )
+            continue
         costing = model.find_component(
             spec.of_kind("costing")[0].name
             if element.costing_package == AUTO

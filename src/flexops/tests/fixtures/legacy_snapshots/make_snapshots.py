@@ -75,7 +75,8 @@ def build_case(name: str):
     try:
         with warnings.catch_warnings():
             warnings.simplefilter("ignore", DeprecationWarning)
-            return build_model(load_model_config(config))
+            # The snapshots were recorded before build_model expanded arcs.
+            return build_model(load_model_config(config), expand_arcs=False)
     finally:
         os.chdir(previous)
 

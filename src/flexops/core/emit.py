@@ -7,12 +7,15 @@ import warnings
 from pathlib import Path
 
 import pyomo.environ as pyo
+from pydantic import TypeAdapter
 from pyomo.network import Arc
 
 from flexcore.config.spec import (
     SCHEMA_VERSION,
     Connection,
     DispatchElement,
+    Element,
+    ExtensionElement,
     FlowsheetSpec,
     NetworkElement,
     ObjectiveElement,
@@ -64,8 +67,9 @@ def emit_model(
             spec form, indexed members that differ, an arc no template fits).
 
     Warns:
-        FlexEmitWarning: For anything left out of the spec: a custom surrogate
-            or objective, a long list with no ``data_dir``, a costing block that
+        FlexEmitWarning: For anything left out of the spec: a custom surrogate,
+            an objective no costing block or extension made, a long list with
+            no ``data_dir``, a costing block that
             has not run ``cost_process()``, and every difference the check
             finds.
     """
@@ -88,7 +92,13 @@ def emit_model(
     _connections(model, unit_elements, units, sets)
     elements += sets.values()
     elements += _mutable_elements(model, units)
-    elements += _objectives(model, costings)
+    elements += _logic_elements(model, units)
+    extensions = [
+        ExtensionElement(kind="extension", **record)
+        for record in model.__dict__.get("_flex_extensions", [])
+    ]
+    elements += extensions
+    elements += _objectives(model, costings, bool(extensions))
     base_dir = relative_to or (None if data_dir is None else Path(data_dir).parent)
     _offload(elements, data_dir, inline_limit, base_dir)
     spec = FlowsheetSpec(
@@ -378,8 +388,48 @@ def _dispatches(unit: str, members: list) -> list[DispatchElement]:
     ]
 
 
-def _objectives(model, costings: dict) -> list[ObjectiveElement]:
-    """Return the cost objective, warning about every other active objective."""
+def _logic_elements(model, units: dict) -> list:
+    """Return the logic elements recorded by logic-helper calls.
+
+    Records that every member of an indexed unit shares become one element on
+    the unit; otherwise each member gets its own.
+
+    Args:
+        model: The model, holding cross-unit records.
+        units: Unit element names mapped to their member blocks.
+
+    Returns:
+        The validated logic elements.
+    """
+    found = []
+    for unit, members in units.items():
+        records = [m.__dict__.get("_flex_logic", []) for m in members]
+        for kind in dict.fromkeys(r.kind for rs in records for r in rs):
+            fields = [[r.fields for r in rs if r.kind == kind] for rs in records]
+            if all(f == fields[0] for f in fields):
+                found += [{"kind": kind, "unit": unit, **f} for f in fields[0]]
+                continue
+            for member, member_fields in zip(members, fields, strict=True):
+                name = member.getname(fully_qualified=True)
+                found += [{"kind": kind, "unit": name, **f} for f in member_fields]
+    found += [
+        {"kind": r.kind, **r.fields} for r in model.__dict__.get("_flex_logic", [])
+    ]
+    return TypeAdapter(list[Element]).validate_python(found)
+
+
+def _objectives(model, costings: dict, extensions: bool) -> list[ObjectiveElement]:
+    """Return the objective, warning about any no costing block or extension made.
+
+    Args:
+        model: The model.
+        costings: Costing element names mapped to their blocks.
+        extensions: Whether the model has extensions, which may have added a
+            custom objective.
+
+    Returns:
+        The objective elements.
+    """
     found = []
     for objective in model.component_data_objects(
         pyo.Objective, active=True, descend_into=True
@@ -393,6 +443,15 @@ def _objectives(model, costings: dict) -> list[ObjectiveElement]:
             ),
             None,
         )
+        if costing is None and extensions:
+            found.append(
+                ObjectiveElement(
+                    kind="objective",
+                    name=objective.local_name,
+                    expression="extension",
+                )
+            )
+            continue
         if costing is None:
             warnings.warn(
                 f"Objective {objective.name} is not a costing block's "

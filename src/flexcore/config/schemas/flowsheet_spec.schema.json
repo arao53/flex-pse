@@ -1,5 +1,110 @@
 {
   "$defs": {
+    "BypassElement": {
+      "additionalProperties": false,
+      "description": "Let part of a flow bypass the unit's energy relation.",
+      "properties": {
+        "kind": {
+          "const": "bypass",
+          "title": "Kind",
+          "type": "string"
+        },
+        "max": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "#/$defs/Quantity"
+            }
+          ],
+          "description": "Upper limit on the bypassed flow: a number or a quantity.",
+          "title": "Max"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label; not used to build anything.",
+          "title": "Name"
+        },
+        "unit": {
+          "description": "Name of the unit element, or 'name[i]' for one member of an indexed unit.",
+          "title": "Unit",
+          "type": "string"
+        },
+        "variable": {
+          "description": "Path of the time-indexed variable relative to the unit, e.g. 'flow_in'.",
+          "title": "Variable",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "unit",
+        "variable",
+        "max"
+      ],
+      "title": "BypassElement",
+      "type": "object"
+    },
+    "ConditionalElement": {
+      "additionalProperties": false,
+      "description": "When a unit is on, another unit is on (or off).",
+      "properties": {
+        "implies": {
+          "description": "Name of the unit element whose state follows.",
+          "title": "Implies",
+          "type": "string"
+        },
+        "kind": {
+          "const": "conditional",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label; not used to build anything.",
+          "title": "Name"
+        },
+        "state": {
+          "default": "on",
+          "description": "State of the implied unit while this one is on.",
+          "enum": [
+            "on",
+            "off"
+          ],
+          "title": "State",
+          "type": "string"
+        },
+        "unit": {
+          "description": "Name of the unit element, or 'name[i]' for one member of an indexed unit.",
+          "title": "Unit",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "unit",
+        "implies"
+      ],
+      "title": "ConditionalElement",
+      "type": "object"
+    },
     "Connection": {
       "additionalProperties": false,
       "description": "An arc from a port of the unit that owns it to another unit's port.",
@@ -326,6 +431,88 @@
       "title": "DispatchElement",
       "type": "object"
     },
+    "DwellElement": {
+      "additionalProperties": false,
+      "description": "Hold a continuous variable constant within blocks of k steps.",
+      "properties": {
+        "k": {
+          "description": "Block length in steps.",
+          "minimum": 1,
+          "title": "K",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "dwell",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label; not used to build anything.",
+          "title": "Name"
+        },
+        "unit": {
+          "description": "Name of the unit element, or 'name[i]' for one member of an indexed unit.",
+          "title": "Unit",
+          "type": "string"
+        },
+        "variable": {
+          "description": "Path of the time-indexed variable relative to the unit, e.g. 'flow_in'.",
+          "title": "Variable",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "unit",
+        "variable",
+        "k"
+      ],
+      "title": "DwellElement",
+      "type": "object"
+    },
+    "ExtensionElement": {
+      "additionalProperties": false,
+      "description": "A user function that adds constraints or an objective to the model. The spec only names the function, so a spec that uses one builds only where the package defining it is installed.",
+      "properties": {
+        "entry_point": {
+          "description": "'package.module:function', or the name of an entry point in the 'flexpse.extensions' group.",
+          "title": "Entry Point",
+          "type": "string"
+        },
+        "kind": {
+          "const": "extension",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "description": "Name of this call; unique among extensions.",
+          "title": "Name",
+          "type": "string"
+        },
+        "options": {
+          "additionalProperties": true,
+          "description": "Keyword options passed to the function.",
+          "title": "Options",
+          "type": "object"
+        }
+      },
+      "required": [
+        "kind",
+        "name",
+        "entry_point"
+      ],
+      "title": "ExtensionElement",
+      "type": "object"
+    },
     "IOVariableSpec": {
       "additionalProperties": false,
       "description": "A declared process input or output variable of a unit.",
@@ -410,9 +597,12 @@
           "type": "string"
         },
         "expression": {
-          "const": "cost",
           "default": "cost",
-          "description": "Quantity to optimize (only cost today).",
+          "description": "'cost' optimizes a costing element's cost; 'extension' means an extension adds the objective.",
+          "enum": [
+            "cost",
+            "extension"
+          ],
           "title": "Expression",
           "type": "string"
         },
@@ -442,6 +632,59 @@
         "kind"
       ],
       "title": "ObjectiveElement",
+      "type": "object"
+    },
+    "ParallelGroupElement": {
+      "additionalProperties": false,
+      "description": "Interchangeable units ordered so the first listed runs first.",
+      "properties": {
+        "kind": {
+          "const": "parallel_group",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label; not used to build anything.",
+          "title": "Name"
+        },
+        "order_status": {
+          "default": true,
+          "description": "Whether to order the units' status binaries.",
+          "title": "Order Status",
+          "type": "boolean"
+        },
+        "units": {
+          "description": "Unit element names, in priority order.",
+          "items": {
+            "type": "string"
+          },
+          "minItems": 2,
+          "title": "Units",
+          "type": "array"
+        },
+        "variables": {
+          "description": "Variables ordered the same way across the group.",
+          "items": {
+            "type": "string"
+          },
+          "title": "Variables",
+          "type": "array"
+        }
+      },
+      "required": [
+        "kind",
+        "units"
+      ],
+      "title": "ParallelGroupElement",
       "type": "object"
     },
     "PlantElement": {
@@ -498,6 +741,123 @@
         "name"
       ],
       "title": "PropertyPackageElement",
+      "type": "object"
+    },
+    "Quantity": {
+      "additionalProperties": false,
+      "description": "A number with units, e.g. {\"value\": 0.5, \"units\": \"kWh/m^3\"}.",
+      "properties": {
+        "units": {
+          "description": "Units as parse_units reads them, e.g. 'kW'.",
+          "title": "Units",
+          "type": "string"
+        },
+        "value": {
+          "description": "The magnitude.",
+          "title": "Value",
+          "type": "number"
+        }
+      },
+      "required": [
+        "value",
+        "units"
+      ],
+      "title": "Quantity",
+      "type": "object"
+    },
+    "RampElement": {
+      "additionalProperties": false,
+      "description": "A limit on how fast a variable may change.",
+      "properties": {
+        "component_name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Stem of the built component names; omitted: '<variable>_ramp'.",
+          "title": "Component Name"
+        },
+        "kind": {
+          "const": "ramp",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label; not used to build anything.",
+          "title": "Name"
+        },
+        "ramp_down": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Largest decrease per step, in units.",
+          "title": "Ramp Down"
+        },
+        "ramp_up": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Largest increase per step, in units.",
+          "title": "Ramp Up"
+        },
+        "unit": {
+          "description": "Name of the unit element, or 'name[i]' for one member of an indexed unit.",
+          "title": "Unit",
+          "type": "string"
+        },
+        "units": {
+          "description": "Units of ramp_up and ramp_down, e.g. 'kW/h'.",
+          "title": "Units",
+          "type": "string"
+        },
+        "variable": {
+          "description": "Path of the time-indexed variable relative to the unit, e.g. 'flow_in'.",
+          "title": "Variable",
+          "type": "string"
+        },
+        "window": {
+          "default": 1,
+          "description": "Number of steps the ramp is measured across.",
+          "minimum": 1,
+          "title": "Window",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind",
+        "unit",
+        "variable",
+        "units"
+      ],
+      "title": "RampElement",
       "type": "object"
     },
     "SetElement": {
@@ -587,6 +947,176 @@
         "units"
       ],
       "title": "SourcedPrice",
+      "type": "object"
+    },
+    "StartupDelayElement": {
+      "additionalProperties": false,
+      "description": "Allow a unit on only once an upstream unit has been on for k steps.",
+      "properties": {
+        "initially_on": {
+          "default": true,
+          "description": "Whether the upstream unit counts as already warmed up at the start of the horizon.",
+          "title": "Initially On",
+          "type": "boolean"
+        },
+        "k": {
+          "description": "Steps the unit lags behind the upstream unit.",
+          "minimum": 0,
+          "title": "K",
+          "type": "integer"
+        },
+        "kind": {
+          "const": "startup_delay",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label; not used to build anything.",
+          "title": "Name"
+        },
+        "unit": {
+          "description": "Name of the unit element, or 'name[i]' for one member of an indexed unit.",
+          "title": "Unit",
+          "type": "string"
+        },
+        "upstream": {
+          "description": "Name of the unit element that must run first.",
+          "title": "Upstream",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "unit",
+        "upstream",
+        "k"
+      ],
+      "title": "StartupDelayElement",
+      "type": "object"
+    },
+    "StartupShutdownElement": {
+      "additionalProperties": false,
+      "description": "Startup and shutdown binaries with minimum up and down times.",
+      "properties": {
+        "kind": {
+          "const": "startup_shutdown",
+          "title": "Kind",
+          "type": "string"
+        },
+        "min_down": {
+          "default": 1,
+          "description": "Minimum steps off after a shutdown.",
+          "minimum": 1,
+          "title": "Min Down",
+          "type": "integer"
+        },
+        "min_up": {
+          "default": 1,
+          "description": "Minimum steps on after a startup.",
+          "minimum": 1,
+          "title": "Min Up",
+          "type": "integer"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label; not used to build anything.",
+          "title": "Name"
+        },
+        "unit": {
+          "description": "Name of the unit element, or 'name[i]' for one member of an indexed unit.",
+          "title": "Unit",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "unit"
+      ],
+      "title": "StartupShutdownElement",
+      "type": "object"
+    },
+    "StatusElement": {
+      "additionalProperties": false,
+      "description": "An on/off status binary gating a unit's output between two limits.",
+      "properties": {
+        "kind": {
+          "const": "status",
+          "title": "Kind",
+          "type": "string"
+        },
+        "max_output": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "#/$defs/Quantity"
+            }
+          ],
+          "description": "Output when on, upper limit: a number or a quantity.",
+          "title": "Max Output"
+        },
+        "min_output": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "#/$defs/Quantity"
+            }
+          ],
+          "description": "Output when on, lower limit: a number or a quantity.",
+          "title": "Min Output"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional label; not used to build anything.",
+          "title": "Name"
+        },
+        "unit": {
+          "description": "Name of the unit element, or 'name[i]' for one member of an indexed unit.",
+          "title": "Unit",
+          "type": "string"
+        },
+        "variable": {
+          "description": "Path of the time-indexed variable relative to the unit, e.g. 'flow_in'.",
+          "title": "Variable",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "unit",
+        "variable",
+        "min_output",
+        "max_output"
+      ],
+      "title": "StatusElement",
       "type": "object"
     },
     "SurrogateElement": {
@@ -884,13 +1414,22 @@
       "items": {
         "discriminator": {
           "mapping": {
+            "bypass": "#/$defs/BypassElement",
+            "conditional": "#/$defs/ConditionalElement",
             "costing": "#/$defs/CostingElement",
             "dispatch": "#/$defs/DispatchElement",
+            "dwell": "#/$defs/DwellElement",
+            "extension": "#/$defs/ExtensionElement",
             "network": "#/$defs/NetworkElement",
             "objective": "#/$defs/ObjectiveElement",
+            "parallel_group": "#/$defs/ParallelGroupElement",
             "plant": "#/$defs/PlantElement",
             "property_package": "#/$defs/PropertyPackageElement",
+            "ramp": "#/$defs/RampElement",
             "set": "#/$defs/SetElement",
+            "startup_delay": "#/$defs/StartupDelayElement",
+            "startup_shutdown": "#/$defs/StartupShutdownElement",
+            "status": "#/$defs/StatusElement",
             "surrogate": "#/$defs/SurrogateElement",
             "time": "#/$defs/TimeElement",
             "unit": "#/$defs/UnitElement"
@@ -923,7 +1462,34 @@
             "$ref": "#/$defs/SurrogateElement"
           },
           {
+            "$ref": "#/$defs/RampElement"
+          },
+          {
+            "$ref": "#/$defs/StatusElement"
+          },
+          {
+            "$ref": "#/$defs/StartupShutdownElement"
+          },
+          {
+            "$ref": "#/$defs/DwellElement"
+          },
+          {
+            "$ref": "#/$defs/BypassElement"
+          },
+          {
+            "$ref": "#/$defs/StartupDelayElement"
+          },
+          {
+            "$ref": "#/$defs/ConditionalElement"
+          },
+          {
+            "$ref": "#/$defs/ParallelGroupElement"
+          },
+          {
             "$ref": "#/$defs/DispatchElement"
+          },
+          {
+            "$ref": "#/$defs/ExtensionElement"
           },
           {
             "$ref": "#/$defs/ObjectiveElement"

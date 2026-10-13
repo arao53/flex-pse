@@ -69,13 +69,13 @@ def test_build_model_runs_every_stage_once(freeze_config, monkeypatch):
 
 @pytest.mark.component
 def test_expand_arcs_flag(freeze_config):
-    """expand_arcs=True deactivates every Arc; the default leaves them active."""
-    default = build_model(freeze_config)
-    expanded = build_model(freeze_config, expand_arcs=True)
+    """The default deactivates every Arc; expand_arcs=False leaves them active."""
+    unexpanded = build_model(freeze_config, expand_arcs=False)
+    expanded = build_model(freeze_config)
 
-    default_arcs = list(default.component_data_objects(Arc, descend_into=True))
+    unexpanded_arcs = list(unexpanded.component_data_objects(Arc, descend_into=True))
     expanded_arcs = list(expanded.component_data_objects(Arc, descend_into=True))
-    assert default_arcs and all(arc.active for arc in default_arcs)
+    assert unexpanded_arcs and all(arc.active for arc in unexpanded_arcs)
     assert expanded_arcs and not any(arc.active for arc in expanded_arcs)
 
 

@@ -27,7 +27,7 @@ from flexops.core.units import parse_units
 __all__ = ["build_model", "parse_quantity", "parse_units"]
 
 
-def build_model(config, *, expand_arcs: bool = False) -> pyo.ConcreteModel:
+def build_model(config, *, expand_arcs: bool = True) -> pyo.ConcreteModel:
     """Build the whole Pyomo model described by a config.
 
     Args:
@@ -36,13 +36,14 @@ def build_model(config, *, expand_arcs: bool = False) -> pyo.ConcreteModel:
             config, or a nested :class:`~flexcore.config.schema.ModelConfig`.
             Raw input always goes through the validated schema.
         expand_arcs: Whether to apply ``network.expand_arcs`` after the
-            topology is built.
+            topology is built, so logic and extensions can use the expanded
+            equalities. Expanding an already expanded model changes nothing.
 
     Returns:
         The constructed ``ConcreteModel``, carrying ``time_block``, the named
         property packages and costing blocks, the network, plant and unit
-        tree, and the objective if the spec has one. Arcs are expanded only if
-        ``expand_arcs`` is true.
+        tree, its logic and extensions, and the objective if the spec has one.
+        Arcs are expanded unless ``expand_arcs`` is false.
 
     Raises:
         FlexConfigError: If the config fails validation (the message names the
