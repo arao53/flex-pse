@@ -953,6 +953,13 @@ def test_report_cost_currency_follows_configured_basis():
 
 
 @pytest.mark.unit
+def test_unpriced_carrier_without_tariff_raises():
+    """With no tariff, a carrier missing from energy_prices is an error."""
+    with pytest.raises(FlexConfigError, match="there is no tariff"):
+        _pump_tank_costing(no_tariff=True, energy_prices={"water": 0.12})
+
+
+@pytest.mark.unit
 def test_flat_priced_model_needs_no_eeco(monkeypatch):
     """With every carrier flat-priced, build/cost/report never touch eeco."""
 
@@ -1460,6 +1467,7 @@ def _export_priced_costing(**kwargs) -> pyo.ConcreteModel:
     m = _pump_tank_costing(
         no_tariff=True, energy_prices={"electrical": _IMPORT_PRICE}, **kwargs
     )
+    _propagate(m.costing)  # before fixing: it would overwrite the fixed power
     m.costing.eq_aggregate_power.deactivate()
     for t, kw in _NET_KW.items():
         m.costing.aggregate_power[t, "electrical"].fix(kw)
@@ -1571,8 +1579,6 @@ def test_fuel_export_price_bills_the_split():
 def test_report_cost_split_imports_exports():
     """split_imports_exports reports import cost and export revenue per carrier."""
     m = _export_priced_costing()
-    _set_split(m.costing.opex, "electrical", _NET_KW)
-    _propagate(m.costing)
 
     split = m.costing.report_cost(m, split_imports_exports=True).operating
     assert split.imports == pytest.approx({"electrical": 120.0})
@@ -1598,8 +1604,6 @@ def test_report_cost_split_covers_fuels():
 def test_report_cost_split_defaults_off():
     """Without the flag the split fields stay unset."""
     m = _export_priced_costing()
-    _set_split(m.costing.opex, "electrical", _NET_KW)
-    _propagate(m.costing)
 
     operating = m.costing.report_cost(m).operating
     assert operating.electricity == pytest.approx(96.0)
