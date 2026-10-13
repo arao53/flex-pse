@@ -59,6 +59,15 @@ def build_generic_renewables():
     return m
 
 
+def build_grid_connection():
+    m = plant_model()
+    m.plant.unit = fo.GridConnection(
+        max_import=5 * pyunits.kW,
+        max_export=[1 * pyunits.kW, 2 * pyunits.kW, 0 * pyunits.kW],
+    )
+    return m
+
+
 def build_digestor():
     m = plant_model()
     m.biogas = fo.SimpleGasFlow()
@@ -80,6 +89,7 @@ CONTRACT_BUILDERS = {
     "Exchanger": simple(fo.Exchanger),
     "Feed": simple(fo.Feed, outlet_names=("a",)),
     "GenericRenewables": build_generic_renewables,
+    "GridConnection": build_grid_connection,
     "Mixer": simple(fo.Mixer, inlet_names=("a", "b")),
     "Product": simple(fo.Product, inlet_names=("a",)),
     "Pump": simple(fo.Pump),

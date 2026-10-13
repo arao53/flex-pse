@@ -108,6 +108,10 @@ class CostingElement(_StrictModel):
     energy_prices: dict[str, SourcedPrice] | None = _like(
         CostingConfig, "energy_prices"
     )
+    export_prices: dict[str, SourcedPrice] | None = _like(
+        CostingConfig, "export_prices"
+    )
+    decomposition_type: str | None = _like(CostingConfig, "decomposition_type")
     currency: str = _like(CostingConfig, "currency")
     dr: DRConfig | None = _like(CostingConfig, "dr")
     consumption_estimate: dict[Literal["electric", "gas"], float] | None = _like(

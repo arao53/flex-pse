@@ -84,7 +84,7 @@ def parse_quantity(value, *, strict: bool = True):
 
     Args:
         value: Either a ``{"value": ..., "units": ...}`` mapping (a list
-            ``value`` gives a list of quantities), a
+            ``value`` gives a list of quantities), a list of such mappings, a
             ``"<number> <units>"`` string (the form ``TimeConfig.time_step``
             uses), or any other value, which is returned unchanged.
         strict: Whether a string with no numeric magnitude is an error. Pass
@@ -104,6 +104,14 @@ def parse_quantity(value, *, strict: bool = True):
         if isinstance(value["value"], list):
             return [item * units for item in value["value"]]
         return value["value"] * units
+    if (
+        isinstance(value, list)
+        and value
+        and all(
+            isinstance(item, dict) and set(item) == {"value", "units"} for item in value
+        )
+    ):
+        return [parse_quantity(item) for item in value]
     if isinstance(value, str):
         magnitude, _, units = value.strip().partition(" ")
         try:
@@ -500,19 +508,26 @@ def _build_costing(model, element: CostingElement, ctx: BuildContext):
     Returns:
         The constructible ``FlexCosting`` block.
     """
-    prices = {
-        name: parse_quantity(
-            {
-                "value": resolve_sources(price.value, ctx.base_dir),
-                "units": price.units,
-            }
-        )
-        for name, price in (element.energy_prices or {}).items()
-    }
+
+    def quantities(prices):
+        return {
+            name: parse_quantity(
+                {
+                    "value": resolve_sources(price.value, ctx.base_dir),
+                    "units": price.units,
+                }
+            )
+            for name, price in (prices or {}).items()
+        }
+
+    import_prices = quantities(element.energy_prices)
+    export_prices = quantities(element.export_prices)
     return FlexCosting(
         time_block=model.time_block,
         tariff_file=_resolve_tariff_source(element.tariff_source, ctx.base_dir),
-        energy_prices=prices or None,
+        energy_prices=import_prices or None,
+        export_prices=export_prices or None,
+        decomposition_type=element.decomposition_type,
         currency=element.currency,
         dr_event_file=_resolve_source(
             None if element.dr is None else element.dr.events_source, ctx.base_dir

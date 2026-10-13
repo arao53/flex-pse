@@ -456,13 +456,12 @@ def _offload(elements: list, data_dir, inline_limit: int, base_dir) -> None:
 
     for element in elements:
         if element.kind == "costing":
-            for carrier, price in (element.energy_prices or {}).items():
-                if isinstance(price.value, list):
-                    source = write(
-                        element.name, f"energy_prices.{carrier}", price.value
-                    )
-                    if source is not None:
-                        price.value = SourceRef(source=source)
+            for field in ("energy_prices", "export_prices"):
+                for carrier, price in (getattr(element, field) or {}).items():
+                    if isinstance(price.value, list):
+                        source = write(element.name, f"{field}.{carrier}", price.value)
+                        if source is not None:
+                            price.value = SourceRef(source=source)
         elif element.kind == "dispatch" and isinstance(element.values, list):
             source = write(".".join(element_target(element)), "values", element.values)
             if source is not None:
