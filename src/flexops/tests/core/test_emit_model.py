@@ -428,6 +428,49 @@ def test_long_list_without_data_dir_warns_and_stays_inline():
 
 
 @pytest.mark.unit
+def test_export_prices_and_decomposition_type_are_emitted():
+    m = base_model(
+        export_prices={"electrical": 0.05 * USD_PER_KWH}, decomposition_type="linear"
+    )
+
+    costing = elements(emit_quietly(m), "costing")["costing"]
+
+    assert costing.export_prices["electrical"].value == 0.05
+    assert costing.decomposition_type == "linear"
+
+
+@pytest.mark.unit
+def test_long_export_prices_go_to_a_gzipped_sidecar(tmp_path):
+    m = base_model(export_prices={"electrical": [0.05 * USD_PER_KWH] * 3})
+
+    spec = emit_quietly(m, data_dir=tmp_path / "data", inline_limit=2)
+
+    ref = elements(spec, "costing")["costing"].export_prices["electrical"].value
+    assert ref.source == "data/costing.export_prices.electrical.json.gz"
+    data = json.loads(gzip.decompress((tmp_path / ref.source).read_bytes()))
+    assert data == [0.05, 0.05, 0.05]
+
+
+@pytest.mark.unit
+def test_per_period_limit_series_round_trips(tmp_path):
+    m = base_model()
+    rate = pyunits.m**3 / pyunits.hr
+    limits = [float(i + 1) * rate for i in range(len(m.time_block.time_index))]
+    m.p.feed = fo.Feed(
+        property_package=m.properties, outlet_names=("a",), max_withdrawal=limits
+    )
+
+    spec = emit_quietly(m)
+    dump_spec(spec, tmp_path / "spec.json")
+
+    options = elements(spec, "unit")["p.feed"].construction_options
+    assert [item["units"] for item in options["max_withdrawal"]] == ["m^3/h"] * len(
+        limits
+    )
+    assert_models_equivalent(m, build_model(tmp_path / "spec.json"))
+
+
+@pytest.mark.unit
 def test_emit_deterministic(tmp_path):
     m = base_model()
     m.p.tank = fo.Tank(property_package=m.properties)

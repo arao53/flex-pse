@@ -211,6 +211,18 @@ def test_parse_quantity_mapping_and_string_forms():
 
 
 @pytest.mark.unit
+def test_parse_quantity_list_of_mappings_gives_a_list_of_quantities():
+    """A list of {value, units} mappings (a per-period series) parses item-wise."""
+    parsed = parse_quantity(
+        [{"value": 1.0, "units": "kW"}, {"value": 2, "units": "MW"}]
+    )
+    assert [pyo.value(pyunits.convert(q, pyunits.kW)) for q in parsed] == [
+        pytest.approx(1.0),
+        pytest.approx(2000.0),
+    ]
+
+
+@pytest.mark.unit
 def test_parse_quantity_non_numeric_string_strict_raises():
     """strict=True (the default) rejects a string with no numeric magnitude."""
     with pytest.raises(FlexConfigError, match="Could not read"):
