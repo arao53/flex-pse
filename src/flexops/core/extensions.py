@@ -10,6 +10,7 @@ import importlib.metadata
 
 from flexcore.exceptions import FlexConfigError
 from flexops.core.serialize import to_jsonable
+from flexops.logic._records import suppress_logic_records
 
 
 def extension(fn):
@@ -17,8 +18,9 @@ def extension(fn):
 
     Calling the decorated function records ``{"entry_point", "options", "name"}``
     on ``model._flex_extensions`` (so ``emit_model`` writes it back), then runs
-    it. The name is ``fn.__name__``, numbered ``_2``, ``_3`` ... on repeated
-    calls; pass ``_name=`` to pin it.
+    it. Logic helpers it calls record nothing, since rebuilding re-runs it. The
+    name is ``fn.__name__``, numbered ``_2``, ``_3`` ... on repeated calls; pass
+    ``_name=`` to pin it.
 
     Args:
         fn: A function taking the model and keyword options.
@@ -47,7 +49,10 @@ def extension(fn):
             count += 1
             unique = f"{name}_{count}"
         records.append({"entry_point": entry_point, "options": options, "name": unique})
-        return fn(model, **options)
+        # Run the extension with logic recording suppressed, so it doesn't record
+        # anything that will be re-run when the spec is rebuilt.
+        with suppress_logic_records():
+            return fn(model, **options)
 
     wrapper.flex_extension = True
     return wrapper

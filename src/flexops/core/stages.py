@@ -18,7 +18,6 @@ from flexcore.config.spec import (
     PACKAGE_REF,
     Connection,
     CostingElement,
-    DispatchElement,
     Element,
     FlowsheetSpec,
     SurrogateElement,
@@ -30,6 +29,7 @@ from flexcore.config.spec import (
 from flexcore.exceptions import FlexConfigError
 from flexops import logic
 from flexops.core.extensions import resolve_extension
+from flexops.core.fixing import FixReport, apply_state
 from flexops.core.network_block import NetworkBlock
 from flexops.core.ops_block import OpsBlockData
 from flexops.core.plant_block import PlantBlock
@@ -65,6 +65,9 @@ LOGIC_ORDER: tuple[str, ...] = (
 
 POST_TOPOLOGY_STAGES = STAGES[2:]
 """Stages that can run on an already-built model."""
+
+APPLY_STAGES: tuple[str, ...] = ("surrogates", "state")
+"""Stages apply_spec runs on a live model; every mutable kind builds in one."""
 
 ENERGY_RELATION = f"{nm.POWER_ELECTRICAL}_relation"
 """Name of the relation holding a unit's electrical energy relationship."""
@@ -396,18 +399,28 @@ def _pairs(model, ctx: BuildContext, first: str, second: str) -> list[tuple]:
 
 
 def stage_state(model, spec: FlowsheetSpec, ctx: BuildContext) -> None:
-    """Apply each dispatch element to its unit.
+    """Apply the fix, unfix and dispatch elements together, all or nothing.
+
+    The :class:`~flexops.core.fixing.FixReport` is kept as
+    ``model._flex_fix_report``.
 
     Args:
-        model: The model with built units.
-        spec: The validated spec.
+        model: The model with built units and logic.
+        spec: The validated spec; its fix_on_violation and fix_tolerance are the
+            defaults.
         ctx: The shared build context.
 
     Raises:
-        FlexConfigError: If a dispatch variable or source is invalid.
+        FlexConfigError: If an element doesn't fit the model, two elements
+            conflict, or a value violates bounds or domain under ``"error"``.
     """
-    for element in elements_of(spec, "dispatch"):
-        _apply_dispatch(model, element, ctx)
+    model._flex_fix_report = apply_state(
+        model,
+        elements_of(spec, "fix", "unfix", "dispatch"),
+        base_dir=ctx.base_dir,
+        on_violation=spec.fix_on_violation,
+        tolerance=spec.fix_tolerance,
+    )
 
 
 def stage_extensions(model, spec: FlowsheetSpec, ctx: BuildContext) -> None:
@@ -856,55 +869,34 @@ def _apply_surrogate(model, element: SurrogateElement, ctx: BuildContext) -> Non
         apply_relation_spec(member, relation, relation_name=element.relation)
 
 
-def _apply_dispatch(model, element: DispatchElement, ctx: BuildContext) -> None:
-    """Set and fix a variable of every block of a unit to a dispatch series.
-
-    Args:
-        model: The built model.
-        element: The dispatch element.
-        ctx: The shared build context.
-
-    Raises:
-        FlexConfigError: If the unit or variable is missing, or the values cannot
-            be read as a time-indexed series.
-    """
-    members = _members(model, ctx, element.unit)
-    for member in members:
-        if member.find_component(element.variable) is None:
-            raise FlexConfigError(
-                f"dispatch names variable {element.variable!r}, which is not on "
-                f"{member.name!r}.",
-                field="variable",
-                value=element.variable,
-            )
-    raw = resolve_sources(element.values, ctx.base_dir)
-    # JSON keys are always strings; integer time indices come back as "0".
-    series = (
-        dict(enumerate(raw))
-        if isinstance(raw, list)
-        else {int(k) if k.lstrip("-").isdigit() else k: v for k, v in raw.items()}
-    )
-    for member in members:
-        member.set_external_dispatch(
-            member.find_component(element.variable), series, fix=element.fix
-        )
-
-
-APPLIERS = {"surrogate": _apply_surrogate, "dispatch": _apply_dispatch}
-"""Mutable element kind -> function applying one such element to a model."""
-
-
-def apply_spec(model, elements) -> None:
+def apply_spec(
+    model,
+    elements,
+    *,
+    on_violation: str | None = None,
+    tolerance: float | None = None,
+) -> FixReport:
     """Apply mutable spec elements to a built model, without rebuilding it.
+
+    Fix, unfix and dispatch elements are checked and applied as one batch. Their
+    conflicts with earlier state are not errors: a later apply is an update.
 
     Args:
         model: The built model, updated in place.
         elements: Element models or dicts, validated as spec elements.
+        on_violation: Fix policy; omitted means the built spec's
+            fix_on_violation, or ``"error"``.
+        tolerance: Fix bounds tolerance; omitted means the built spec's
+            fix_tolerance, or ``1e-9``.
+
+    Returns:
+        The :class:`~flexops.core.fixing.FixReport` of the fix, unfix and
+        dispatch elements.
 
     Raises:
         FlexConfigError: If any element's kind is immutable (checked before
-            anything is applied), a unit is not on the model, or an element
-            fails to apply.
+            anything is applied), a unit or variable is not on the model, or an
+            element fails to apply.
     """
     parsed = TypeAdapter(list[Element]).validate_python(elements)
     for element in parsed:
@@ -915,9 +907,29 @@ def apply_spec(model, elements) -> None:
                 field="kind",
                 value=element.kind,
             )
+    spec = getattr(model, "_flex_spec", None)
+    if on_violation is None:
+        on_violation = "error" if spec is None else spec.fix_on_violation
+    if tolerance is None:
+        tolerance = 1e-9 if spec is None else spec.fix_tolerance
+    batch = {
+        stage: [e for e in parsed if KINDS[e.kind][0] == stage]
+        for stage in APPLY_STAGES
+    }
     ctx = BuildContext(base_dir=None)
+    for element in batch["surrogates"]:
+        _apply_surrogate(model, element, ctx)
+    report = apply_state(
+        model, batch["state"], on_violation=on_violation, tolerance=tolerance
+    )
     if not hasattr(model, "_flex_applied"):
         model._flex_applied = []
-    for element in sorted(parsed, key=lambda e: list(APPLIERS).index(e.kind)):
-        APPLIERS[element.kind](model, element, ctx)
+    for element in parsed:
+        if element.kind in ("fix", "unfix"):
+            model._flex_applied = [
+                e
+                for e in model._flex_applied
+                if e.kind not in ("fix", "unfix") or e.variable != element.variable
+            ]
         model._flex_applied.append(element)
+    return report

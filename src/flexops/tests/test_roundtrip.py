@@ -1,8 +1,8 @@
 """Round trip: build in code, emit_model, dump JSON, build_model, compare."""
 
+import importlib
 import json
 import random
-import runpy
 import warnings
 from pathlib import Path
 
@@ -25,26 +25,38 @@ SCHEMA = (
 )
 
 
-def corpus_cases() -> list[str]:
-    """Return the corpus module names."""
-    return sorted(path.stem for path in CORPUS.glob("*.py"))
+def corpus_module(name: str):
+    """Import a corpus module, so extensions it defines can be imported by name."""
+    return importlib.import_module(f"flexops.tests.fixtures.roundtrip.{name}")
+
+
+def corpus_cases() -> list:
+    """Return each corpus module name, marked with the module's TIER (default unit)."""
+    return [
+        pytest.param(
+            path.stem,
+            marks=getattr(
+                pytest.mark, getattr(corpus_module(path.stem), "TIER", "unit")
+            ),
+        )
+        for path in sorted(CORPUS.glob("*.py"))
+    ]
 
 
 def emit_case(name: str, directory: Path):
     """Build a corpus case, emit it with warnings as errors, and dump it."""
-    case = runpy.run_path(str(CORPUS / f"{name}.py"))
-    model = case["build"]()
-    if case["EXPAND_ARCS"]:
+    case = corpus_module(name)
+    model = case.build()
+    if case.EXPAND_ARCS:
         pyo.TransformationFactory("network.expand_arcs").apply_to(model)
     with warnings.catch_warnings():
         warnings.simplefilter("error", FlexEmitWarning)
         spec = emit_model(model, data_dir=directory / "data", relative_to=directory)
     path = directory / "spec.json"
     dump_spec(spec, path)
-    return model, path, case["EXPAND_ARCS"]
+    return model, path, case.EXPAND_ARCS
 
 
-@pytest.mark.unit
 @pytest.mark.parametrize("name", corpus_cases())
 def test_corpus_case_round_trips(name, tmp_path):
     model, path, expand_arcs = emit_case(name, tmp_path)
@@ -54,7 +66,6 @@ def test_corpus_case_round_trips(name, tmp_path):
     assert_models_equivalent(model, rebuilt)
 
 
-@pytest.mark.unit
 @pytest.mark.parametrize("name", corpus_cases())
 def test_emitted_spec_matches_the_json_schema(name, tmp_path):
     _, path, _ = emit_case(name, tmp_path)
@@ -62,7 +73,6 @@ def test_emitted_spec_matches_the_json_schema(name, tmp_path):
     jsonschema.validate(json.loads(path.read_text()), json.loads(SCHEMA.read_text()))
 
 
-@pytest.mark.unit
 @pytest.mark.parametrize("name", corpus_cases())
 def test_shuffled_emitted_spec_builds_the_same_model(name, tmp_path):
     model, path, expand_arcs = emit_case(name, tmp_path)

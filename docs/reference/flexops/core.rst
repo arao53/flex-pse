@@ -142,8 +142,8 @@ because ``cost_process()`` aggregates only the terms registered when it runs.
 The logic stage builds its kinds in :data:`LOGIC_ORDER`, status first and
 cross-unit logic last.
 :func:`apply_stages` runs the post-topology stages on a model that already exists,
-and :func:`apply_spec` applies the mutable spec elements (surrogates and dispatches)
-to one.
+and :func:`apply_spec` applies the mutable spec elements (surrogates, dispatches,
+fixes and unfixes) to one.
 
 .. autodata:: STAGES
    :no-value:
@@ -152,6 +152,9 @@ to one.
    :no-value:
 
 .. autodata:: LOGIC_ORDER
+   :no-value:
+
+.. autodata:: APPLY_STAGES
    :no-value:
 
 .. autoclass:: BuildContext
@@ -163,6 +166,29 @@ to one.
 .. autofunction:: elements_of
 
 .. autofunction:: apply_relation_spec
+
+Fixing variables
+----------------
+
+.. currentmodule:: flexops.core.fixing
+
+The state stage applies ``fix``, ``unfix`` and ``dispatch`` elements as one
+batch: it plans every point, checks conflicts, bounds and domain, and only then
+changes the model (see :doc:`../../explanation/config_schema`).
+
+.. autofunction:: apply_state
+
+.. autoclass:: FixReport
+
+.. autoclass:: FixViolation
+
+.. autofunction:: element_points
+
+.. autofunction:: variable_points
+
+.. autofunction:: time_of
+
+.. autofunction:: element_label
 
 Registration
 ------------

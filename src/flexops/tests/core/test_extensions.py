@@ -38,6 +38,21 @@ def test_calling_an_extension_records_it_and_runs_it():
 
 
 @pytest.mark.unit
+def test_logic_an_extension_builds_is_not_recorded_as_logic():
+    m = dummy_time_block(3)
+    m.x = flexops.ConstantEnergyIntensityModel(
+        property_package=m.properties,
+        energy_intensity=0.5 * pyunits.kWh / pyunits.m**3,
+    )
+
+    sample_extensions.status_on_flow(m, unit="x", max_flow=5.0)
+
+    assert m.x.find_component("status") is not None
+    assert m.x.__dict__.get("_flex_logic", []) == []
+    assert [r["name"] for r in m._flex_extensions] == ["status_on_flow"]
+
+
+@pytest.mark.unit
 def test_repeated_calls_get_numbered_names_and_a_name_can_be_pinned():
     m = pump_model()
     m.y = Pump(property_package=m.properties)

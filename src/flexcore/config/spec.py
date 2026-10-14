@@ -14,7 +14,13 @@ JSON Schema, so keep them plain text.
 from pathlib import Path
 from typing import Annotated, Any, Literal
 
-from pydantic import ConfigDict, Field, PrivateAttr, model_validator
+from pydantic import (
+    ConfigDict,
+    Field,
+    PrivateAttr,
+    field_validator,
+    model_validator,
+)
 
 from flexcore.config.schema import (
     CostingConfig,
@@ -28,7 +34,7 @@ from flexcore.config.schema import (
     _StrictModel,
 )
 
-SCHEMA_VERSION = "0.1.1"
+SCHEMA_VERSION = "0.1.2"
 """str: the schema version this build writes and validates against."""
 
 KINDS: dict[str, tuple[str, bool]] = {
@@ -49,6 +55,8 @@ KINDS: dict[str, tuple[str, bool]] = {
     "conditional": ("logic", False),
     "parallel_group": ("logic", False),
     "dispatch": ("state", True),
+    "fix": ("state", True),
+    "unfix": ("state", True),
     "extension": ("extensions", False),
     "objective": ("costing", False),
 }
@@ -301,6 +309,96 @@ class DispatchElement(_StrictModel):
     )
 
 
+FixPolicy = Literal["error", "warn", "skip"]
+"""What to do with a fix value outside its variable's bounds or domain."""
+
+
+def _variable_path(value: str) -> str:
+    """Reject an empty path or one holding whitespace."""
+    if not value or any(c.isspace() for c in value):
+        raise ValueError(
+            f"variable {value!r} must be a non-empty path with no spaces, e.g. "
+            "'plant.pump.flow_in[3]'."
+        )
+    return value
+
+
+class FixElement(_StrictModel):
+    """Fix one or more model variables, named by their path from the model root."""
+
+    kind: Literal["fix"]
+    name: str | None = Field(
+        default=None, description="Optional id, used in error messages."
+    )
+    variable: str = Field(
+        description="Pyomo ComponentUID path from the model root, e.g. "
+        "'plant.pump.flow_in', 'plant.pump.flow_in[3]', 'plant.ro[*].status' or "
+        "'plant.u.flow_vol_phase[*,Liq]'. A star (*) matches every index in that "
+        "position."
+    )
+    value: float | list[float] | dict[str, float] | SourceRef = Field(
+        description="One number for every matched point; a list with one number "
+        "per time point (or per entry of at); a {time index: value} mapping; or a "
+        "$source file holding either."
+    )
+    units: str | None = Field(
+        default=None,
+        description="Units of value; omitted means each variable's own units.",
+    )
+    at: list[int] | None = Field(
+        default=None,
+        description="Only fix these time indices; omitted means every matched point.",
+    )
+    on_violation: FixPolicy | None = Field(
+        default=None,
+        description="What to do when a value is outside the variable's bounds or "
+        "domain: 'error' raises and fixes nothing; 'warn' fixes out-of-bounds "
+        "points anyway and warns; 'skip' leaves violating points unfixed, fixes "
+        "the rest, and warns. Omitted means the spec's fix_on_violation.",
+    )
+    tolerance: float | None = Field(
+        default=None,
+        ge=0,
+        description="Absolute tolerance for the bounds check, in the variable's "
+        "units. Omitted means the spec's fix_tolerance.",
+    )
+
+    @field_validator("variable")
+    @classmethod
+    def _variable_is_a_path(cls, value: str) -> str:
+        """Reject an empty path or one holding whitespace."""
+        return _variable_path(value)
+
+    @model_validator(mode="after")
+    def _list_matches_at(self) -> "FixElement":
+        """Require a list value to have one entry per entry of ``at``."""
+        if isinstance(self.value, list) and self.at is not None:
+            if len(self.value) != len(self.at):
+                raise ValueError(
+                    f"fix {self.variable!r}: value has {len(self.value)} entries "
+                    f"but at has {len(self.at)}; give one value per entry of at."
+                )
+        return self
+
+
+class UnfixElement(_StrictModel):
+    """Unfix one or more model variables (e.g. a parameter a unit fixes by default)."""
+
+    kind: Literal["unfix"]
+    name: str | None = Field(
+        default=None, description="Optional id, used in error messages."
+    )
+    variable: str = Field(
+        description="ComponentUID path from the model root, as for fix."
+    )
+
+    @field_validator("variable")
+    @classmethod
+    def _variable_is_a_path(cls, value: str) -> str:
+        """Reject an empty path or one holding whitespace."""
+        return _variable_path(value)
+
+
 class Quantity(_StrictModel):
     """A number with units, e.g. {"value": 0.5, "units": "kWh/m^3"}."""
 
@@ -512,6 +610,8 @@ Element = Annotated[
     | ConditionalElement
     | ParallelGroupElement
     | DispatchElement
+    | FixElement
+    | UnfixElement
     | ExtensionElement
     | ObjectiveElement,
     Field(discriminator="kind"),
@@ -553,6 +653,8 @@ LOGIC_KINDS = (
 TARGET_FIELDS: dict[str, tuple[str, ...]] = {
     "surrogate": ("unit", "relation"),
     "dispatch": ("unit", "variable"),
+    "fix": ("variable",),
+    "unfix": ("variable",),
     "ramp": ("unit", "variable", "component_name"),
     "status": ("unit",),
     "startup_shutdown": ("unit",),
@@ -634,6 +736,16 @@ class FlowsheetSpec(_StrictModel):
     )
     elements: list[Element] = Field(
         description="Every element of the flowsheet; order is irrelevant."
+    )
+    fix_on_violation: FixPolicy = Field(
+        default="error",
+        description="Default bounds/domain policy for every fix element that "
+        "doesn't set its own.",
+    )
+    fix_tolerance: float = Field(
+        default=1e-9,
+        ge=0,
+        description="Default absolute tolerance for the fix bounds check.",
     )
 
     _base_dir: Path | None = PrivateAttr(default=None)

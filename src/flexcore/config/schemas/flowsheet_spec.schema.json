@@ -513,6 +513,127 @@
       "title": "ExtensionElement",
       "type": "object"
     },
+    "FixElement": {
+      "additionalProperties": false,
+      "description": "Fix one or more model variables, named by their path from the model root.",
+      "properties": {
+        "at": {
+          "anyOf": [
+            {
+              "items": {
+                "type": "integer"
+              },
+              "type": "array"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Only fix these time indices; omitted means every matched point.",
+          "title": "At"
+        },
+        "kind": {
+          "const": "fix",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional id, used in error messages.",
+          "title": "Name"
+        },
+        "on_violation": {
+          "anyOf": [
+            {
+              "enum": [
+                "error",
+                "warn",
+                "skip"
+              ],
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "What to do when a value is outside the variable's bounds or domain: 'error' raises and fixes nothing; 'warn' fixes out-of-bounds points anyway and warns; 'skip' leaves violating points unfixed, fixes the rest, and warns. Omitted means the spec's fix_on_violation.",
+          "title": "On Violation"
+        },
+        "tolerance": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Absolute tolerance for the bounds check, in the variable's units. Omitted means the spec's fix_tolerance.",
+          "title": "Tolerance"
+        },
+        "units": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Units of value; omitted means each variable's own units.",
+          "title": "Units"
+        },
+        "value": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "items": {
+                "type": "number"
+              },
+              "type": "array"
+            },
+            {
+              "additionalProperties": {
+                "type": "number"
+              },
+              "type": "object"
+            },
+            {
+              "$ref": "#/$defs/SourceRef"
+            }
+          ],
+          "description": "One number for every matched point; a list with one number per time point (or per entry of at); a {time index: value} mapping; or a $source file holding either.",
+          "title": "Value"
+        },
+        "variable": {
+          "description": "Pyomo ComponentUID path from the model root, e.g. 'plant.pump.flow_in', 'plant.pump.flow_in[3]', 'plant.ro[*].status' or 'plant.u.flow_vol_phase[*,Liq]'. A star (*) matches every index in that position.",
+          "title": "Variable",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "variable",
+        "value"
+      ],
+      "title": "FixElement",
+      "type": "object"
+    },
     "IOVariableSpec": {
       "additionalProperties": false,
       "description": "A declared process input or output variable of a unit.",
@@ -1224,6 +1345,41 @@
       "title": "TimeElement",
       "type": "object"
     },
+    "UnfixElement": {
+      "additionalProperties": false,
+      "description": "Unfix one or more model variables (e.g. a parameter a unit fixes by default).",
+      "properties": {
+        "kind": {
+          "const": "unfix",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional id, used in error messages.",
+          "title": "Name"
+        },
+        "variable": {
+          "description": "ComponentUID path from the model root, as for fix.",
+          "title": "Variable",
+          "type": "string"
+        }
+      },
+      "required": [
+        "kind",
+        "variable"
+      ],
+      "title": "UnfixElement",
+      "type": "object"
+    },
     "UnitCommitmentConfig": {
       "additionalProperties": false,
       "description": "Per-unit unit-commitment configuration, a validated container. Every piece is optional except status.",
@@ -1420,6 +1576,7 @@
             "dispatch": "#/$defs/DispatchElement",
             "dwell": "#/$defs/DwellElement",
             "extension": "#/$defs/ExtensionElement",
+            "fix": "#/$defs/FixElement",
             "network": "#/$defs/NetworkElement",
             "objective": "#/$defs/ObjectiveElement",
             "parallel_group": "#/$defs/ParallelGroupElement",
@@ -1432,6 +1589,7 @@
             "status": "#/$defs/StatusElement",
             "surrogate": "#/$defs/SurrogateElement",
             "time": "#/$defs/TimeElement",
+            "unfix": "#/$defs/UnfixElement",
             "unit": "#/$defs/UnitElement"
           },
           "propertyName": "kind"
@@ -1489,6 +1647,12 @@
             "$ref": "#/$defs/DispatchElement"
           },
           {
+            "$ref": "#/$defs/FixElement"
+          },
+          {
+            "$ref": "#/$defs/UnfixElement"
+          },
+          {
             "$ref": "#/$defs/ExtensionElement"
           },
           {
@@ -1498,6 +1662,24 @@
       },
       "title": "Elements",
       "type": "array"
+    },
+    "fix_on_violation": {
+      "default": "error",
+      "description": "Default bounds/domain policy for every fix element that doesn't set its own.",
+      "enum": [
+        "error",
+        "warn",
+        "skip"
+      ],
+      "title": "Fix On Violation",
+      "type": "string"
+    },
+    "fix_tolerance": {
+      "default": 1e-09,
+      "description": "Default absolute tolerance for the fix bounds check.",
+      "minimum": 0,
+      "title": "Fix Tolerance",
+      "type": "number"
     },
     "name": {
       "description": "Name of the Pyomo ConcreteModel.",

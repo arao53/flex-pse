@@ -6,6 +6,7 @@ from flexcore.nomenclature import PowerKind
 from flexops.core.build import build_model
 from flexops.core.emit import emit_model
 from flexops.core.extensions import extension
+from flexops.core.fixing import FixReport, FixViolation
 from flexops.core.network_block import NetworkBlock
 from flexops.core.plant_block import PlantBlock
 from flexops.core.registration import BoundaryKind
@@ -48,6 +49,8 @@ __all__ = [
     "Digestor",
     "Exchanger",
     "Feed",
+    "FixReport",
+    "FixViolation",
     "FlexCosting",
     "GenericRenewables",
     "GridConnection",

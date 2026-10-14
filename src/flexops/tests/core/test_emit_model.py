@@ -14,7 +14,7 @@ from pyomo.network import Arc
 import flexops as fo
 from flexcore.config.io import dump_spec
 from flexcore.exceptions import FlexConfigError, FlexEmitWarning
-from flexops import apply_spec, build_model, emit_model
+from flexops import apply_spec, build_model, emit_model, logic
 from flexops.core.stages import INTENSITY_PARAMETER
 from flexops.costing import currency_units, load_tariff
 from flexops.surrogates import MultilinearSurrogate
@@ -518,3 +518,169 @@ def test_unprocessed_costing_warns():
 
     with pytest.warns(FlexEmitWarning, match=r"costing has not run cost_process\(\)"):
         emit_model(m, check=False)
+
+
+def fixes(spec) -> dict:
+    """Return the spec's fix and unfix elements keyed by (kind, variable)."""
+    return {(el.kind, el.variable): el for el in spec.of_kind("fix", "unfix")}
+
+
+def round_trips(m, spec) -> None:
+    """Assert ``spec`` rebuilds ``m``."""
+    assert_models_equivalent(m, build_model(spec))
+
+
+@pytest.mark.unit
+def test_fix_in_code_over_the_horizon_collapses_to_one_value():
+    m = base_model()
+    m.p.pump = fo.ConstantEnergyIntensityModel(
+        property_package=m.properties, energy_intensity=INTENSITY
+    )
+    m.p.pump.flow_in.fix(2.0)
+
+    spec = emit_quietly(m)
+
+    element = fixes(spec)[("fix", "p.pump.inlet_state.flow_vol_phase[*,Liq]")]
+    assert (element.value, element.at, element.units) == (2.0, None, None)
+    round_trips(m, spec)
+
+
+@pytest.mark.unit
+def test_fix_in_code_over_the_horizon_keeps_a_varying_list():
+    m = base_model()
+    m.p.battery = fo.BatteryModel(capacity=10 * pyunits.kWh)
+    for t, value in enumerate([1.0, 2.0, 0.5]):
+        m.p.battery.power_charge[t].fix(value)
+
+    spec = emit_quietly(m)
+
+    assert fixes(spec)[("fix", "p.battery.power_charge")].value == [1.0, 2.0, 0.5]
+    round_trips(m, spec)
+
+
+@pytest.mark.unit
+def test_fix_in_code_on_some_points_uses_at():
+    m = base_model()
+    m.p.battery = fo.BatteryModel(capacity=10 * pyunits.kWh)
+    m.p.battery.power_charge[0].fix(1.0)
+    m.p.battery.power_charge[2].fix(3.0)
+
+    spec = emit_quietly(m)
+
+    element = fixes(spec)[("fix", "p.battery.power_charge")]
+    assert (element.at, element.value) == ([0, 2], [1.0, 3.0])
+    round_trips(m, spec)
+
+
+@pytest.mark.unit
+def test_fix_in_code_on_every_member_uses_a_member_wildcard():
+    m = base_model()
+    m.p.trains = pyo.Set(initialize=[0, 1, 2], ordered=True)
+    m.p.ro = fo.ConstantEnergyIntensityModel(
+        m.p.trains, property_package=m.properties, energy_intensity=INTENSITY
+    )
+    for train in m.p.ro.values():
+        flow = pyunits.m**3 / pyunits.hr
+        status = logic.add_status(train, train.flow_in, 0 * flow, 5 * flow)
+        status.fix(1)
+
+    spec = emit_quietly(m)
+
+    assert fixes(spec)[("fix", "p.ro[*].status")].value == 1.0
+    round_trips(m, spec)
+
+
+@pytest.mark.unit
+def test_fix_in_code_on_one_member_names_it():
+    m = base_model()
+    m.p.trains = pyo.Set(initialize=[0, 1], ordered=True)
+    m.p.ro = fo.ConstantEnergyIntensityModel(
+        m.p.trains, property_package=m.properties, energy_intensity=INTENSITY
+    )
+    m.p.ro[1].power_electrical.fix(4.0)
+
+    spec = emit_quietly(m)
+
+    assert ("fix", "p.ro[1].power_electrical") in fixes(spec)
+    round_trips(m, spec)
+
+
+@pytest.mark.unit
+def test_unfix_in_code_is_emitted():
+    m = base_model()
+    m.p.pump = fo.ConstantEnergyIntensityModel(
+        property_package=m.properties, energy_intensity=INTENSITY
+    )
+    m.p.pump.energy_intensity.unfix()
+
+    spec = emit_quietly(m)
+
+    assert ("unfix", "p.pump.energy_intensity") in fixes(spec)
+    round_trips(m, spec)
+
+
+@pytest.mark.unit
+def test_long_fixed_series_goes_to_a_sidecar(tmp_path):
+    m = base_model()
+    m.p.battery = fo.BatteryModel(capacity=10 * pyunits.kWh)
+    for t, value in enumerate([1.0, 2.0, 0.5]):
+        m.p.battery.power_charge[t].fix(value)
+
+    spec = emit_quietly(
+        m, data_dir=tmp_path / "data", relative_to=tmp_path, inline_limit=2
+    )
+
+    source = fixes(spec)[("fix", "p.battery.power_charge")].value.source
+    assert (tmp_path / source).is_file()
+    dump_spec(spec, tmp_path / "spec.json")
+    assert_models_equivalent(m, build_model(tmp_path / "spec.json"))
+
+
+@pytest.mark.unit
+def test_fix_from_the_spec_changed_in_code_writes_the_new_value():
+    m = build_model(
+        {
+            "schema_version": "0.1.2",
+            "name": "site",
+            "elements": [
+                {
+                    "kind": "time",
+                    "start_date": "2025-01-01",
+                    "end_date": "2025-01-01T03:00",
+                    "time_step": "1 hr",
+                },
+                {
+                    "kind": "unit",
+                    "name": "battery",
+                    "unit_model_class": "BatteryModel",
+                    "construction_options": {
+                        "capacity": {"value": 10.0, "units": "kWh"}
+                    },
+                    "property_package": None,
+                    "costing_package": None,
+                },
+                {"kind": "fix", "variable": "battery.power_charge", "value": 1.0},
+            ],
+        }
+    )
+    m.battery.power_charge[1].fix(3.0)
+    m.battery.power_charge[2].unfix()
+
+    with warnings.catch_warnings():
+        warnings.simplefilter("error", FlexEmitWarning)
+        spec = emit_model(m)
+
+    round_trips(m, spec)
+
+
+@pytest.mark.unit
+def test_bounds_changed_in_code_warn():
+    m = base_model()
+    m.p.pump = fo.ConstantEnergyIntensityModel(
+        property_package=m.properties, energy_intensity=INTENSITY
+    )
+    m.costing.cost_process()
+    m.p.pump.flow_in[0].setub(5.0)
+
+    with pytest.warns(FlexEmitWarning, match="ub"):
+        emit_model(m)

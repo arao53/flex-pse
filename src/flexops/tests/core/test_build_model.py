@@ -11,7 +11,7 @@ from pyomo.network import Arc, Port
 from pyomo.opt import assert_optimal_termination
 
 from flexcore.config.io import load_model_config, load_spec
-from flexcore.config.spec import Connection, DispatchElement
+from flexcore.config.spec import Connection, DispatchElement, UnfixElement
 from flexcore.exceptions import FlexConfigError
 from flexcore.solvers import get_solver
 from flexops import (
@@ -27,8 +27,9 @@ from flexops import (
 )
 from flexops.core import stages as stages_module
 from flexops.core.build import parse_quantity, parse_units
+from flexops.core.fixing import apply_state
 from flexops.core.ops_block import OpsBlock
-from flexops.core.stages import BuildContext, _apply_dispatch, _build_connection
+from flexops.core.stages import BuildContext, _build_connection
 from flexops.properties import PROPERTY_PACKAGES
 
 _FIXTURES = Path(__file__).parent.parent / "fixtures"
@@ -267,7 +268,7 @@ def test_apply_dispatch_unknown_variable_raises():
         kind="dispatch", unit="unit", variable="nope", values=[1.0]
     )
     with pytest.raises(FlexConfigError, match="not on"):
-        _apply_dispatch(m, element, BuildContext(base_dir=None))
+        apply_state(m, [element])
 
 
 @pytest.mark.unit
@@ -289,11 +290,27 @@ def test_apply_dispatch_applies_series(tmp_path):
         values=json.loads(series_file.read_text()),
     )
 
-    _apply_dispatch(m, element, BuildContext(base_dir=None))
+    apply_state(m, [element])
 
     for t in m.time_block.time_index:
         assert m.unit.power_electrical[t].fixed
         assert pyo.value(m.unit.power_electrical[t]) == pytest.approx(t + 1.0)
+
+
+@pytest.mark.unit
+def test_build_keeps_fix_report():
+    """build_model keeps the state stage's FixReport on the model."""
+    spec = load_spec(_CONFIG)
+    spec.elements.append(
+        UnfixElement(kind="unfix", variable="demo.surrogate.energy_intensity")
+    )
+
+    model = build_model(spec)
+
+    report = model._flex_fix_report
+    assert report.unfixed == ["demo.surrogate.energy_intensity"]
+    assert report.skipped == []
+    assert not model.demo.surrogate.energy_intensity.fixed
 
 
 def _demo_dict(**overrides) -> dict:

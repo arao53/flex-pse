@@ -1,8 +1,10 @@
 """Spec extensions used by the tests and the round-trip corpus."""
 
 import pyomo.environ as pyo
+from pyomo.environ import units as pyunits
 
 import flexops
+from flexops import logic
 
 
 @flexops.extension
@@ -37,3 +39,11 @@ def minimize_power(model, *, units: list[str]):
 def plain_function(model):
     """An undecorated function, for entry-point resolution tests."""
     return model
+
+
+@flexops.extension
+def status_on_flow(model, *, unit: str, max_flow: float):
+    """Add an on/off status to a unit's inlet flow, in m^3/hr."""
+    block = model.find_component(unit)
+    flow = pyunits.m**3 / pyunits.hr
+    logic.add_status(block, block.flow_in, 0 * flow, max_flow * flow)

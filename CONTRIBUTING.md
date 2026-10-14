@@ -69,6 +69,7 @@ AI-assisted contributions (code, docs, or issue text) are welcome, but the same 
 3. Link any related issue(s).
 4. Make sure CI passes before requesting review.
 5. Keep the scope of the PR narrow — one concern per PR.
+6. If the PR adds or changes a unit option, logic helper, element kind or spec field, update the round-trip corpus (`src/flexops/tests/fixtures/roundtrip/`) or the unit contract test, or explain in the PR why not. A new element kind is classified in `KINDS` (stage and mutability).
 
 ## Config schema versioning
 

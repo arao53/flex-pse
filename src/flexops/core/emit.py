@@ -2,20 +2,24 @@
 
 import gzip
 import json
+import math
 import re
 import warnings
 from pathlib import Path
 
 import pyomo.environ as pyo
 from pydantic import TypeAdapter
+from pyomo.core.base.componentuid import ComponentUID
 from pyomo.network import Arc
 
+from flexcore.config.io import resolve_sources
 from flexcore.config.spec import (
     SCHEMA_VERSION,
     Connection,
     DispatchElement,
     Element,
     ExtensionElement,
+    FixElement,
     FlowsheetSpec,
     NetworkElement,
     ObjectiveElement,
@@ -24,12 +28,14 @@ from flexcore.config.spec import (
     SetElement,
     SourceRef,
     SurrogateElement,
+    UnfixElement,
     element_target,
     find_unit,
 )
 from flexcore.exceptions import FlexConfigError, FlexEmitWarning
 from flexops.core.build import build_model
 from flexops.core.compare import model_differences
+from flexops.core.fixing import element_points, time_of, variable_points
 from flexops.core.network_block import NetworkBlock
 from flexops.core.ops_block import OpsBlockData
 from flexops.core.plant_block import PlantBlock
@@ -70,8 +76,8 @@ def emit_model(
         FlexEmitWarning: For anything left out of the spec: a custom surrogate,
             an objective no costing block or extension made, a long list with
             no ``data_dir``, a costing block that
-            has not run ``cost_process()``, and every difference the check
-            finds.
+            has not run ``cost_process()``, fixes that can't be found because
+            the model doesn't rebuild, and every difference the check finds.
     """
     packages, costings = _root_blocks(model)
     for name, block in costings.items():
@@ -100,6 +106,7 @@ def emit_model(
     elements += extensions
     elements += _objectives(model, costings, bool(extensions))
     base_dir = relative_to or (None if data_dir is None else Path(data_dir).parent)
+    elements += _state_elements(model, elements, base_dir)
     _offload(elements, data_dir, inline_limit, base_dir)
     spec = FlowsheetSpec(
         schema_version=SCHEMA_VERSION, name=model.name, elements=elements
@@ -339,9 +346,11 @@ def _mutable_elements(model, units: dict) -> list:
     """
     spec = getattr(model, "_flex_spec", None)
     recorded = [] if spec is None else spec.of_kind("surrogate", "dispatch")
+    applied = getattr(model, "_flex_applied", [])
     targets = {}
-    for element in [*recorded, *getattr(model, "_flex_applied", [])]:
-        targets[(element.kind, *element_target(element))] = element
+    for element in [*recorded, *applied]:
+        if element.kind in ("surrogate", "dispatch"):
+            targets[(element.kind, *element_target(element))] = element
     for unit, members in units.items():
         for element in [*_surrogates(unit, members), *_dispatches(unit, members)]:
             targets[(element.kind, *element_target(element))] = element
@@ -418,6 +427,202 @@ def _logic_elements(model, units: dict) -> list:
     return TypeAdapter(list[Element]).validate_python(found)
 
 
+def _state_elements(model, elements: list, base_dir) -> list:
+    """Return the fix and unfix elements that bring a rebuild to the model's state.
+
+    Recorded fix and unfix elements the live model still agrees with come first;
+    then every point fixed or unfixed differently from a rebuild of ``elements``
+    plus those becomes a new element.
+
+    Args:
+        model: The model.
+        elements: Every other element emitted so far.
+        base_dir: Directory the elements' file paths are relative to.
+
+    Returns:
+        The fix and unfix elements.
+
+    Warns:
+        FlexEmitWarning: If the rebuild fails, so code-made fixes can't be found.
+    """
+    spec = getattr(model, "_flex_spec", None)
+    recorded = (
+        []
+        if spec is None
+        else [(e, spec._base_dir) for e in spec.of_kind("fix", "unfix")]
+    )
+    recorded += [
+        (e, None)
+        for e in getattr(model, "_flex_applied", [])
+        if e.kind in ("fix", "unfix")
+    ]
+    kept = [
+        (
+            e
+            if e.kind == "unfix"
+            else e.model_copy(update={"value": resolve_sources(e.value, base)})
+        )
+        for e, base in recorded
+        if _agrees(model, e, base)
+    ]
+    pristine_spec = FlowsheetSpec(
+        schema_version=SCHEMA_VERSION, name=model.name, elements=[*elements, *kept]
+    )
+    pristine_spec._base_dir = None if base_dir is None else Path(base_dir)
+    try:
+        pristine = build_model(pristine_spec, expand_arcs=_arcs_expanded(model))
+    except Exception as exc:
+        warnings.warn(
+            f"fixes and unfixes made in code can't be found: rebuilding the spec "
+            f"failed ({exc})",
+            FlexEmitWarning,
+            stacklevel=3,
+        )
+        return kept
+    return kept + _code_state(model, pristine)
+
+
+def _agrees(model, element, base_dir) -> bool:
+    """Return whether every point of a recorded fix or unfix element still holds."""
+    try:
+        points = element_points(model, element, base_dir)
+    except FlexConfigError:
+        return False
+    return all(
+        (
+            not point.fixed
+            if value is None
+            else point.fixed and math.isclose(point.value, value, rel_tol=1e-12)
+        )
+        for point, value in points
+    )
+
+
+def _code_state(model, pristine) -> list:
+    """Return elements for points fixed or unfixed differently from ``pristine``."""
+    rebuilt = {
+        v.name: v for v in pristine.component_data_objects(pyo.Var, descend_into=True)
+    }
+    time_index = find_time_block(model).time_index
+    fixes, unfixes = {}, {}
+    for point in model.component_data_objects(pyo.Var, descend_into=True):
+        other = rebuilt.get(point.name)
+        if other is None:
+            continue
+        if point.fixed and point.value is not None:
+            if not other.fixed or not math.isclose(
+                point.value, other.value, rel_tol=1e-12
+            ):
+                fixes[id(point)] = point
+        elif not point.fixed and other.fixed:
+            unfixes[id(point)] = point
+    found = [
+        *_fix_groups(model, fixes.values(), time_index),
+        *_unfix_groups(model, unfixes.values()),
+    ]
+    return _merge_members(model, found)
+
+
+def _path(component, model) -> str:
+    """Return a component's ComponentUID path from the model root."""
+    return str(ComponentUID(component, context=model))
+
+
+def _with_star(point, model) -> str:
+    """Return a point's path with its time position (the first index) made ``*``."""
+    base = _path(point.parent_component(), model)
+    inner = _path(point, model)[len(base) + 1 : -1].split(",")
+    return f"{base}[{','.join(['*', *inner[1:]])}]"
+
+
+def _fix_groups(model, points, time_index) -> list[dict]:
+    """Group fixed points into fix element fields, one per variable and non-time index.
+
+    Each group also carries ``base``, its variable's path, for merging.
+    """
+    groups: dict[tuple, list] = {}
+    for point in points:
+        index = point.index()
+        timed = time_of(point, time_index) is not None
+        rest = (index[1:] if isinstance(index, tuple) else ()) if timed else None
+        groups.setdefault((id(point.parent_component()), rest), []).append(point)
+    found = []
+    for (_, rest), members in groups.items():
+        var = members[0].parent_component()
+        base = _path(var, model)
+        if rest is not None:
+            values = {time_of(p, time_index): float(p.value) for p in members}
+            times = sorted(values)
+            series = [values[t] for t in times]
+            at = None if times == list(time_index) else times
+            value = series[0] if at is None and len(set(series)) == 1 else series
+            path = _with_star(members[0], model) if rest else base
+            found.append({"variable": path, "value": value, "at": at, "base": base})
+        elif len(members) == len(var) and len({p.value for p in members}) == 1:
+            value = float(members[0].value)
+            found.append({"variable": base, "value": value, "at": None, "base": base})
+        else:
+            for p in members:
+                fields = {"variable": _path(p, model), "value": float(p.value)}
+                found.append({**fields, "at": None, "base": base})
+    return [{"kind": "fix", **fields} for fields in found]
+
+
+def _unfix_groups(model, points) -> list[dict]:
+    """Group unfixed points into unfix element fields: a whole variable, or each point.
+
+    Each group also carries ``base``, its variable's path, for merging.
+    """
+    groups: dict[int, list] = {}
+    for point in points:
+        groups.setdefault(id(point.parent_component()), []).append(point)
+    found = []
+    for members in groups.values():
+        var = members[0].parent_component()
+        base = _path(var, model)
+        whole = len(members) == len(var)
+        paths = [base] if whole else [_path(p, model) for p in members]
+        found += [{"kind": "unfix", "variable": p, "base": base} for p in paths]
+    return found
+
+
+def _merge_members(model, found: list[dict]) -> list:
+    """Merge elements that differ only in block indices into one ``*`` element.
+
+    Args:
+        model: The model.
+        found: Fix and unfix element fields, each with its variable's ``base``.
+
+    Returns:
+        The validated elements, sorted by kind and variable.
+    """
+    groups: dict[tuple, list[dict]] = {}
+    for fields in found:
+        base = fields.pop("base")
+        # Every block index in the variable's path becomes '*', e.g. ro[0] -> ro[*].
+        stars = re.sub(
+            r"\[([^\]]*)\]",
+            lambda g: "[" + ",".join(["*"] * len(g[1].split(","))) + "]",
+            base,
+        )
+        wildcard = stars + fields["variable"][len(base) :]
+        value, at = json.dumps(fields.get("value")), json.dumps(fields.get("at"))
+        groups.setdefault((fields["kind"], wildcard, value, at), []).append(fields)
+    merged = []
+    for (_, wildcard, _, _), members in groups.items():
+        covered = {
+            id(p) for f in members for p in variable_points(model, f["variable"])
+        }
+        everything = {id(p) for p in variable_points(model, wildcard)}
+        if len(members) > 1 and covered == everything:
+            members = [{**members[0], "variable": wildcard}]
+        merged += members
+    merged.sort(key=lambda f: (f["kind"], f["variable"]))
+    return [
+        FixElement(**f) if f["kind"] == "fix" else UnfixElement(**f) for f in merged
+    ]
+
+
 def _objectives(model, costings: dict, extensions: bool) -> list[ObjectiveElement]:
     """Return the objective, warning about any no costing block or extension made.
 
@@ -472,8 +677,8 @@ def _objectives(model, costings: dict, extensions: bool) -> list[ObjectiveElemen
 
 
 def _slug(text: str) -> str:
-    """Replace ``.``, ``[`` and ``]`` with ``_`` for a file name."""
-    return re.sub(r"[.\[\]]", "_", text)
+    """Replace every character but letters, digits, ``_`` and ``-`` with ``_``."""
+    return re.sub(r"[^\w-]", "_", text)
 
 
 def _offload(elements: list, data_dir, inline_limit: int, base_dir) -> None:
@@ -521,6 +726,10 @@ def _offload(elements: list, data_dir, inline_limit: int, base_dir) -> None:
                         source = write(element.name, f"{field}.{carrier}", price.value)
                         if source is not None:
                             price.value = SourceRef(source=source)
+        elif element.kind == "fix" and isinstance(element.value, list):
+            source = write(element.variable, "value", element.value)
+            if source is not None:
+                element.value = SourceRef(source=source)
         elif element.kind == "dispatch" and isinstance(element.values, list):
             source = write(".".join(element_target(element)), "values", element.values)
             if source is not None:
@@ -529,14 +738,18 @@ def _offload(elements: list, data_dir, inline_limit: int, base_dir) -> None:
             element.data = walk(".".join(element_target(element)), "data", element.data)
 
 
-def _check(model, spec: FlowsheetSpec) -> None:
-    """Rebuild ``spec`` and warn once about every difference from ``model``."""
-    expand_arcs = any(
+def _arcs_expanded(model) -> bool:
+    """Return whether the model's arcs have been expanded (any arc is inactive)."""
+    return any(
         not arc.active
         for arc in model.component_data_objects(Arc, active=None, descend_into=True)
     )
+
+
+def _check(model, spec: FlowsheetSpec) -> None:
+    """Rebuild ``spec`` and warn once about every difference from ``model``."""
     try:
-        rebuilt = build_model(spec, expand_arcs=expand_arcs)
+        rebuilt = build_model(spec, expand_arcs=_arcs_expanded(model))
     except Exception as exc:
         warnings.warn(
             f"emit_model's check was skipped: rebuilding the spec failed ({exc})",

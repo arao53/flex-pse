@@ -111,6 +111,8 @@ A flowsheet as one flat list of elements, in any order. The nested
    ConditionalElement
    ParallelGroupElement
    DispatchElement
+   FixElement
+   UnfixElement
    ExtensionElement
    ObjectiveElement
    Quantity
@@ -190,6 +192,8 @@ Exceptions
 .. autoexception:: FlexDataError
 
 .. autoexception:: FlexEmitWarning
+
+.. autoexception:: FlexFixWarning
 
 Logging
 -------

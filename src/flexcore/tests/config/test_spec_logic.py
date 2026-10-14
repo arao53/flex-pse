@@ -48,8 +48,8 @@ def accepts(*elements) -> FlowsheetSpec:
 
 
 @pytest.mark.unit
-def test_schema_version_is_0_1_1():
-    assert SCHEMA_VERSION == "0.1.1"
+def test_schema_version_is_0_1_2():
+    assert SCHEMA_VERSION == "0.1.2"
 
 
 @pytest.mark.unit
@@ -296,8 +296,8 @@ def test_extension_objective_needs_no_costing_element():
 
 
 @pytest.mark.unit
-def test_a_0_1_0_spec_migrates_to_0_1_1():
+def test_a_0_1_0_spec_migrates_to_the_current_version():
     data = spec_dict(plant())
     data["schema_version"] = "0.1.0"
 
-    assert load_spec(data).schema_version == "0.1.1"
+    assert load_spec(data).schema_version == SCHEMA_VERSION

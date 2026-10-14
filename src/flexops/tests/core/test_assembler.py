@@ -226,11 +226,11 @@ def test_stage_order_matches_registry_order():
 
 
 @pytest.mark.unit
-def test_every_mutable_kind_has_an_applier():
+def test_every_mutable_kind_runs_in_a_stage_apply_spec_runs():
     """A kind marked mutable can be applied to a live model."""
     mutable = {kind for kind, (_, flag) in KINDS.items() if flag}
 
-    assert mutable == set(stages_module.APPLIERS)
+    assert {KINDS[kind][0] for kind in mutable} == set(stages_module.APPLY_STAGES)
 
 
 @pytest.mark.unit
