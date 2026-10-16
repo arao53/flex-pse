@@ -11,7 +11,7 @@ from flexcore.config.io import dump_spec
 from flexcore.config.schema import UnitCommitmentConfig
 from flexcore.exceptions import FlexEmitWarning
 from flexops import build_model, emit_model, unit_models
-from flexops.testing import assert_models_equivalent
+from flexops.core.compare import assert_models_equivalent
 
 
 def plant_model(gas: bool = False):

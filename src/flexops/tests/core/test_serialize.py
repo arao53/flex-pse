@@ -10,7 +10,8 @@ from pyomo.environ import units as pyunits
 
 from flexcore.config.schema import UnitCommitmentConfig
 from flexcore.exceptions import FlexConfigError
-from flexops.core.serialize import to_jsonable, unit_model_class_name, units_to_str
+from flexops.core.emit import unit_model_class_name
+from flexops.core.serialize import to_jsonable, units_to_str
 from flexops.core.units import parse_units
 from flexops.costing import currency_units
 from flexops.properties import SimpleAqueousFlow

@@ -69,16 +69,12 @@ AI-assisted contributions (code, docs, or issue text) are welcome, but the same 
 3. Link any related issue(s).
 4. Make sure CI passes before requesting review.
 5. Keep the scope of the PR narrow — one concern per PR.
-6. If the PR adds or changes a unit option, logic helper, element kind or spec field, update the round-trip corpus (`src/flexops/tests/fixtures/roundtrip/`) or the unit contract test, or explain in the PR why not. A new element kind is classified in `KINDS` (stage and mutability).
+6. If the PR adds or changes a unit option, logic helper, element kind or spec field, add a case to the round-trip corpus (`src/flexops/tests/fixtures/roundtrip_corpus.py`) or the unit contract test, or explain in the PR why not. A new element kind is classified in `KINDS` (stage and mutability).
 
 ## Config schema versioning
 
-- An additive, optional field is a patch bump with no migration.
-- A renamed, reshaped, newly required, or newly rejected field is a bump with a `MIGRATIONS` hook in the same PR, plus a fixture `fixtures/configs/<old version>.json`.
-- A migration that cannot translate raises `FlexConfigError` naming the field and how to fix it.
-- Regenerate `schemas/model_config.schema.json` in the same PR.
-- There is one schema, the flat `FlowsheetSpec`, versioned by `SCHEMA_VERSION`. Versions up to 0.0.4 are the old nested `ModelConfig`; the `0.0.4` entry in `MIGRATIONS` converts them to the flat spec. Keep a fixture `fixtures/specs/<old version>.json` for each flat version and regenerate `schemas/flowsheet_spec.schema.json`.
-- A new element kind must be added to `KINDS` with its stage and mutability.
+- Any change to the flat `FlowsheetSpec` bumps `SCHEMA_VERSION` and regenerates `schemas/flowsheet_spec.schema.json` in the same PR.
+- Once a spec version has been released, a breaking change also adds a `MIGRATIONS` hook from the old version; a migration that cannot translate raises `FlexConfigError` naming the field and how to fix it.
 
 ## Review & Verification by Maintainers
 

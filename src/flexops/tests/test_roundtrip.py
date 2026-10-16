@@ -1,6 +1,5 @@
 """Round trip: build in code, emit_model, dump JSON, build_model, compare."""
 
-import importlib
 import json
 import random
 import warnings
@@ -13,9 +12,9 @@ import pytest
 from flexcore.config.io import dump_spec
 from flexcore.exceptions import FlexEmitWarning
 from flexops import build_model, emit_model
-from flexops.testing import assert_models_equivalent
+from flexops.core.compare import assert_models_equivalent
+from flexops.tests.fixtures.roundtrip_corpus import CASES
 
-CORPUS = Path(__file__).parent / "fixtures" / "roundtrip"
 SCHEMA = (
     Path(__file__).parents[2]
     / "flexcore"
@@ -25,36 +24,26 @@ SCHEMA = (
 )
 
 
-def corpus_module(name: str):
-    """Import a corpus module, so extensions it defines can be imported by name."""
-    return importlib.import_module(f"flexops.tests.fixtures.roundtrip.{name}")
-
-
 def corpus_cases() -> list:
-    """Return each corpus module name, marked with the module's TIER (default unit)."""
+    """Return each corpus case name, marked with its test tier."""
     return [
-        pytest.param(
-            path.stem,
-            marks=getattr(
-                pytest.mark, getattr(corpus_module(path.stem), "TIER", "unit")
-            ),
-        )
-        for path in sorted(CORPUS.glob("*.py"))
+        pytest.param(name, marks=getattr(pytest.mark, tier))
+        for name, (_, _, tier) in CASES.items()
     ]
 
 
 def emit_case(name: str, directory: Path):
     """Build a corpus case, emit it with warnings as errors, and dump it."""
-    case = corpus_module(name)
-    model = case.build()
-    if case.EXPAND_ARCS:
+    build, expand_arcs, _ = CASES[name]
+    model = build()
+    if expand_arcs:
         pyo.TransformationFactory("network.expand_arcs").apply_to(model)
     with warnings.catch_warnings():
         warnings.simplefilter("error", FlexEmitWarning)
         spec = emit_model(model, data_dir=directory / "data", relative_to=directory)
     path = directory / "spec.json"
     dump_spec(spec, path)
-    return model, path, case.EXPAND_ARCS
+    return model, path, expand_arcs
 
 
 @pytest.mark.parametrize("name", corpus_cases())

@@ -1,7 +1,6 @@
 """Tests for the flat-spec assembler: build order, connections, apply_spec."""
 
 import copy
-import importlib.util
 import json
 import random
 import shutil
@@ -12,18 +11,16 @@ import pytest
 from pyomo.network import Arc
 from pyomo.opt import assert_optimal_termination
 
-from flexcore.config.io import load_model_config, load_spec
-from flexcore.config.spec import KINDS, STAGE_ORDER, DispatchElement, SurrogateElement
+from flexcore.config.io import load_spec
+from flexcore.config.spec import STAGE_ORDER, DispatchElement, SurrogateElement
 from flexcore.exceptions import FlexConfigError
 from flexcore.solvers import get_solver
 from flexops import apply_spec, build_model
-from flexops.core import stages as stages_module
+from flexops.core.compare import assert_models_equivalent
 from flexops.core.stages import STAGES, elements_of
-from flexops.testing import assert_models_equivalent, model_fingerprint
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
 FREEZE = FIXTURES / "api_freeze"
-SNAPSHOTS = FIXTURES / "legacy_snapshots"
 
 TIME = {
     "kind": "time",
@@ -177,60 +174,38 @@ def test_order_agnostic(make_spec, tmp_path):
 
 
 @pytest.mark.unit
-def test_flat_freeze_spec_matches_nested_freeze_config(tmp_path):
-    """The flat API-freeze spec builds the model the frozen nested JSON builds."""
-    flat_path = freeze_spec(tmp_path)
-    data = json.loads(flat_path.read_text())
-    tank = next(e for e in data["elements"] if e["name"] == "waterfacility.tank")
-    tank["connections"][0]["name"] = "arc_0"
-    flat_path.write_text(json.dumps(data))
-    shutil.copy(FREEZE / "api_freeze_config.json", tmp_path)
-    nested = build_model(load_model_config(tmp_path / "api_freeze_config.json"))
-    flat = build_model(flat_path)
-
-    assert_models_equivalent(nested, flat)
-
-
-def snapshot_cases():
-    """Return the legacy snapshot case names."""
-    return sorted(p.stem for p in SNAPSHOTS.glob("*.json"))
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize("case", snapshot_cases())
-def test_legacy_nested_builds_unchanged(case):
-    """Each nested config still builds the model recorded before the flat spec."""
-    script = SNAPSHOTS / "make_snapshots.py"
-    module_spec = importlib.util.spec_from_file_location("make_snapshots", script)
-    module = importlib.util.module_from_spec(module_spec)
-    module_spec.loader.exec_module(module)
-
-    built = model_fingerprint(module.build_case(case))
-
-    recorded = json.loads((SNAPSHOTS / f"{case}.json").read_text())
-    assert built["components"] == recorded["components"]
-    for kind in ("vars", "constraints"):
-        changed = sorted(
-            name
-            for name in recorded[kind]
-            if built[kind].get(name) != recorded[kind][name]
-        )
-        assert not changed, f"{kind} changed: {changed[:10]}"
-        assert built[kind].keys() == recorded[kind].keys()
+def test_stages_order_is_fixed():
+    """Changing the build order is a schema-contract change; this is the tripwire."""
+    assert [stage.__name__.removeprefix("stage_") for stage in STAGES] == [
+        "declare",
+        "topology",
+        "surrogates",
+        "ramping",
+        "logic",
+        "state",
+        "extensions",
+        "costing",
+    ]
 
 
 @pytest.mark.unit
 def test_stage_order_matches_registry_order():
-    """The spec registry lists stages in the order the build runs them."""
-    assert [s for s in STAGES if s in STAGE_ORDER] == list(STAGE_ORDER)
+    """The spec registry lists every stage, in the order the build runs them."""
+    names = [stage.__name__.removeprefix("stage_") for stage in STAGES]
+    assert names == list(STAGE_ORDER)
 
 
-@pytest.mark.unit
-def test_every_mutable_kind_runs_in_a_stage_apply_spec_runs():
-    """A kind marked mutable can be applied to a live model."""
-    mutable = {kind for kind, (_, flag) in KINDS.items() if flag}
+@pytest.mark.component
+def test_expand_arcs_flag(tmp_path):
+    """The default deactivates every Arc; expand_arcs=False leaves them active."""
+    path = freeze_spec(tmp_path)
+    unexpanded = build_model(path, expand_arcs=False)
+    expanded = build_model(path)
 
-    assert {KINDS[kind][0] for kind in mutable} == set(stages_module.APPLY_STAGES)
+    unexpanded_arcs = list(unexpanded.component_data_objects(Arc, descend_into=True))
+    expanded_arcs = list(expanded.component_data_objects(Arc, descend_into=True))
+    assert unexpanded_arcs and all(arc.active for arc in unexpanded_arcs)
+    assert expanded_arcs and not any(arc.active for arc in expanded_arcs)
 
 
 @pytest.mark.unit
@@ -248,25 +223,6 @@ def test_elements_of_sorts_by_depth_then_name():
     names = [el.name for el in elements_of(spec, "plant", "network")]
 
     assert names == ["a", "b", "n", "n.p"]
-
-
-@pytest.mark.unit
-def test_build_context_records_members_and_units():
-    """The context maps each unit element to its block and member blocks."""
-    spec = spec_dict(
-        {"kind": "plant", "name": "p"},
-        {"kind": "set", "name": "p.s", "values": [0, 1, 2]},
-        pump("p.ro", index="p.s"),
-        unit("p.tank"),
-    )
-
-    model = build_model(spec)
-
-    context = model._flex_build_context
-    assert context.units["p.tank"] is model.p.tank
-    assert context.members["p.tank"] == [model.p.tank]
-    assert context.members["p.ro"] == [model.p.ro[0], model.p.ro[1], model.p.ro[2]]
-    assert model._flex_spec.name == "site"
 
 
 @pytest.mark.unit

@@ -39,7 +39,7 @@ inside it:
 
 ```json
 {
-  "schema_version": "0.1.2",
+  "schema_version": "0.1.0",
   "name": "waterfacility",
   "elements": [
     {"kind": "unit", "name": "waterfacility.plant",
@@ -65,9 +65,9 @@ them, with `**` changed to `^`.
 
 ## Assembly order
 
-`build_model` runs nine stages in a fixed order
+`build_model` runs eight stages in a fixed order
 ({data}`~flexops.core.stages.STAGES`): declare, topology, surrogates,
-degradation, ramping, logic, state, extensions, costing. Each kind belongs to one
+ramping, logic, state, extensions, costing. Each kind belongs to one
 stage, and is either **mutable** (it can be changed on a built model) or not:
 
 | Kind | Stage | Mutable |
@@ -273,7 +273,7 @@ tank's `level_definition`. Conservation constraints are never registered, so
 they can never be swapped. {func}`~flexops.core.registration.iter_swapped_relations`
 reports which registered relations have been swapped.
 
-## Versioning and migrations
+## Versioning
 
 Every spec carries a mandatory `schema_version`, a semantic version string
 ({data}`~flexcore.config.spec.SCHEMA_VERSION`). On load, a missing, malformed
@@ -284,18 +284,12 @@ Their exported JSON Schema is checked in under `src/flexcore/config/schemas/`,
 so schema changes show up in review and other tools can validate against it.
 Changing the default fix policy is a breaking change and needs a new version.
 
-## Legacy nested configs
-
-The nested {class}`~flexcore.config.schema.ModelConfig` format (version 0.0.4
-and older) still loads. {func}`~flexcore.config.io.load_spec` converts it with
-{func}`~flexcore.config.convert.nested_to_spec`, copying any surrogate sidecar or
-dispatch file into the spec, so every number ends up inline.
-
 ## The FlexParameterize and FlexOps seam
 
 The spec is also the contract between FlexParameterize and FlexOps.
-FlexParameterize can either change a live FlexOps model in place or write a
-spec that rebuilds the parameterized model, and both produce the same model.
+FlexParameterize changes a live FlexOps model in place, and
+{func}`~flexops.core.emit.emit_model` writes that model out as a spec that
+rebuilds it.
 
 ## Field reference
 

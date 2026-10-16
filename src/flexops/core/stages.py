@@ -1,7 +1,6 @@
-"""The ordered build stages build_model runs, and apply_stages/apply_spec."""
+"""The ordered build stages build_model runs, and apply_spec."""
 
 import re
-from collections.abc import Sequence
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -10,7 +9,7 @@ from pydantic import TypeAdapter
 from pyomo.network import Arc, Port
 
 from flexcore import nomenclature as nm
-from flexcore.config.io import load_spec, resolve_source_path, resolve_sources
+from flexcore.config.io import resolve_source_path, resolve_sources
 from flexcore.config.schema import SurrogateSpec, SurrogateType, UnitConfig
 from flexcore.config.spec import (
     AUTO,
@@ -39,19 +38,6 @@ from flexops.costing import FlexCosting
 from flexops.properties import PROPERTY_PACKAGES
 from flexops.surrogates import surrogate_from_spec
 
-STAGES: tuple[str, ...] = (
-    "declare",
-    "topology",
-    "surrogates",
-    "degradation",
-    "ramping",
-    "logic",
-    "state",
-    "extensions",
-    "costing",
-)
-"""Build order. Changing it is a schema-contract change (see CONTRIBUTING.md)."""
-
 LOGIC_ORDER: tuple[str, ...] = (
     "status",
     "bypass",
@@ -62,12 +48,6 @@ LOGIC_ORDER: tuple[str, ...] = (
     "parallel_group",
 )
 """Order the logic stage builds kinds in, status first and cross-unit logic last."""
-
-POST_TOPOLOGY_STAGES = STAGES[2:]
-"""Stages that can run on an already-built model."""
-
-APPLY_STAGES: tuple[str, ...] = ("surrogates", "state")
-"""Stages apply_spec runs on a live model; every mutable kind builds in one."""
 
 ENERGY_RELATION = f"{nm.POWER_ELECTRICAL}_relation"
 """Name of the relation holding a unit's electrical energy relationship."""
@@ -83,15 +63,12 @@ class BuildContext:
     Attributes:
         base_dir: The spec file's directory, for relative source paths.
         expand_arcs: Whether the topology stage expands arcs.
-        units: Each unit element's name mapped to its built block (the indexed
-            component for an indexed unit).
         members: Each unit element's name mapped to its block data: one for a
             scalar unit, one per index for an indexed unit.
     """
 
     base_dir: Path | None
     expand_arcs: bool = False
-    units: dict[str, OpsBlockData] = field(default_factory=dict)
     members: dict[str, list[OpsBlockData]] = field(default_factory=dict)
 
 
@@ -168,15 +145,6 @@ def _attach(model, name: str, component) -> None:
     parent = parent_name(name)
     block = model.find_component(parent) if parent else model
     block.add_component(name.rpartition(".")[2], component)
-
-
-def _package(model, spec: FlowsheetSpec, choice: str | None, kind: str):
-    """Return the package component a unit's ``choice`` names, or None."""
-    if choice is None:
-        return None
-    return model.find_component(
-        spec.of_kind(kind)[0].name if choice == AUTO else choice
-    )
 
 
 def _members(model, ctx: BuildContext, unit_name: str) -> list[OpsBlockData]:
@@ -266,10 +234,6 @@ def stage_surrogates(model, spec: FlowsheetSpec, ctx: BuildContext) -> None:
     """
     for element in elements_of(spec, "surrogate"):
         _apply_surrogate(model, element, ctx)
-
-
-def stage_degradation(model, spec: FlowsheetSpec, ctx: BuildContext) -> None:
-    """Reserved: builds degradation terms from the spec."""
 
 
 def stage_ramping(model, spec: FlowsheetSpec, ctx: BuildContext) -> None:
@@ -479,7 +443,17 @@ def stage_costing(model, spec: FlowsheetSpec, ctx: BuildContext) -> None:
         )
 
 
-STAGE_FUNCTIONS = {name: globals()[f"stage_{name}"] for name in STAGES}
+STAGES = (
+    stage_declare,
+    stage_topology,
+    stage_surrogates,
+    stage_ramping,
+    stage_logic,
+    stage_state,
+    stage_extensions,
+    stage_costing,
+)
+"""Build order. Changing it is a schema-contract change (see CONTRIBUTING.md)."""
 
 
 def apply_relation_spec(
@@ -555,118 +529,24 @@ def apply_relation_spec(
     return False, {INTENSITY_PARAMETER: coefficient}
 
 
-def _resolve_units(model, spec: FlowsheetSpec) -> dict[str, OpsBlockData]:
-    """Map each spec unit element name to its block on ``model``.
-
-    Args:
-        model: The model holding the units.
-        spec: The spec naming them.
-
-    Returns:
-        Unit element name to built block.
-
-    Raises:
-        FlexConfigError: If a unit name does not resolve on the model.
-    """
-    units = {}
-    for element in spec.of_kind("unit"):
-        unit = model.find_component(element.name)
-        if unit is None:
-            raise FlexConfigError(
-                f"Spec unit {element.name!r} is not on the model.",
-                field=element.name,
-                value=element.name,
-            )
-        units[element.name] = unit
-    return units
-
-
-def apply_stages(model, config, stages: Sequence[str] = POST_TOPOLOGY_STAGES) -> None:
-    """Run build stages on a model that already exists, without rebuilding it.
-
-    The model must have been built by ``build_model`` (it carries
-    ``model._flex_build_context``), or have the same component layout the
-    spec describes. Stages always run in ``STAGES`` order, whatever order
-    they are passed in.
-
-    Args:
-        model: The built model to update in place.
-        config: Anything :func:`~flexcore.config.io.load_spec` accepts.
-        stages: The stage names to run.
-
-    Raises:
-        FlexConfigError: If ``stages`` names ``declare`` or ``topology`` (those
-            build the model, they can't be re-run on it); if a name is not in
-            ``STAGES``; if a spec unit is not on the model; or if ``costing`` is
-            requested on a model whose costing block has already been processed.
-    """
-    spec = load_spec(config)
-    unknown = sorted(set(stages) - set(STAGES))
-    if unknown:
-        raise FlexConfigError(
-            f"Unknown stage(s) {unknown}. Known stages: {', '.join(STAGES)}.",
-            field="stages",
-            value=unknown,
-        )
-    building = sorted(set(stages) & set(STAGES[:2]))
-    if building:
-        raise FlexConfigError(
-            f"Stage(s) {building} build the model and cannot be re-run on an "
-            f"existing one; apply_stages accepts {', '.join(POST_TOPOLOGY_STAGES)}.",
-            field="stages",
-            value=building,
-        )
-    if "costing" in stages and any(
-        model.find_component(element.name).find_component("aggregate_operating_cost")
-        is not None
-        for element in spec.of_kind("costing")
-    ):
-        raise FlexConfigError(
-            "Stage 'costing' already ran on this model; running cost_process() "
-            "twice would double-register costs.",
-            field="stages",
-            value="costing",
-        )
-    ctx = getattr(model, "_flex_build_context", None)
-    if ctx is None:
-        ctx = BuildContext(base_dir=spec._base_dir, units=_resolve_units(model, spec))
-    for name in STAGES:
-        if name in stages:
-            STAGE_FUNCTIONS[name](model, spec, ctx)
-
-
 def _resolve_source(source, base_dir):
-    """Resolve a file path against the config directory, passing tags through.
+    """Resolve every file path in a source of any shape, passing tags through.
 
     Args:
-        source: A path or tag as written in the config, or None.
+        source: A path or tag, a list of them, a mapping of utility to one, or None.
         base_dir: The config file's directory, or None.
 
     Returns:
-        The resolved path string, or ``source`` unchanged when it is None or not
-        a ``.json``/``.csv`` file name.
-    """
-    # A source may name a historian tag rather than a file; only resolve files.
-    if source is None or not source.lower().endswith((".json", ".csv")):
-        return source
-    return str(resolve_source_path(source, base_dir))
-
-
-def _resolve_tariff_source(source, base_dir):
-    """Resolve every file path in a ``tariff_source`` of any shape.
-
-    Args:
-        source: A string, list of strings, mapping of utility to string, or None.
-        base_dir: The config file's directory, or None.
-
-    Returns:
-        ``source`` with the same shape and each file path resolved.
+        ``source`` with the same shape and each ``.json``/``.csv`` path resolved.
     """
     if isinstance(source, list):
         return [_resolve_source(item, base_dir) for item in source]
     if isinstance(source, dict):
         return {key: _resolve_source(item, base_dir) for key, item in source.items()}
-    return _resolve_source(source, base_dir)
+    # A source may name a historian tag rather than a file; only resolve files.
+    if source is None or not source.lower().endswith((".json", ".csv")):
+        return source
+    return str(resolve_source_path(source, base_dir))
 
 
 def _build_costing(model, element: CostingElement, ctx: BuildContext):
@@ -696,7 +576,7 @@ def _build_costing(model, element: CostingElement, ctx: BuildContext):
     export_prices = quantities(element.export_prices)
     return FlexCosting(
         time_block=model.time_block,
-        tariff_file=_resolve_tariff_source(element.tariff_source, ctx.base_dir),
+        tariff_file=_resolve_source(element.tariff_source, ctx.base_dir),
         energy_prices=import_prices or None,
         export_prices=export_prices or None,
         decomposition_type=element.decomposition_type,
@@ -721,7 +601,8 @@ def _build_unit(model, spec: FlowsheetSpec, element: UnitElement, ctx: BuildCont
         ("costing_package", "costing", element.costing_package),
     ):
         if choice is not None:
-            runtime[key] = _package(model, spec, choice, kind)
+            name = spec.of_kind(kind)[0].name if choice == AUTO else choice
+            runtime[key] = model.find_component(name)
     unit_config = UnitConfig(
         unit_model_class=element.unit_model_class,
         construction_options=_with_packages(model, element.construction_options),
@@ -732,7 +613,6 @@ def _build_unit(model, spec: FlowsheetSpec, element: UnitElement, ctx: BuildCont
     block = OpsBlockData.build_from_config(unit_config, index_set=index_set, **runtime)
     _attach(model, element.name, block)
     block = model.find_component(element.name)
-    ctx.units[element.name] = block
     ctx.members[element.name] = list(block.values()) if index_set else [block]
 
 
@@ -745,11 +625,6 @@ def _with_packages(model, value):
     if isinstance(value, list):
         return [_with_packages(model, item) for item in value]
     return value
-
-
-def _slug(text: str) -> str:
-    """Drop ``[...]`` and ``{i}`` from a path and join its segments with ``_``."""
-    return re.sub(r"\[[^\]]*\]|\{i\}", "", text).replace(".", "_")
 
 
 def _port(model, ctx: BuildContext, unit_name: str, path: str):
@@ -768,11 +643,6 @@ def _port(model, ctx: BuildContext, unit_name: str, path: str):
     return port
 
 
-def _fill(template: str, member) -> str:
-    """Put an index member into a ``{i}`` template; None leaves it unchanged."""
-    return template if member is None else template.replace("{i}", str(member))
-
-
 def _build_connection(
     model, unit_name: str, conn: Connection, ctx: BuildContext
 ) -> None:
@@ -787,19 +657,28 @@ def _build_connection(
     Raises:
         FlexConfigError: If a port is missing, or the arc's name is taken.
     """
-    source_unit = ctx.units[unit_name]
+    source_unit = model.find_component(unit_name)
     if conn.index is not None:
         index_set = model.find_component(conn.index)
     else:
         index_set = source_unit.index_set() if source_unit.is_indexed() else None
-    destination_unit, destination_port = find_unit(ctx.units, conn.to)
-    parent = _common_parent(unit_name, destination_unit)
+    destination_unit, destination_port = find_unit(ctx.members, conn.to)
+    shared = []
+    for a, b in zip(
+        unit_name.split(".")[:-1], destination_unit.split(".")[:-1], strict=False
+    ):
+        if a != b:
+            break
+        shared.append(a)
+    parent = ".".join(shared)
     block = model.find_component(parent) if parent else model
     start = len(parent) + 1 if parent else 0
-    name = conn.name or _slug(
+    derived = (
         f"{unit_name[start:]}_{conn.port}_to_{destination_unit[start:]}"
         f"_{destination_port}"
     )
+    # Drop indices and {i} so the derived name is a plain Pyomo name.
+    name = conn.name or re.sub(r"\[[^\]]*\]|\{i\}", "", derived).replace(".", "_")
     if block.find_component(name) is not None:
         raise FlexConfigError(
             f"Cannot name the arc {name!r} on {parent or 'the model'!r}: that name "
@@ -813,8 +692,8 @@ def _build_connection(
         source_template = f"{unit_name}[{{i}}].{conn.port}"
     endpoints = {
         member: (
-            _port(model, ctx, unit_name, _fill(source_template, member)),
-            _port(model, ctx, destination_unit, _fill(conn.to, member)),
+            _port(model, ctx, unit_name, source_template.replace("{i}", str(member))),
+            _port(model, ctx, destination_unit, conn.to.replace("{i}", str(member))),
         )
         for member in ([None] if index_set is None else list(index_set))
     }
@@ -835,18 +714,6 @@ def _build_connection(
             doc=conn.doc,
         )
     block.add_component(name, arc)
-
-
-def _common_parent(first: str, second: str) -> str:
-    """Return the deepest dotted path that is a parent of both unit names."""
-    shared = []
-    for a, b in zip(
-        parent_name(first).split("."), parent_name(second).split("."), strict=False
-    ):
-        if a != b:
-            break
-        shared.append(a)
-    return ".".join(shared)
 
 
 def _apply_surrogate(model, element: SurrogateElement, ctx: BuildContext) -> None:
@@ -912,16 +779,12 @@ def apply_spec(
         on_violation = "error" if spec is None else spec.fix_on_violation
     if tolerance is None:
         tolerance = 1e-9 if spec is None else spec.fix_tolerance
-    batch = {
-        stage: [e for e in parsed if KINDS[e.kind][0] == stage]
-        for stage in APPLY_STAGES
-    }
     ctx = BuildContext(base_dir=None)
-    for element in batch["surrogates"]:
-        _apply_surrogate(model, element, ctx)
-    report = apply_state(
-        model, batch["state"], on_violation=on_violation, tolerance=tolerance
-    )
+    for element in parsed:
+        if element.kind == "surrogate":
+            _apply_surrogate(model, element, ctx)
+    state = [e for e in parsed if e.kind != "surrogate"]
+    report = apply_state(model, state, on_violation=on_violation, tolerance=tolerance)
     if not hasattr(model, "_flex_applied"):
         model._flex_applied = []
     for element in parsed:

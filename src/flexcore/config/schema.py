@@ -1,11 +1,8 @@
 """The versioned flex-pse config schema (pydantic v2, the schema authority).
 
-A whole flex-pse model and run are built from a single version-controlled
-config artifact (``flexops.build_model(config)``): the TimeBlock,
-properties, costing, and the network/plant/unit tree all come from one
-:class:`ModelConfig`. These pydantic models are the **authority** for that
-config; JSON is the canonical and only on-disk format (see
-:mod:`flexcore.config.io`).
+These are the shared building blocks of the flat
+:class:`~flexcore.config.spec.FlowsheetSpec`; JSON is the canonical and only
+on-disk format (see :mod:`flexcore.config.io`).
 
 Every field carries a ``description`` (it renders into the docs) and every model
 forbids unknown keys (an undocumented key does not get to exist). Only the
@@ -18,22 +15,9 @@ line-break art — rendering is the documentation builder's job.
 """
 
 import enum
-from pathlib import Path
 from typing import Any, Literal
 
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    NonNegativeFloat,
-    PrivateAttr,
-    model_validator,
-)
-
-CURRENT_SCHEMA_VERSION = "0.0.4"
-"""str: the last nested-format version. New configs use the flat spec's
-``flexcore.config.spec.SCHEMA_VERSION``; this stays until flexparameterize
-writes flat specs."""
+from pydantic import BaseModel, ConfigDict, Field, NonNegativeFloat, model_validator
 
 
 class _StrictModel(BaseModel):
@@ -95,14 +79,6 @@ class SurrogateSpec(_StrictModel):
         "Opaque to the schema; see the flexops.surrogates reference page for "
         "each class's data contract.",
     )
-    source: str | None = Field(
-        default=None,
-        description="Optional path to a JSON file supplying this "
-        "relationship's data, for a relationship too large to inline or not "
-        "expressible inline at all. A relative path resolves against the "
-        "directory of the config file that names it. Anything the file "
-        "supplies replaces what is written inline here.",
-    )
     provenance: dict[str, Any] = Field(
         default_factory=dict,
         description="Free-form fit metadata (metrics, data window, versions).",
@@ -135,57 +111,6 @@ class UnitCommitmentConfig(_StrictModel):
         description="Whether the unit has an on/off status binary (a tank sets "
         "this False).",
     )
-    startup_shutdown: bool = Field(
-        default=False,
-        description="Not yet built from config; must be left at its default. "
-        "Whether to build startup/shutdown transition logic.",
-    )
-    dwell: bool = Field(
-        default=False,
-        description="Not yet built from config; must be left at its default. "
-        "Whether to build minimum up/down-time (dwell) constraints.",
-    )
-    min_up: int | None = Field(
-        default=None,
-        description="Not yet built from config; must be left at its default. "
-        "Minimum number of steps the unit must stay up once started.",
-    )
-    min_down: int | None = Field(
-        default=None,
-        description="Not yet built from config; must be left at its default. "
-        "Minimum number of steps the unit must stay down once stopped.",
-    )
-    delays: dict[str, Any] | None = Field(
-        default=None,
-        description="Not yet built from config; must be left at its default. "
-        "Upstream-linked startup-delay specification.",
-    )
-    conditional: dict[str, Any] | None = Field(
-        default=None,
-        description="Not yet built from config; must be left at its default. "
-        "Conditional status implications between units.",
-    )
-
-    @model_validator(mode="after")
-    def _only_supported_fields(self) -> "UnitCommitmentConfig":
-        """Reject fields the builder does not read, so none is silently ignored."""
-        defaults = {
-            "startup_shutdown": False,
-            "dwell": False,
-            "min_up": None,
-            "min_down": None,
-            "delays": None,
-            "conditional": None,
-        }
-        unsupported = [n for n, d in defaults.items() if getattr(self, n) != d]
-        if unsupported:
-            names = ", ".join(f"unit_commitment.{n}" for n in unsupported)
-            raise ValueError(
-                f"{names} is not built from config yet (planned for schema "
-                "0.1.0); remove it, or build this logic in code with "
-                "flexops.logic.add_startup_shutdown."
-            )
-        return self
 
 
 class PropertyPackageSpec(_StrictModel):
@@ -229,53 +154,6 @@ class UnitConfig(_StrictModel):
     external_dispatch: ExternalDispatchSpec | None = Field(
         default=None,
         description="Optional external (DERMS) dispatch source for the unit.",
-    )
-    property_package: str | None = Field(
-        default="auto",
-        description="Which entry of ModelConfig.properties this unit uses. 'auto' "
-        "means the model's only property package (an error if it has several); "
-        "null means the unit gets no property package.",
-    )
-    costing: bool = Field(
-        default=True,
-        description="Whether this unit is attached to the model's costing block. "
-        "False builds it with no costing package, so none of its power or prices "
-        "are costed.",
-    )
-
-
-class ArcSpec(_StrictModel):
-    """A directed connection between two unit (or plant) ports."""
-
-    source: str = Field(description="Source endpoint as a 'unit.port' string.")
-    destination: str = Field(
-        description="Destination endpoint as a 'unit.port' string."
-    )
-
-
-class PlantConfig(_StrictModel):
-    """A named collection of unit models and the arcs between them."""
-
-    name: str = Field(description="Human-readable plant name.")
-    units: dict[str, UnitConfig] = Field(
-        description="Units of the plant, keyed by their attribute name."
-    )
-    arcs: list[ArcSpec] = Field(
-        default_factory=list,
-        description="Arcs connecting unit ports within the plant.",
-    )
-
-
-class NetworkConfig(_StrictModel):
-    """A named collection of plants and the inter-plant arcs between them."""
-
-    name: str = Field(description="Human-readable network name.")
-    plants: dict[str, PlantConfig] = Field(
-        description="Plants of the network, keyed by their attribute name."
-    )
-    arcs: list[ArcSpec] = Field(
-        default_factory=list,
-        description="Arcs connecting plant ports across the network.",
     )
 
 
@@ -421,68 +299,5 @@ class CostingConfig(_StrictModel):
             raise ValueError(
                 "costing needs a pricing source: set tariff_source, or give at "
                 "least one entry in energy_prices."
-            )
-        return self
-
-
-# Architecture references: the config artifact is plan/01_architecture.md §2.3.
-class ModelConfig(_StrictModel):
-    """Legacy nested format; new specs use flexcore.config.spec.FlowsheetSpec."""
-
-    schema_version: str = Field(
-        pattern=r"^\d+\.\d+\.\d+$",
-        description="Semantic schema version of this config, an X.Y.Z string; "
-        "mandatory, no default.",
-    )
-    time: TimeConfig = Field(description="The discrete-time horizon.")
-    properties: dict[str, PropertyPackageSpec] = Field(
-        default_factory=lambda: {
-            "properties": PropertyPackageSpec(property_class="SimpleAqueousFlow")
-        },
-        description="Property packages the model builds, keyed by the attribute "
-        "name each gets on the model. Units pick one with property_package.",
-    )
-    costing: CostingConfig = Field(description="Tariff/DR/solve options.")
-    network: NetworkConfig | None = Field(
-        default=None,
-        description="A network of plants; mutually exclusive with 'plant'.",
-    )
-    plant: PlantConfig | None = Field(
-        default=None,
-        description="A single plant of units; mutually exclusive with 'network'.",
-    )
-
-    _base_dir: Path | None = PrivateAttr(default=None)
-
-    @model_validator(mode="after")
-    def _units_name_a_property_package(self) -> "ModelConfig":
-        """Require every unit's property_package to resolve to a declared entry."""
-        plants = self.network.plants.values() if self.network else [self.plant]
-        keys = list(self.properties)
-        for plant in plants:
-            for name, unit in (plant.units if plant else {}).items():
-                choice = unit.property_package
-                if choice == "auto" and len(keys) != 1:
-                    raise ValueError(
-                        f"Unit {name!r} uses property_package 'auto', which needs "
-                        f"exactly one entry in properties, but there are "
-                        f"{len(keys)} ({keys}). Set property_package to one of "
-                        "those keys."
-                    )
-                if choice not in (None, "auto") and choice not in keys:
-                    raise ValueError(
-                        f"Unit {name!r} names property_package {choice!r}, which "
-                        f"is not in properties. Available: {keys}."
-                    )
-        return self
-
-    @model_validator(mode="after")
-    def _exactly_one_topology(self) -> "ModelConfig":
-        """Require exactly one of ``network`` or ``plant`` (pitfall 10)."""
-        if (self.network is None) == (self.plant is None):
-            raise ValueError(
-                "Set exactly one of 'network' or 'plant' on ModelConfig "
-                f"(got network={self.network is not None}, "
-                f"plant={self.plant is not None})."
             )
         return self

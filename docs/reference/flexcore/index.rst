@@ -52,41 +52,12 @@ calling :func:`get_solver`.
 Config schema
 -------------
 
-.. currentmodule:: flexcore.config.schema
-
-The versioned, canonical JSON config that the whole model and run get built
-from (see :doc:`../../explanation/config_schema`). Pydantic is the schema
-authority, and :data:`CURRENT_SCHEMA_VERSION` tags what this build writes.
-
-.. autosummary::
-   :toctree: generated
-   :nosignatures:
-
-   ModelConfig
-   NetworkConfig
-   PlantConfig
-   UnitConfig
-   PropertyPackageSpec
-   IOVariableSpec
-   SurrogateSpec
-   SurrogateType
-   ExternalDispatchSpec
-   UnitCommitmentConfig
-   ArcSpec
-   TimeConfig
-   CostingConfig
-   PriceSpec
-   DRConfig
-
-.. autodata:: CURRENT_SCHEMA_VERSION
-
-Flat flowsheet spec
-~~~~~~~~~~~~~~~~~~~
-
 .. currentmodule:: flexcore.config.spec
 
-A flowsheet as one flat list of elements, in any order. The nested
-``ModelConfig`` above is the legacy input format and converts to this one.
+The versioned, canonical JSON spec that the whole model and run get built from
+(see :doc:`../../explanation/config_schema`): a flowsheet as one flat list of
+elements, in any order. Pydantic is the schema authority, and
+:data:`SCHEMA_VERSION` tags what this build writes.
 
 .. autosummary::
    :toctree: generated
@@ -132,9 +103,26 @@ A flowsheet as one flat list of elements, in any order. The nested
 
 .. autodata:: NO_STATUS_CLASSES
 
-.. currentmodule:: flexcore.config.convert
+Shared building blocks
+~~~~~~~~~~~~~~~~~~~~~~
 
-.. autofunction:: nested_to_spec
+.. currentmodule:: flexcore.config.schema
+
+.. autosummary::
+   :toctree: generated
+   :nosignatures:
+
+   UnitConfig
+   PropertyPackageSpec
+   IOVariableSpec
+   SurrogateSpec
+   SurrogateType
+   ExternalDispatchSpec
+   UnitCommitmentConfig
+   TimeConfig
+   CostingConfig
+   PriceSpec
+   DRConfig
 
 Config I/O
 ~~~~~~~~~~
@@ -144,14 +132,6 @@ Config I/O
 .. autofunction:: load_spec
 
 .. autofunction:: dump_spec
-
-.. autofunction:: load_model_config
-
-.. autofunction:: dump_model_config
-
-.. autofunction:: load_surrogate_source
-
-.. autofunction:: resolve_source_path
 
 .. autofunction:: read_source
 

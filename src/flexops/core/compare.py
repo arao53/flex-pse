@@ -158,3 +158,26 @@ def model_differences(
         diffs.append(f"time_block.dt: {pyo.value(time_a.dt)} != {pyo.value(time_b.dt)}")
 
     return sorted(diffs)
+
+
+def assert_models_equivalent(
+    a, b, *, rel_tol: float = 1e-9, check_values: bool = False
+) -> None:
+    """Raise AssertionError listing every difference between two Pyomo models.
+
+    Args:
+        a: The first model.
+        b: The second model.
+        rel_tol: Relative tolerance for numeric comparisons.
+        check_values: Also compare values of unfixed Vars (useful after a solve).
+
+    Raises:
+        AssertionError: If the models differ; the message lists the first 50
+            differences and counts the rest.
+    """
+    diffs = model_differences(a, b, rel_tol=rel_tol, check_values=check_values)
+    if diffs:
+        more = f"\n... and {len(diffs) - 50} more" if len(diffs) > 50 else ""
+        raise AssertionError(
+            f"Models differ ({len(diffs)}):\n" + "\n".join(diffs[:50]) + more
+        )

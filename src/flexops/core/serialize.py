@@ -4,7 +4,6 @@ import datetime
 import enum
 import math
 from collections.abc import Mapping
-from pathlib import Path
 
 import pyomo.environ as pyo
 from pydantic import BaseModel
@@ -108,53 +107,3 @@ def to_jsonable(value, *, where: str, packages: Mapping | None = None):
         f"{where} holds a {type(value).__name__}, which has no spec form",
         field=where,
     )
-
-
-def unit_model_class_name(unit_or_class) -> str:
-    """Return the flexops.unit_models name of a unit or unit-model class.
-
-    Args:
-        unit_or_class: A built unit or a unit-model class.
-
-    Returns:
-        The first name in the type's MRO, minus a ``Data`` suffix, that
-        ``flexops.unit_models.__all__`` lists.
-
-    Raises:
-        FlexConfigError: If nothing in the MRO is a flexops unit model.
-    """
-    # Local import: the unit models import flexops.core.
-    from flexops import unit_models
-
-    declared = unit_or_class if isinstance(unit_or_class, type) else type(unit_or_class)
-    for cls in declared.__mro__:
-        name = cls.__name__.removesuffix("Data")
-        if name in unit_models.__all__:
-            return name
-    raise FlexConfigError(
-        f"{unit_or_class!r} is not a flexops unit model, so it can't be written "
-        "to a spec.",
-        field="unit_model_class",
-        value=unit_or_class,
-    )
-
-
-def relative_path(path, relative_to):
-    """Return ``path`` relative to ``relative_to`` if it lies under it.
-
-    Args:
-        path: A file path, or None.
-        relative_to: A directory, or None to leave ``path`` as it is.
-
-    Returns:
-        A POSIX-style relative path string, or ``path`` unchanged (as a string)
-        when it is None, not absolute, or outside ``relative_to``.
-    """
-    if path is None:
-        return None
-    if relative_to is None or not Path(path).is_absolute():
-        return str(path)
-    try:
-        return Path(path).resolve().relative_to(Path(relative_to).resolve()).as_posix()
-    except ValueError:
-        return str(path)

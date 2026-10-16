@@ -105,7 +105,7 @@ both units with their arc, a `status` element, an `extension` element naming
 
 ```python
 from flexcore.config.io import load_spec
-from flexops.testing import assert_models_equivalent
+from flexops.core.compare import assert_models_equivalent
 
 rebuilt = fo.build_model(load_spec("site.json"))
 

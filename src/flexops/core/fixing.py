@@ -143,34 +143,24 @@ def time_of(point, time_index):
     return index[0] if isinstance(index, tuple) else index
 
 
-def _time_index(model):
-    """Return the model's TimeBlock time_index, or None without a single TimeBlock."""
-    try:
-        return find_time_block(model).time_index
-    except FlexConfigError:
-        return None
-
-
-def _int_keys(series: dict, label: str) -> dict:
-    """Turn a JSON mapping's string keys into integer time indices."""
-    try:
-        return {int(key): value for key, value in series.items()}
-    except ValueError as exc:
-        raise FlexConfigError(
-            f"{label}: mapping keys must be integer time indices, got "
-            f"{sorted(series)[:5]}.",
-            field="value",
-        ) from exc
-
-
 def _fix_values(model, element, base_dir) -> list[tuple]:
     """Return ``(point, value)`` for every point a fix element sets."""
     label = element_label(element)
     points = variable_points(model, element.variable)
-    time_index = _time_index(model)
+    try:
+        time_index = find_time_block(model).time_index
+    except FlexConfigError:
+        time_index = None
     raw = resolve_sources(element.value, base_dir)
     if isinstance(raw, dict):
-        raw = _int_keys(raw, label)
+        try:
+            raw = {int(key): value for key, value in raw.items()}
+        except ValueError as exc:
+            raise FlexConfigError(
+                f"{label}: mapping keys must be integer time indices, got "
+                f"{sorted(raw)[:5]}.",
+                field="value",
+            ) from exc
     times = {id(p): time_of(p, time_index) for p in points}
     if (isinstance(raw, list | dict) or element.at is not None) and None in set(
         times.values()

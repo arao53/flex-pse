@@ -78,7 +78,7 @@ Config-driven build
 .. currentmodule:: flexops.core.build
 
 ``build_model`` is the single config driven entry point. One validated
-:class:`~flexcore.config.schema.ModelConfig` yields the whole Pyomo model. See
+:class:`~flexcore.config.spec.FlowsheetSpec` yields the whole Pyomo model. See
 :doc:`../../how_to/build_a_plant` for the imperative and config driven paths
 side by side.
 
@@ -95,14 +95,11 @@ Emitting a spec
 
 ``emit_model`` is ``build_model`` in reverse: it reads the flat spec a live
 model was, or could have been, built from (see
-:doc:`../../explanation/config_schema`). Each component describes itself:
-:meth:`~flexops.core.time_block.TimeBlockData.to_element`,
-:meth:`~flexops.costing.flex_costing.FlexCostingData.to_element` and
-:meth:`~flexops.core.ops_block.OpsBlockData.to_unit_element`.
+:doc:`../../explanation/config_schema`).
 
 .. autofunction:: emit_model
 
-.. autofunction:: property_package_element
+.. autofunction:: unit_model_class_name
 
 .. currentmodule:: flexops.core.serialize
 
@@ -110,13 +107,11 @@ model was, or could have been, built from (see
 
 .. autofunction:: units_to_str
 
-.. autofunction:: unit_model_class_name
-
-.. autofunction:: relative_path
-
 .. currentmodule:: flexops.core.compare
 
 .. autofunction:: model_differences
+
+.. autofunction:: assert_models_equivalent
 
 Extensions
 ----------
@@ -140,26 +135,16 @@ Build stages
 ``build_model`` runs the stages in :data:`STAGES` in order. Costing is last
 because ``cost_process()`` aggregates only the terms registered when it runs.
 The logic stage builds its kinds in :data:`LOGIC_ORDER`, status first and
-cross-unit logic last.
-:func:`apply_stages` runs the post-topology stages on a model that already exists,
-and :func:`apply_spec` applies the mutable spec elements (surrogates, dispatches,
-fixes and unfixes) to one.
+cross-unit logic last. :func:`apply_spec` applies the mutable spec elements
+(surrogates, dispatches, fixes and unfixes) to a model that already exists.
 
 .. autodata:: STAGES
-   :no-value:
-
-.. autodata:: POST_TOPOLOGY_STAGES
    :no-value:
 
 .. autodata:: LOGIC_ORDER
    :no-value:
 
-.. autodata:: APPLY_STAGES
-   :no-value:
-
 .. autoclass:: BuildContext
-
-.. autofunction:: apply_stages
 
 .. autofunction:: apply_spec
 

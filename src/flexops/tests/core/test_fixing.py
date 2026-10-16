@@ -16,8 +16,8 @@ import flexops as fo
 from flexcore.config.spec import SCHEMA_VERSION, Element, FlowsheetSpec
 from flexcore.exceptions import FlexConfigError, FlexEmitWarning, FlexFixWarning
 from flexops import apply_spec, build_model, emit_model, logic
+from flexops.core.compare import assert_models_equivalent
 from flexops.core.fixing import FixReport, FixViolation, apply_state
-from flexops.testing import assert_models_equivalent
 
 M3_HR = pyunits.m**3 / pyunits.hr
 

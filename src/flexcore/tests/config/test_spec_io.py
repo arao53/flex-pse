@@ -1,33 +1,14 @@
 """Tests for loading and dumping flat specs."""
 
 import json
-from pathlib import Path
 
 import pytest
 
 from flexcore.config import io as io_module
-from flexcore.config.io import (
-    dump_spec,
-    load_model_config,
-    load_spec,
-)
-from flexcore.config.schema import ModelConfig
+from flexcore.config.io import dump_spec, load_spec
 from flexcore.config.spec import SCHEMA_VERSION, FlowsheetSpec
 from flexcore.exceptions import FlexConfigError
 
-NESTED = {
-    "schema_version": "0.0.4",
-    "time": {
-        "start_date": "2025-01-01",
-        "end_date": "2025-01-02",
-        "time_step": "1 hr",
-    },
-    "costing": {"energy_prices": {"electrical": {"value": 0.1, "units": "USD/kWh"}}},
-    "plant": {
-        "name": "site",
-        "units": {"tank": {"unit_model_class": "Tank"}},
-    },
-}
 FLAT = {
     "schema_version": SCHEMA_VERSION,
     "name": "site",
@@ -59,38 +40,20 @@ FLAT = {
         },
     ],
 }
-CONFIGS = Path(__file__).parent.parent / "fixtures" / "configs"
 
 
 @pytest.mark.unit
 def test_load_spec_accepts_every_form(tmp_path):
-    """Path, dict, FlowsheetSpec and ModelConfig all load."""
+    """Path, dict and FlowsheetSpec all load."""
     (tmp_path / "flat.json").write_text(json.dumps(FLAT))
-    (tmp_path / "nested.json").write_text(json.dumps(NESTED))
     spec = load_spec(FLAT)
 
-    sources = [
-        tmp_path / "flat.json",
-        FLAT,
-        spec,
-        tmp_path / "nested.json",
-        NESTED,
-        ModelConfig.model_validate(NESTED),
-    ]
+    sources = [tmp_path / "flat.json", FLAT, spec]
 
     for source in sources:
         assert isinstance(load_spec(source), FlowsheetSpec)
     assert load_spec(spec) is spec
     assert load_spec(tmp_path / "flat.json")._base_dir == tmp_path
-
-
-@pytest.mark.unit
-@pytest.mark.parametrize("path", sorted(CONFIGS.glob("*.json")), ids=lambda p: p.stem)
-def test_every_nested_fixture_converts(path):
-    """Each stored nested config converts to a flat spec."""
-    spec = load_spec(path)
-
-    assert spec.schema_version == SCHEMA_VERSION
 
 
 @pytest.mark.unit
@@ -104,16 +67,6 @@ def test_load_spec_dict_is_not_mutated():
 
 
 @pytest.mark.unit
-def test_load_spec_old_nested_version_migrates_then_converts():
-    """A 0.0.1 nested config runs the nested migrations before conversion."""
-    old = {**NESTED, "schema_version": "0.0.1", "properties": {}}
-
-    spec = load_spec(old)
-
-    assert [el.name for el in spec.of_kind("property_package")] == ["properties"]
-
-
-@pytest.mark.unit
 def test_load_spec_newer_version_raises():
     """A spec newer than this build says to upgrade flex-pse."""
     with pytest.raises(FlexConfigError, match="Upgrade flex-pse"):
@@ -123,21 +76,27 @@ def test_load_spec_newer_version_raises():
 @pytest.mark.unit
 def test_load_spec_runs_spec_migrations(monkeypatch):
     """An older flat spec steps through MIGRATIONS to the current version."""
-    monkeypatch.setattr(io_module, "SCHEMA_VERSION", "0.1.3")
+    monkeypatch.setattr(io_module, "SCHEMA_VERSION", "0.1.1")
     monkeypatch.setitem(
-        io_module.MIGRATIONS,
-        "0.1.2",
-        lambda data, base_dir: {**data, "schema_version": "0.1.3"},
+        io_module.MIGRATIONS, "0.1.0", lambda data: {**data, "schema_version": "0.1.1"}
     )
 
-    assert load_spec(FLAT).schema_version == "0.1.3"
+    assert load_spec(FLAT).schema_version == "0.1.1"
 
 
 @pytest.mark.unit
 def test_load_spec_missing_migration_raises():
-    """A flat version with no migration path is an error naming it."""
+    """A version with no migration path is an error naming it."""
     with pytest.raises(FlexConfigError, match="0.0.9"):
         load_spec({**FLAT, "schema_version": "0.0.9"})
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("bad_version", [1, "1", "0.1", "v0.0.1", True])
+def test_load_spec_malformed_version_raises(bad_version):
+    """A schema_version that is not an X.Y.Z string is rejected."""
+    with pytest.raises(FlexConfigError, match="semantic-version"):
+        load_spec({**FLAT, "schema_version": bad_version})
 
 
 @pytest.mark.unit
@@ -166,13 +125,6 @@ def test_load_spec_rejects_other_suffix(tmp_path):
 
     with pytest.raises(FlexConfigError):
         load_spec(path)
-
-
-@pytest.mark.unit
-def test_load_model_config_rejects_flat():
-    """The nested loader points a flat spec at load_spec."""
-    with pytest.raises(FlexConfigError, match="load_spec"):
-        load_model_config(FLAT)
 
 
 @pytest.mark.unit

@@ -15,10 +15,10 @@ import flexops as fo
 from flexcore.config.io import dump_spec
 from flexcore.exceptions import FlexConfigError, FlexEmitWarning
 from flexops import apply_spec, build_model, emit_model, logic
+from flexops.core.compare import assert_models_equivalent
 from flexops.core.stages import INTENSITY_PARAMETER
 from flexops.costing import currency_units, load_tariff
 from flexops.surrogates import MultilinearSurrogate
-from flexops.testing import assert_models_equivalent
 
 FIXTURES = Path(__file__).parent.parent / "fixtures"
 USD_PER_KWH = currency_units("USD") / pyunits.kWh
@@ -640,7 +640,7 @@ def test_long_fixed_series_goes_to_a_sidecar(tmp_path):
 def test_fix_from_the_spec_changed_in_code_writes_the_new_value():
     m = build_model(
         {
-            "schema_version": "0.1.2",
+            "schema_version": "0.1.0",
             "name": "site",
             "elements": [
                 {

@@ -2,7 +2,6 @@
 
 import pytest
 
-from flexcore.config.io import load_spec
 from flexcore.config.spec import KINDS, FlowsheetSpec, SourceRef
 from flexcore.tests.config.test_spec import plant, rejects, spec_dict, unit
 
@@ -106,11 +105,3 @@ def test_spec_policy_fields_validate():
     spec = FlowsheetSpec.model_validate(data)
 
     assert (spec.fix_on_violation, spec.fix_tolerance) == ("warn", 0.5)
-
-
-@pytest.mark.unit
-def test_a_0_1_1_spec_migrates_to_0_1_2():
-    data = spec_dict(plant())
-    data["schema_version"] = "0.1.1"
-
-    assert load_spec(data).schema_version == "0.1.2"

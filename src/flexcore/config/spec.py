@@ -3,9 +3,7 @@
 A flowsheet is one flat list of elements. An element's ``name`` is the full
 dotted path of the Pyomo component it creates, and elements refer to each other
 by name, so the order of the list never matters: the assembler decides the build
-order from each element's kind. The nested
-:class:`~flexcore.config.schema.ModelConfig` is the legacy input format; see
-:mod:`flexcore.config.convert`.
+order from each element's kind.
 
 Class docstrings and field descriptions here are exported verbatim into the
 JSON Schema, so keep them plain text.
@@ -34,7 +32,7 @@ from flexcore.config.schema import (
     _StrictModel,
 )
 
-SCHEMA_VERSION = "0.1.2"
+SCHEMA_VERSION = "0.1.0"
 """str: the schema version this build writes and validates against."""
 
 KINDS: dict[str, tuple[str, bool]] = {

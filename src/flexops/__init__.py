@@ -10,7 +10,7 @@ from flexops.core.fixing import FixReport, FixViolation
 from flexops.core.network_block import NetworkBlock
 from flexops.core.plant_block import PlantBlock
 from flexops.core.registration import BoundaryKind
-from flexops.core.stages import apply_spec, apply_stages
+from flexops.core.stages import apply_spec
 from flexops.core.time_block import TimeBlock
 from flexops.costing import FlexCosting
 from flexops.properties.simple_aqueous import SimpleAqueousFlow
@@ -71,7 +71,6 @@ __all__ = [
     "TimeBlock",
     "__version__",
     "apply_spec",
-    "apply_stages",
     "build_model",
     "emit_model",
     "extension",

@@ -48,11 +48,6 @@ def accepts(*elements) -> FlowsheetSpec:
 
 
 @pytest.mark.unit
-def test_schema_version_is_0_1_2():
-    assert SCHEMA_VERSION == "0.1.2"
-
-
-@pytest.mark.unit
 def test_new_kinds_are_registered_immutable():
     new = {
         "status": "logic",

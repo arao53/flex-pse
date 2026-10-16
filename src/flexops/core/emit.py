@@ -8,14 +8,18 @@ import warnings
 from pathlib import Path
 
 import pyomo.environ as pyo
+from dateutil.relativedelta import relativedelta
 from pydantic import TypeAdapter
 from pyomo.core.base.componentuid import ComponentUID
+from pyomo.environ import units as pyunits
 from pyomo.network import Arc
 
 from flexcore.config.io import resolve_sources
 from flexcore.config.spec import (
+    AUTO,
     SCHEMA_VERSION,
     Connection,
+    CostingElement,
     DispatchElement,
     Element,
     ExtensionElement,
@@ -26,20 +30,24 @@ from flexcore.config.spec import (
     PlantElement,
     PropertyPackageElement,
     SetElement,
+    SourcedPrice,
     SourceRef,
     SurrogateElement,
+    TimeElement,
     UnfixElement,
+    UnitElement,
     element_target,
     find_unit,
 )
 from flexcore.exceptions import FlexConfigError, FlexEmitWarning
+from flexops import unit_models
 from flexops.core.build import build_model
 from flexops.core.compare import model_differences
 from flexops.core.fixing import element_points, time_of, variable_points
 from flexops.core.network_block import NetworkBlock
 from flexops.core.ops_block import OpsBlockData
 from flexops.core.plant_block import PlantBlock
-from flexops.core.serialize import relative_path, to_jsonable
+from flexops.core.serialize import to_jsonable, units_to_str
 from flexops.core.time_block import find_time_block
 from flexops.costing import FlexCosting
 from flexops.properties import PROPERTY_PACKAGES
@@ -79,7 +87,12 @@ def emit_model(
             has not run ``cost_process()``, fixes that can't be found because
             the model doesn't rebuild, and every difference the check finds.
     """
-    packages, costings = _root_blocks(model)
+    packages, costings = {}, {}
+    for block in model.component_objects(pyo.Block, descend_into=False):
+        if isinstance(block, FlexCosting):
+            costings[block.local_name] = block
+        elif any(isinstance(block, cls) for cls in PROPERTY_PACKAGES.values()):
+            packages[block.local_name] = block
     for name, block in costings.items():
         if block.find_component("aggregate_operating_cost") is None:
             warnings.warn(
@@ -88,9 +101,9 @@ def emit_model(
                 FlexEmitWarning,
                 stacklevel=2,
             )
-    elements = [find_time_block(model).to_element()]
-    elements += [property_package_element(n, b) for n, b in packages.items()]
-    elements += [b.to_element(relative_to=relative_to) for b in costings.values()]
+    elements = [_time_element(find_time_block(model))]
+    elements += [_package_element(n, b) for n, b in packages.items()]
+    elements += [_costing_element(b, relative_to) for b in costings.values()]
     sets: dict[str, SetElement] = {}
     units: dict[str, list] = {}
     _structure(model, packages, costings, elements, sets, units)
@@ -117,7 +130,7 @@ def emit_model(
     return spec
 
 
-def property_package_element(name: str, block) -> PropertyPackageElement:
+def _package_element(name: str, block) -> PropertyPackageElement:
     """Describe a property package block as the spec element that builds it.
 
     Args:
@@ -145,15 +158,225 @@ def property_package_element(name: str, block) -> PropertyPackageElement:
     )
 
 
-def _root_blocks(model) -> tuple[dict, dict]:
-    """Return the model root's property packages and costing blocks by name."""
-    packages, costings = {}, {}
-    for block in model.component_objects(pyo.Block, descend_into=False):
-        if isinstance(block, FlexCosting):
-            costings[block.local_name] = block
-        elif any(isinstance(block, cls) for cls in PROPERTY_PACKAGES.values()):
-            packages[block.local_name] = block
-    return packages, costings
+def _time_element(time_block) -> TimeElement:
+    """Describe a TimeBlock as the spec's time element.
+
+    Args:
+        time_block: The model's TimeBlock.
+
+    Returns:
+        The :class:`~flexcore.config.spec.TimeElement`.
+
+    Raises:
+        FlexConfigError: If ``max_length`` is not the default (the spec has no
+            field for it) or the time step's units can't be written.
+    """
+    config = time_block.config
+    if config.max_length != relativedelta(months=1):
+        raise FlexConfigError(
+            f"{time_block.name}.max_length is not the default one month; the spec "
+            "has no field for it.",
+            field="max_length",
+            value=config.max_length,
+        )
+    step = config.time_step
+    units = units_to_str(pyunits.get_units(step), where="time_block.time_step")
+    return TimeElement(
+        kind="time",
+        start_date=_iso(config.start_date),
+        end_date=_iso(config.end_date),
+        time_step=f"{pyo.value(step):g} {units}",
+    )
+
+
+def _iso(value) -> str:
+    """Return a date as an ISO string, passing strings through."""
+    return value if isinstance(value, str) else value.isoformat()
+
+
+def _costing_element(block, relative_to) -> CostingElement:
+    """Describe a FlexCosting block as the spec element that builds it.
+
+    Args:
+        block: The costing block.
+        relative_to: Directory to write file paths under it relative to, or None.
+
+    Returns:
+        The :class:`~flexcore.config.spec.CostingElement`.
+
+    Raises:
+        FlexConfigError: If a tariff was passed as an object, or a price has
+            no units.
+    """
+    config = block.config
+    if config.tariff is not None:
+        raise FlexConfigError(
+            "a tariff passed as an object can't be written to a spec; pass "
+            "tariff_file",
+            field="tariff",
+        )
+    prices = {"energy_prices": {}, "export_prices": {}}
+    for field, entries in prices.items():
+        for name, price in (config[field] or {}).items():
+            data = to_jsonable(price, where=f"{field}[{name!r}]")
+            if isinstance(data, list) and all(isinstance(d, dict) for d in data):
+                units = {d["units"] for d in data}
+                if len(units) == 1:
+                    data = {"value": [d["value"] for d in data], "units": units.pop()}
+            if not isinstance(data, dict):
+                raise FlexConfigError(
+                    f"{field}[{name!r}] needs units to be written to a spec",
+                    field=field,
+                    value=name,
+                )
+            entries[name] = SourcedPrice(**data)
+    tariff = config.tariff_file
+    if isinstance(tariff, (list, tuple)):
+        tariff = [_relative_path(item, relative_to) for item in tariff]
+    elif isinstance(tariff, dict):
+        tariff = {k: _relative_path(v, relative_to) for k, v in tariff.items()}
+    else:
+        tariff = _relative_path(tariff, relative_to)
+    events = _relative_path(config.dr_event_file, relative_to)
+    return CostingElement(
+        kind="costing",
+        name=block.local_name,
+        tariff_source=tariff,
+        energy_prices=prices["energy_prices"] or None,
+        export_prices=prices["export_prices"] or None,
+        decomposition_type=config.decomposition_type,
+        currency=config.currency,
+        dr=None if events is None else {"events_source": events},
+        consumption_estimate=config.consumption_estimate,
+        fixed_operating_cost=config.fixed_operating_cost,
+        prorate_monthly_charges=config.prorate_monthly_charges,
+        lifetime_years=config.lifetime_years,
+        discount_rate=config.discount_rate,
+        interest_rate=config.interest_rate,
+    )
+
+
+def _relative_path(path, relative_to):
+    """Return ``path`` relative to ``relative_to`` if it lies under it.
+
+    Args:
+        path: A file path, or None.
+        relative_to: A directory, or None to leave ``path`` as it is.
+
+    Returns:
+        A POSIX-style relative path string, or ``path`` unchanged (as a string)
+        when it is None, not absolute, or outside ``relative_to``.
+    """
+    if path is None:
+        return None
+    if relative_to is None or not Path(path).is_absolute():
+        return str(path)
+    try:
+        return Path(path).resolve().relative_to(Path(relative_to).resolve()).as_posix()
+    except ValueError:
+        return str(path)
+
+
+def _unit_element(unit, name: str, packages: dict, costings: dict) -> UnitElement:
+    """Describe a unit as the spec element that builds it, without connections.
+
+    Args:
+        unit: The unit block (one member of an indexed unit).
+        name: The unit element's name (the indexed component's for a member).
+        packages: Property-package element names mapped to their blocks.
+        costings: Costing element names mapped to their blocks.
+
+    Returns:
+        The :class:`~flexcore.config.spec.UnitElement`.
+
+    Raises:
+        FlexConfigError: If an option has no spec form, the class is not a
+            flexops unit model, or the unit's package or costing block is not
+            among those given.
+    """
+    # Set by the framework or build_from_config, or written as their own fields.
+    skip = {
+        "dynamic",
+        "has_holdup",
+        "property_package",
+        "property_package_args",
+        "costing_package",
+        "flexops_config",
+        "unit_commitment",
+        "external_dispatch",
+    }
+    given = {value.name(): value.value() for value in unit.config.user_values()}
+    options = {
+        key: to_jsonable(value, where=f"{name}.{key}", packages=packages)
+        for key, value in given.items()
+        if key not in skip
+    }
+
+    def choose(block, named: dict, field: str):
+        if block is None:
+            return None
+        matches = [key for key, other in named.items() if other is block]
+        if not matches:
+            raise FlexConfigError(
+                f"{name}.{field} is a block that is not on the model root, so "
+                "it can't be written to a spec.",
+                field=f"{name}.{field}",
+            )
+        return AUTO if len(named) == 1 else matches[0]
+
+    io_variables = [
+        {
+            "name": record.name,
+            "role": record.role,
+            "units": units_to_str(
+                pyunits.get_units(next(iter(record.var.values()))),
+                where=f"{name}.{record.name}",
+            ),
+            "tag_hint": record.tag_hint,
+            "time_indexed": record.time_indexed,
+        }
+        for record in unit._io_registry.io_variables
+    ]
+    return UnitElement(
+        kind="unit",
+        name=name,
+        unit_model_class=unit_model_class_name(unit),
+        construction_options=options,
+        property_package=choose(
+            unit.config.property_package, packages, "property_package"
+        ),
+        costing_package=choose(
+            unit.config.costing_package, costings, "costing_package"
+        ),
+        io_variables=io_variables,
+        unit_commitment=given.get("unit_commitment"),
+    )
+
+
+def unit_model_class_name(unit_or_class) -> str:
+    """Return the flexops.unit_models name of a unit or unit-model class.
+
+    Args:
+        unit_or_class: A built unit or a unit-model class.
+
+    Returns:
+        The first name in the type's MRO, minus a ``Data`` suffix, that
+        ``flexops.unit_models.__all__`` lists.
+
+    Raises:
+        FlexConfigError: If nothing in the MRO is a flexops unit model.
+    """
+    declared = unit_or_class if isinstance(unit_or_class, type) else type(unit_or_class)
+    for cls in declared.__mro__:
+        name = cls.__name__.removesuffix("Data")
+        if name in unit_models.__all__:
+            return name
+    raise FlexConfigError(
+        f"{unit_or_class!r} is not a flexops unit model, so it can't be written "
+        "to a spec.",
+        field="unit_model_class",
+        value=unit_or_class,
+    )
 
 
 def _set_element(owner, sets: dict) -> str:
@@ -238,10 +461,7 @@ def _structure(block, packages, costings, elements, sets, units) -> None:
             elements.append(PlantElement(kind="plant", name=name))
             _structure(component, packages, costings, elements, sets, units)
         elif members and all(isinstance(m, OpsBlockData) for m in members):
-            described = [
-                m.to_unit_element(name, packages=packages, costings=costings)
-                for m in members
-            ]
+            described = [_unit_element(m, name, packages, costings) for m in members]
             _shared(
                 name,
                 [
@@ -528,13 +748,6 @@ def _path(component, model) -> str:
     return str(ComponentUID(component, context=model))
 
 
-def _with_star(point, model) -> str:
-    """Return a point's path with its time position (the first index) made ``*``."""
-    base = _path(point.parent_component(), model)
-    inner = _path(point, model)[len(base) + 1 : -1].split(",")
-    return f"{base}[{','.join(['*', *inner[1:]])}]"
-
-
 def _fix_groups(model, points, time_index) -> list[dict]:
     """Group fixed points into fix element fields, one per variable and non-time index.
 
@@ -556,7 +769,11 @@ def _fix_groups(model, points, time_index) -> list[dict]:
             series = [values[t] for t in times]
             at = None if times == list(time_index) else times
             value = series[0] if at is None and len(set(series)) == 1 else series
-            path = _with_star(members[0], model) if rest else base
+            path = base
+            if rest:
+                # The point's path with its time position (the first index) made *.
+                inner = _path(members[0], model)[len(base) + 1 : -1].split(",")
+                path = f"{base}[{','.join(['*', *inner[1:]])}]"
             found.append({"variable": path, "value": value, "at": at, "base": base})
         elif len(members) == len(var) and len({p.value for p in members}) == 1:
             value = float(members[0].value)
@@ -708,7 +925,7 @@ def _offload(elements: list, data_dir, inline_limit: int, base_dir) -> None:
         path = Path(data_dir) / f"{_slug(owner)}.{field}.json.gz"
         path.parent.mkdir(parents=True, exist_ok=True)
         path.write_bytes(gzip.compress(json.dumps(values).encode(), mtime=0))
-        return relative_path(path, base_dir)
+        return _relative_path(path, base_dir)
 
     def walk(owner: str, field: str, value):
         if isinstance(value, dict):
