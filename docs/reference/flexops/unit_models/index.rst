@@ -113,6 +113,15 @@ Physical units
 
 .. currentmodule:: flexops.unit_models.reverseosmosis
 
+Feed splits into permeate (``outlet_a``) and brine (``outlet_b``). The default
+``membrane_model="constant_recovery"`` is an LP with a fixed ``recovery`` and
+``energy_intensity``. ``"linearized"`` instead builds a piecewise-linear
+membrane with high-pressure pump, circulation pump, and energy recovery device
+power (an MILP), with recovery free in every period. ``feed_water``
+(``"seawater"``/``"brackish"``) fills unset recovery, flux, and membrane
+options from literature values. Setting ``membrane_area`` adds flux limits in
+either mode. See :doc:`/explanation/reverse_osmosis_model`.
+
 .. autosummary::
    :toctree: generated
    :template: unit_model.rst

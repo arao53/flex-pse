@@ -7,6 +7,8 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Added
 
+- **Linearized `ReverseOsmosis` membrane model.** `membrane_model="linearized"` builds the Oikonomou & Parvania (2020) piecewise-linear membrane as an MILP: recovery varies per period, and `power_electrical` is the high-pressure pump plus the circulation pump with an optional energy recovery device (`erd_efficiency`), interpolated on a triangulated (recovery, feed) grid with an off state (`membrane_off`). The default `"constant_recovery"` is unchanged.
+- **`ReverseOsmosis` feed water presets and flux limits.** `feed_water="seawater"|"brackish"` fills unset recovery, flux, permeability, osmotic pressure and ERD options from literature values (seawater: recovery 0.35–0.50, 12–19 LMH; brackish: 0.65–0.85, 20–34 LMH). Setting `membrane_area` adds `flux_min_limit`/`flux_max_limit` in either mode.
 - **`GridConnection` unit model** (issue #110). Built on a `PlantBlock`, it splits the plant's net electrical draw into non-negative `grid_import[t]`/`grid_export[t]` (`grid_import - grid_export == total_electrical_power`). Optional per-period `min_import`/`max_import`/`min_export`/`max_export` limits (`None` = unlimited) replace hand-written constraints on `FlexCosting.aggregate_power`. Export is priced by `FlexCosting(export_prices=...)`, not by the unit.
 - **Per-period boundary limits accept a series.** `Feed`/`Product` period-basis limits (and `GridConnection`'s) accept a length-T sequence or a time-indexed Pyomo component as well as a scalar, so a limit can vary by period without rewriting Params after construction.
 - **Export prices per carrier.** `FlexCosting(export_prices={...})`, keyed like `energy_prices`, prices exports of electricity or any fuel below (or at) the import price while staying an LP. Each such carrier's net series is split into non-negative `opex.import_<carrier>` / `opex.export_<carrier>` Vars; an export price above its import price, or a key with no `energy_prices` entry, raises `FlexConfigError`. Also available as `costing.export_prices` in the model config. Models without it are unchanged. (#111)
@@ -21,6 +23,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Changed
 
+- **`ReverseOsmosis` default recovery window narrowed to 0.35–0.50** (from 0.30–0.60), the seawater preset. `recovery`, `recovery_min` and `recovery_max` now default to `None`, meaning "use the `feed_water` preset"; the default recovery is still 0.45.
 - **`register_surrogate_coefficients` now uses registry key names for `ParameterRecord`.** When coefficients are stored in an indexed Var, the parameter name stored in the IO registry is the raw coefficient key (e.g. `"flow_out*outlet_state.pressure"`), not the parent block's `local_name`. This makes target removal and parameter lookup correct for all coefficient storage modes.
 - **`swap_relation` fitted constraint activation.** `switch_surrogate_block` now explicitly activates the fitted `Constraint` after `block.activate()`, because Pyomo `Block.activate()` does not cascade to child `Constraint` objects that were explicitly deactivated.
 - **EECO pinned to `eeco==0.4.2`** (from `0.4.1`). 0.4.2 adds the `"linear"` decomposition type, an LP split of net consumption into imports and exports.
