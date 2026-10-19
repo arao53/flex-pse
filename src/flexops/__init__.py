@@ -17,10 +17,12 @@ from flexops.properties.simple_aqueous import SimpleAqueousFlow
 from flexops.properties.simple_gas import SimpleGasFlow
 from flexops.unit_models import (
     BatteryModel,
+    CO2Electrolyzer,
     Combustor,
     ConstantEnergyIntensityModel,
     DIDOBlock,
     Digestor,
+    Electrolyzer,
     Exchanger,
     Feed,
     GenericRenewables,
@@ -33,7 +35,9 @@ from flexops.unit_models import (
     SISOBlock,
     Splitter,
     Tank,
+    WaterElectrolyzer,
 )
+from flexops.unit_models.electrolyzer import ElectrolyzerTechnology, ProductPhase
 from flexops.unit_models.mixer import MixerTemperatureRule
 from flexops.unit_models.powergeneration.combustor import CombustorPowerRelation
 
@@ -42,11 +46,14 @@ __version__ = _dist_version("flex-pse")
 __all__ = [
     "BatteryModel",
     "BoundaryKind",
+    "CO2Electrolyzer",
     "Combustor",
     "CombustorPowerRelation",
     "ConstantEnergyIntensityModel",
     "DIDOBlock",
     "Digestor",
+    "Electrolyzer",
+    "ElectrolyzerTechnology",
     "Exchanger",
     "Feed",
     "FixReport",
@@ -60,6 +67,7 @@ __all__ = [
     "PlantBlock",
     "PowerKind",
     "Product",
+    "ProductPhase",
     "Pump",
     "ReverseOsmosis",
     "SIDOBlock",
@@ -69,6 +77,7 @@ __all__ = [
     "Splitter",
     "Tank",
     "TimeBlock",
+    "WaterElectrolyzer",
     "__version__",
     "apply_spec",
     "build_model",
