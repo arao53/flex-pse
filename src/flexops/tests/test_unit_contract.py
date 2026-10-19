@@ -80,12 +80,30 @@ def build_digestor():
     return m
 
 
+def electrolyzer(unit_class, **options):
+    """Return a builder placing ``unit_class`` with liquid and gas packages."""
+
+    def build():
+        m = plant_model()
+        m.gas = fo.SimpleGasFlow()
+        m.plant.unit = unit_class(
+            liquid_property_package=m.properties,
+            gas_property_package=m.gas,
+            **options,
+        )
+        return m
+
+    return build
+
+
 CONTRACT_BUILDERS = {
+    "CO2Electrolyzer": electrolyzer(fo.CO2Electrolyzer),
     "BatteryModel": build_battery,
     "Combustor": build_combustor,
     "ConstantEnergyIntensityModel": simple(fo.ConstantEnergyIntensityModel),
     "DIDOBlock": simple(fo.DIDOBlock),
     "Digestor": build_digestor,
+    "Electrolyzer": electrolyzer(fo.Electrolyzer),
     "Exchanger": simple(fo.Exchanger),
     "Feed": simple(fo.Feed, outlet_names=("a",)),
     "GenericRenewables": build_generic_renewables,
@@ -98,6 +116,7 @@ CONTRACT_BUILDERS = {
     "SISOBlock": simple(fo.SISOBlock),
     "Splitter": simple(fo.Splitter, outlet_names=("a", "b")),
     "Tank": simple(fo.Tank),
+    "WaterElectrolyzer": electrolyzer(fo.WaterElectrolyzer),
 }
 
 
