@@ -34,6 +34,7 @@ The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/).
 
 ### Fixed
 
+- **Quantities inside a mapping construction option now build from a spec.** `build_from_config` parses each `{"value", "units"}` value of a mapping option such as `heating_values`, so a `Combustor` or `Boiler` with heating values round-trips through `emit_model`/`build_model`; it previously failed on rebuild. `Boiler.boiler_type` accepts its value string (`"heat_recovery"`), as a persisted spec holds it, and the unit contract test now covers `Boiler`.
 - **Unit-model reference pages render their tables again.** The unit-model autosummary entries named the `unit_model.rst` template by a path Sphinx could not resolve, so every page silently fell back to a bare `autoclass` with no members and no Variables, Constraints or Degrees of Freedom tables. A unit with no registered inputs (`Feed`, `GenericRenewables`) now renders "None." under Degrees of Freedom instead of an invalid empty table.
 
 ### Changed

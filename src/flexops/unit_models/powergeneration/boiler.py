@@ -74,6 +74,7 @@ class BoilerData(OpsBlockData):
         "boiler_type",
         ConfigValue(
             default=BoilerType.FIRED,
+            domain=BoilerType,
             description="Heat source: BoilerType.FIRED burns fuel; "
             "BoilerType.HEAT_RECOVERY recovers heat from a hot-gas inlet, "
             "optionally with duct firing.",
@@ -270,14 +271,12 @@ class BoilerData(OpsBlockData):
         )
 
     def _validate_config(self) -> None:
-        """Check type, fuel sources, packages, and value ranges.
+        """Check fuel sources, packages, and value ranges.
 
         Raises:
             FlexConfigError: If any option is invalid for the chosen type.
         """
         config = self.config
-        if not isinstance(config.boiler_type, BoilerType):
-            self._fail("boiler_type", "boiler_type must be a BoilerType member.")
         if config.fuel_inlet_names is None:
             config._data["fuel_inlet_names"].set_value(())
         heat_recovery = config.boiler_type is BoilerType.HEAT_RECOVERY

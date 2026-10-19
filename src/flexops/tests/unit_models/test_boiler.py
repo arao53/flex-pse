@@ -326,11 +326,24 @@ def test_firing_rate_limit_caps_overfiring():
 
 
 @pytest.mark.unit
-def test_rejects_plain_string_boiler_type():
-    """``boiler_type`` must be a ``BoilerType`` member, not its value string."""
-    with pytest.raises(FlexConfigError) as excinfo:
-        _boiler(boiler_type="fired")
-    assert excinfo.value.field == "boiler_type"
+def test_accepts_boiler_type_value_string():
+    """``boiler_type`` coerces its value string, as a persisted spec holds it."""
+    m = _model()
+    m.unit = Boiler(
+        boiler_type="heat_recovery",
+        hot_gas_property_package=m.properties,
+        feedwater_property_package=m.water,
+        steam_property_package=m.steam,
+        unit_commitment=_NO_UC,
+    )
+    assert m.unit.config.boiler_type is BoilerType.HEAT_RECOVERY
+
+
+@pytest.mark.unit
+def test_rejects_unknown_boiler_type():
+    """A string that names no ``BoilerType`` member is rejected."""
+    with pytest.raises(ValueError, match="boiler_type"):
+        _boiler(boiler_type="steam")
 
 
 @pytest.mark.unit
