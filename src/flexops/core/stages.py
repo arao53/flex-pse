@@ -271,13 +271,18 @@ def stage_logic(model, spec: FlowsheetSpec, ctx: BuildContext) -> None:
         ctx: The shared build context.
 
     Raises:
-        FlexConfigError: If a variable is not on its unit, or two indexed units
-            paired by a cross-unit element have different member counts.
+        FlexConfigError: If a variable is not on its unit, two indexed units
+            paired by a cross-unit element have different member counts, a
+            ``status`` targets a unit that manages its own, or logic that needs
+            a status names a unit without one.
     """
     for kind in LOGIC_ORDER:
         for element in elements_of(spec, kind):
             if kind == "parallel_group":
                 units = [m for u in element.units for m in _members(model, ctx, u)]
+                if element.order_status:
+                    for unit in units:
+                        _require_status(unit, kind)
                 logic.register_parallel_group(
                     units,
                     variables=element.variables,
@@ -286,6 +291,8 @@ def stage_logic(model, spec: FlowsheetSpec, ctx: BuildContext) -> None:
             elif kind in ("conditional", "startup_delay"):
                 other = element.implies if kind == "conditional" else element.upstream
                 for unit, partner in _pairs(model, ctx, element.unit, other):
+                    _require_status(unit, kind)
+                    _require_status(partner, kind)
                     if kind == "conditional":
                         logic.add_conditional(unit, partner, then=element.state)
                     else:
@@ -323,6 +330,11 @@ def _optional_limit(value):
 def _add_unit_logic(member, element) -> None:
     """Build one unit-level logic element on one unit member."""
     if element.kind == "status":
+        if not member.allows_status_element:
+            raise FlexConfigError(
+                f"status on {member.name!r}: this unit manages its own status; "
+                "set unit_commitment.status on the unit instead."
+            )
         logic.add_status(
             member,
             _variable(member, element),
@@ -336,6 +348,7 @@ def _add_unit_logic(member, element) -> None:
     elif element.kind == "dwell":
         logic.add_dwell(_variable(member, element), element.k)
     else:
+        _require_status(member, element.kind)
         logic.add_startup_shutdown(
             member, member.status, element.min_up, element.min_down
         )

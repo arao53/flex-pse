@@ -25,6 +25,7 @@ constraints; FlexParameterize drives this.
 import enum
 import numbers
 from collections.abc import Sequence
+from typing import ClassVar
 
 import pyomo.environ as pyo
 from idaes.core import UnitModelBlockData, declare_process_block_class
@@ -211,6 +212,10 @@ class OpsBlockData(UnitModelBlockData):
     #: its own generic vocabulary here; a physical subclass renames any subset by
     #: passing ``naming_dict`` to the base ``build()``, which registers it.
     _component_names: dict[str, str] = {}
+
+    #: Whether a spec ``status`` element may target this unit; ``False`` for
+    #: units that manage their own status.
+    allows_status_element: ClassVar[bool] = True
 
     def create_stream_naming_convention(self, naming_dict: dict[str, str]) -> None:
         """Register this unit's role -> Pyomo component name mapping.

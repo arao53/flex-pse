@@ -100,10 +100,6 @@ elements, in any order. Pydantic is the schema authority, and
 
 .. autodata:: LOGIC_KINDS
 
-.. autodata:: SELF_STATUS_CLASSES
-
-.. autodata:: NO_STATUS_CLASSES
-
 Shared building blocks
 ~~~~~~~~~~~~~~~~~~~~~~
 
