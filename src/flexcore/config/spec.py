@@ -32,7 +32,7 @@ from flexcore.config.schema import (
     _StrictModel,
 )
 
-SCHEMA_VERSION = "0.1.0"
+SCHEMA_VERSION = "0.1.1"
 """str: the schema version this build writes and validates against."""
 
 KINDS: dict[str, tuple[str, bool]] = {
@@ -52,6 +52,7 @@ KINDS: dict[str, tuple[str, bool]] = {
     "startup_delay": ("logic", False),
     "conditional": ("logic", False),
     "parallel_group": ("logic", False),
+    "resource": ("resources", False),
     "dispatch": ("state", True),
     "fix": ("state", True),
     "unfix": ("state", True),
@@ -68,15 +69,6 @@ AUTO = "auto"
 
 PACKAGE_REF = "$package"
 """Key of a construction option ``{"$package": name}`` naming a package element."""
-
-SELF_STATUS_CLASSES = {"BatteryModel"}
-"""Unit classes that build their own status when unit_commitment.status is true.
-
-See ``BatteryModel.build`` in ``flexops/unit_models/storage/battery.py``.
-"""
-
-NO_STATUS_CLASSES = {"Tank", "BatteryModel"}
-"""Unit classes a status element may not target, since they manage their own."""
 
 
 def _like(model: type[_StrictModel], name: str):
@@ -436,7 +428,30 @@ class StatusElement(_StrictModel):
     max_output: float | Quantity = Field(
         description="Output when on, upper limit: a number or a quantity."
     )
+    max_count: int = Field(
+        default=1,
+        ge=1,
+        description="Number of identical trains this unit represents. Above 1, "
+        "status is an integer count and output limits apply per train.",
+    )
+    min_count_on: int | None = Field(
+        default=None,
+        description="Fewest trains that can run when any are running, from 2 to "
+        "max_count. Leave out to allow any count from 0 to max_count.",
+    )
     name: str | None = _label_field()
+
+    @model_validator(mode="after")
+    def _count_limits_consistent(self) -> "StatusElement":
+        """Check that min_count_on is between 2 and max_count."""
+        if self.min_count_on is not None and not (
+            2 <= self.min_count_on <= self.max_count
+        ):
+            raise ValueError(
+                f"status {self.variable!r}: min_count_on must be between 2 and "
+                f"max_count ({self.max_count}), got {self.min_count_on}."
+            )
+        return self
 
 
 class StartupShutdownElement(_StrictModel):
@@ -590,6 +605,73 @@ class ObjectiveElement(_StrictModel):
     )
 
 
+class ResourceElement(_StrictModel):
+    """A balance on one named resource over a plant or network."""
+
+    kind: Literal["resource"]
+    name: str = Field(
+        description="Dotted path of the balance block. Its parent has to be a "
+        "plant or network."
+    )
+    resource: str | None = Field(
+        default=None,
+        description="Resource to balance, as units register it. Defaults to the "
+        "last part of name.",
+    )
+    units: str = Field(
+        description="Units of the balance, a rate for a flow resource or a "
+        "quantity for a stock."
+    )
+    stock: bool = Field(
+        default=False,
+        description="True if the resource's level accumulates over time.",
+    )
+    lower: float | Quantity | None = Field(
+        default=None,
+        description="Lower bound on the net contribution for a flow, or on the "
+        "level for a stock. A bare number is in units.",
+    )
+    upper: float | Quantity | None = Field(
+        default=None,
+        description="Upper bound on the net contribution for a flow, or on the "
+        "level for a stock. A bare number is in units.",
+    )
+    initial: float | Quantity | None = Field(
+        default=None,
+        description="Level at the first time point. Required for a stock, not "
+        "allowed for a flow. A bare number is in units.",
+    )
+
+    @model_validator(mode="after")
+    def _consistent(self) -> "ResourceElement":
+        """Check for a parent, initial only on a stock, and lower <= upper."""
+        if "." not in self.name:
+            raise ValueError(
+                f"resource {self.name!r}: name the balance under a plant or "
+                "network, e.g. 'site.gas_balance'."
+            )
+        if self.stock and self.initial is None:
+            raise ValueError(
+                f"resource {self.name!r}: a stock needs an initial level; set "
+                "initial."
+            )
+        if not self.stock and self.initial is not None:
+            raise ValueError(
+                f"resource {self.name!r}: a flow has no initial level; remove "
+                "initial, or set stock to true."
+            )
+        if (
+            isinstance(self.lower, float)
+            and isinstance(self.upper, float)
+            and self.lower > self.upper
+        ):
+            raise ValueError(
+                f"resource {self.name!r}: lower ({self.lower}) is above upper "
+                f"({self.upper})."
+            )
+        return self
+
+
 Element = Annotated[
     TimeElement
     | PropertyPackageElement
@@ -607,6 +689,7 @@ Element = Annotated[
     | StartupDelayElement
     | ConditionalElement
     | ParallelGroupElement
+    | ResourceElement
     | DispatchElement
     | FixElement
     | UnfixElement
@@ -623,6 +706,7 @@ NAMED_KINDS = (
     "plant",
     "set",
     "unit",
+    "resource",
     "objective",
 )
 """Kinds whose element name must be unique."""
@@ -632,6 +716,7 @@ PARENT_KINDS: dict[str, tuple[str, ...]] = {
     "plant": ("network",),
     "set": ("plant", "network"),
     "unit": ("plant", "network"),
+    "resource": ("plant", "network"),
 }
 """Kinds of element each kind may sit under; the model root is always allowed."""
 
@@ -661,6 +746,7 @@ TARGET_FIELDS: dict[str, tuple[str, ...]] = {
     "startup_delay": ("unit",),
     "conditional": ("unit",),
     "parallel_group": ("units",),
+    "resource": ("name",),
 }
 """Kind -> the fields that say what an element sets; two equal targets clash."""
 
@@ -934,11 +1020,7 @@ class FlowsheetSpec(_StrictModel):
 
     @model_validator(mode="after")
     def _logic_is_consistent(self) -> "FlowsheetSpec":
-        """Require logic to name units, find a status, and never repeat."""
-        units = {el.name: el for el in self.of_kind("unit")}
-
-        def unit_of(member: str):
-            return units[member.partition("[")[0]]
+        """Require logic to name units and never repeat."""
 
         def refs(el) -> list[str]:
             if el.kind == "parallel_group":
@@ -954,36 +1036,6 @@ class FlowsheetSpec(_StrictModel):
                     members[ref] = self._members(ref)
                 except ValueError as exc:
                     raise ValueError(f"{el.kind}: {exc}") from None
-
-        with_status = set()
-        for el in self.of_kind("status"):
-            unit_class = units[el.unit.partition("[")[0]].unit_model_class
-            if unit_class in NO_STATUS_CLASSES:
-                raise ValueError(
-                    f"status on {el.unit!r}: {unit_class} manages its own status; "
-                    "set unit_commitment.status on the unit instead."
-                )
-            with_status.update(members[el.unit])
-
-        def has_status(member: str) -> bool:
-            unit = unit_of(member)
-            own = unit.unit_commitment is not None and unit.unit_commitment.status
-            return member in with_status or (
-                unit.unit_model_class in SELF_STATUS_CLASSES and own
-            )
-
-        needs_status = {"startup_shutdown", "startup_delay", "conditional"}
-        for el in logic:
-            if el.kind in needs_status or (
-                el.kind == "parallel_group" and el.order_status
-            ):
-                for ref in refs(el):
-                    missing = [m for m in members[ref] if not has_status(m)]
-                    if missing:
-                        raise ValueError(
-                            f"{el.kind} on {ref!r} needs a status element on "
-                            f"{missing[0]!r}."
-                        )
 
         seen = set()
         for el in logic:

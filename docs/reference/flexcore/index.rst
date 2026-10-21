@@ -81,6 +81,7 @@ elements, in any order. Pydantic is the schema authority, and
    StartupDelayElement
    ConditionalElement
    ParallelGroupElement
+   ResourceElement
    DispatchElement
    FixElement
    UnfixElement
@@ -98,10 +99,6 @@ elements, in any order. Pydantic is the schema authority, and
    :no-value:
 
 .. autodata:: LOGIC_KINDS
-
-.. autodata:: SELF_STATUS_CLASSES
-
-.. autodata:: NO_STATUS_CLASSES
 
 Shared building blocks
 ~~~~~~~~~~~~~~~~~~~~~~

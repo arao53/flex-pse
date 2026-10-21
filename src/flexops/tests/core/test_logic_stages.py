@@ -10,7 +10,10 @@ from flexcore.config.spec import SCHEMA_VERSION
 from flexcore.exceptions import FlexConfigError
 from flexops import apply_spec, build_model
 from flexops.core.compare import model_differences
+from flexops.core.ops_block import OpsBlockData
 from flexops.core.stages import LOGIC_ORDER
+from flexops.unit_models.storage.battery import BatteryModelData
+from flexops.unit_models.storage.tank import TankData
 
 KW = {"value": 0.0, "units": "kW"}
 KW_MAX = {"value": 10.0, "units": "kW"}
@@ -246,3 +249,97 @@ def test_extension_objective_built_by_an_extension():
     (objective,) = model.component_data_objects(pyo.Objective, active=True)
     assert objective.local_name == "power_objective"
     assert model.costing.find_component("aggregate_operating_cost") is not None
+
+
+def battery(name="p.b", **fields):
+    """Return a battery unit element on ``name``."""
+    return {
+        "kind": "unit",
+        "name": name,
+        "unit_model_class": "BatteryModel",
+        "property_package": None,
+        "construction_options": {"capacity": {"value": 1.0, "units": "kWh"}},
+        **fields,
+    }
+
+
+@pytest.mark.unit
+def test_only_storage_units_refuse_a_status_element():
+    assert OpsBlockData.allows_status_element
+    assert not TankData.allows_status_element
+    assert not BatteryModelData.allows_status_element
+
+
+@pytest.mark.component
+@pytest.mark.parametrize(
+    "element",
+    [
+        {"kind": "startup_shutdown", "unit": "p.b"},
+        {"kind": "conditional", "unit": "p.a", "implies": "p.b"},
+        {"kind": "parallel_group", "units": ["p.a", "p.b"]},
+        {"kind": "startup_delay", "unit": "p.b", "upstream": "p.a", "k": 1},
+    ],
+    ids=["startup_shutdown", "conditional", "parallel_group", "startup_delay"],
+)
+def test_status_logic_needs_a_status_on_each_unit(element):
+    with pytest.raises(FlexConfigError, match=r"'p\.b' needs a status"):
+        build_model(spec(element, statuses=("p.a",)))
+
+
+@pytest.mark.component
+def test_parallel_group_without_status_ordering_needs_no_status():
+    group = {
+        "kind": "parallel_group",
+        "units": ["p.a", "p.b"],
+        "variables": ["flow_in"],
+        "order_status": False,
+    }
+
+    build_model(spec(group, statuses=()))
+
+
+@pytest.mark.component
+def test_a_status_on_the_indexed_unit_covers_its_members():
+    model = build_model(
+        spec(
+            {"kind": "startup_shutdown", "unit": "p.ro[0]"},
+            statuses=("p.ro",),
+            base=INDEXED,
+        )
+    )
+
+    assert model.p.ro[0].find_component("startup") is not None
+
+
+@pytest.mark.component
+def test_battery_with_its_own_status_needs_no_status_element():
+    base = [*BASE[:-2], battery(unit_commitment={"status": True}), BASE[-1]]
+
+    model = build_model(
+        spec({"kind": "startup_shutdown", "unit": "p.b"}, statuses=(), base=base)
+    )
+
+    assert model.p.b.find_component("startup") is not None
+
+
+@pytest.mark.component
+def test_battery_without_its_own_status_still_needs_one():
+    base = [*BASE[:-2], battery(), BASE[-1]]
+
+    with pytest.raises(FlexConfigError, match="needs a status"):
+        build_model(
+            spec({"kind": "startup_shutdown", "unit": "p.b"}, statuses=(), base=base)
+        )
+
+
+@pytest.mark.component
+@pytest.mark.parametrize(
+    "unit",
+    [{"kind": "unit", "name": "p.b", "unit_model_class": "Tank"}, battery()],
+    ids=["Tank", "BatteryModel"],
+)
+def test_status_is_not_allowed_on_units_that_manage_their_own(unit):
+    base = [*BASE[:-2], unit, BASE[-1]]
+
+    with pytest.raises(FlexConfigError, match="manages its own status"):
+        build_model(spec(statuses=("p.b",), base=base))
