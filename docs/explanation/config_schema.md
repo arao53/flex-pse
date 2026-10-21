@@ -202,10 +202,12 @@ element, and a fix on some time points uses `at`. Bounds changed in code
 Each `flexops.logic` helper (except `relax` and `unrelax`, which are solve
 strategy) has one element kind: `status`, `startup_shutdown`, `dwell`, `bypass`,
 `ramp`, `startup_delay`, `conditional` and `parallel_group`. An element names
-its unit and never sits inside it. The spec checks that every unit named exists,
-that logic needing an on/off status has one (a battery with
-`unit_commitment.status` builds its own), and that nothing is set twice on the
-same unit.
+its unit and never sits inside it. The spec checks that every unit named exists
+and that nothing is set twice on the same unit. Two status rules are checked
+when the model is built, since only the unit knows them: logic needing an on/off
+status must find one on the unit (a battery with `unit_commitment.status` builds
+its own), and a `status` element may not target a unit whose
+`allows_status_element` is `False` (`Tank`, `BatteryModel`).
 
 An `extension` element names a user function, as `"package.module:function"` or
 an entry point in the `flexpse.extensions` group, with JSON options. Decorating a
