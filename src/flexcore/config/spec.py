@@ -32,7 +32,7 @@ from flexcore.config.schema import (
     _StrictModel,
 )
 
-SCHEMA_VERSION = "0.1.0"
+SCHEMA_VERSION = "0.1.1"
 """str: the schema version this build writes and validates against."""
 
 KINDS: dict[str, tuple[str, bool]] = {
@@ -436,7 +436,30 @@ class StatusElement(_StrictModel):
     max_output: float | Quantity = Field(
         description="Output when on, upper limit: a number or a quantity."
     )
+    max_count: int = Field(
+        default=1,
+        ge=1,
+        description="Identical trains the unit stands for. Above 1, status is "
+        "an integer count and the output limits apply per train.",
+    )
+    min_count_on: int | None = Field(
+        default=None,
+        description="Fewest trains allowed to run when any run, between 2 and "
+        "max_count. Omitted: any count from 0 to max_count.",
+    )
     name: str | None = _label_field()
+
+    @model_validator(mode="after")
+    def _count_limits_consistent(self) -> "StatusElement":
+        """Require min_count_on to lie in 2..max_count."""
+        if self.min_count_on is not None and not (
+            2 <= self.min_count_on <= self.max_count
+        ):
+            raise ValueError(
+                f"status {self.variable!r}: min_count_on must be between 2 and "
+                f"max_count ({self.max_count}), got {self.min_count_on}."
+            )
+        return self
 
 
 class StartupShutdownElement(_StrictModel):

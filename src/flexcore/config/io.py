@@ -27,7 +27,11 @@ from flexcore.config.spec import (
 )
 from flexcore.exceptions import FlexConfigError
 
-MIGRATIONS: dict[str, Callable[[dict], dict]] = {}
+MIGRATIONS: dict[str, Callable[[dict], dict]] = {
+    # 0.1.1 added optional fields only (status max_count/min_count_on, the
+    # resource kind), so a 0.1.0 spec is valid as written.
+    "0.1.0": lambda data: {**data, "schema_version": "0.1.1"},
+}
 """Source version -> upgrade hook, applied in sequence on load. Each hook must
 set the new ``schema_version`` on the dict it returns."""
 

@@ -1182,6 +1182,13 @@
           "title": "Kind",
           "type": "string"
         },
+        "max_count": {
+          "default": 1,
+          "description": "Identical trains the unit stands for. Above 1, status is an integer count and the output limits apply per train.",
+          "minimum": 1,
+          "title": "Max Count",
+          "type": "integer"
+        },
         "max_output": {
           "anyOf": [
             {
@@ -1193,6 +1200,19 @@
           ],
           "description": "Output when on, upper limit: a number or a quantity.",
           "title": "Max Output"
+        },
+        "min_count_on": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Fewest trains allowed to run when any run, between 2 and max_count. Omitted: any count from 0 to max_count.",
+          "title": "Min Count On"
         },
         "min_output": {
           "anyOf": [

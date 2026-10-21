@@ -17,6 +17,23 @@ Status
 
 .. autofunction:: unrelax
 
+Counted trains
+~~~~~~~~~~~~~~
+
+Pass ``max_count=n`` to :func:`~flexops.logic.status.add_status` to let one unit
+stand for ``n`` identical trains. ``status[t]`` is then an integer count in
+``0..n`` and the output limits apply per running train, so a unit with
+``min_output = 10`` and ``max_output = 100`` and two trains running may deliver
+between 20 and 200. ``min_count_on=m`` forbids running fewer than ``m`` trains
+when any run. :func:`~flexops.logic.unit_commitment.add_startup_shutdown`
+counts the trains started and stopped, and :func:`relax` relaxes a count to a
+real in ``[0, n]``.
+
+Trains with different limits stay separate units. A counted unit cannot be used
+with ``add_conditional``, ``add_startup_delay`` or
+``register_parallel_group(order_status=True)``, which read status as on/off;
+they raise ``FlexConfigError``.
+
 Commitment and timing
 ---------------------
 

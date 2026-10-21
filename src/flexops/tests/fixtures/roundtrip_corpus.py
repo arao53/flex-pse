@@ -448,6 +448,38 @@ def logic_status_startup() -> pyo.ConcreteModel:
     return m
 
 
+# --- counted_trains ---
+
+
+def counted_trains() -> pyo.ConcreteModel:
+    """One pump unit standing for three identical trains, at least two when on."""
+    m = pyo.ConcreteModel(name="counted_trains")
+    m.time_block = fo.TimeBlock(
+        start_date="2025-01-01", end_date="2025-01-01T08:00", time_step=1 * pyunits.hr
+    )
+    m.properties = fo.SimpleAqueousFlow()
+    m.costing = fo.FlexCosting(
+        time_block=m.time_block,
+        energy_prices={"electrical": 0.1 * currency_units("USD") / pyunits.kWh},
+    )
+    m.site = fo.PlantBlock(time_block=m.time_block)
+    pump = m.site.pump = fo.Pump(
+        property_package=m.properties, costing_package=m.costing
+    )
+    status = logic.add_status(
+        pump,
+        pump.power_electrical,
+        1 * pyunits.kW,
+        20 * pyunits.kW,
+        max_count=3,
+        min_count_on=2,
+    )
+    logic.add_startup_shutdown(pump, status, min_uptime=2, min_downtime=2)
+    m.costing.cost_process()
+    m.objective = pyo.Objective(expr=m.costing.aggregate_operating_cost)
+    return m
+
+
 # --- long_prices ---
 
 N_POINTS = 3000
@@ -769,6 +801,7 @@ def units_on_model() -> pyo.ConcreteModel:
 CASES = {
     "api_freeze_like": (api_freeze_like, True, "unit"),
     "battery_status": (battery_status, False, "unit"),
+    "counted_trains": (counted_trains, False, "unit"),
     "desalination": (desalination, True, "component"),
     "extension_constraint_objective": (extension_constraint_objective, True, "unit"),
     "indexed_trains": (indexed_trains, True, "unit"),
