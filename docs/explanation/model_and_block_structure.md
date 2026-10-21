@@ -71,30 +71,17 @@ one to three balance constraints as difference equations against
   the property package), and exposes the ports through the inherited IDAES
   `add_inlet_port`/`add_outlet_port` helpers.
 
-### Resource terms, one signed list of what every unit adds or takes
+### Resource terms, a signed list of what each unit adds or takes
 
-A resource is anything a plant balances: a water stream, a fuel, electricity.
-{func}`~flexops.core.registration.iter_resource_terms` answers "which variables
-add to or take from resource `r`, and with what sign?" for a plant, a network, a
-unit or the whole model. It builds no constraints. It reads the registrations
-units already make and translates them, so nothing is registered twice.
-
-| Registration | Resource | Coefficient |
-| --- | --- | --- |
-| `register_boundary_flow(kind=FEED)` | its `resource` | +1 |
-| `register_boundary_flow(kind=PRODUCT)` | its `resource` | −1 |
-| `register_power(kind=ELECTRICAL)` | `"electricity"` | −1 |
-| `register_fuel_usage(var, fuel_name)` | `fuel_name` | −1 |
-| {meth}`~flexops.core.ops_block.OpsBlockData.register_resource` | as given | as given |
-
-A positive coefficient supplies the resource and a negative one consumes it. An
-electrical draw is positive, so it consumes electricity; an export is negative,
-so it supplies it. A `Feed` of `natural_gas` and a unit burning `natural_gas`
-land on the same key with opposite signs, which is exactly the balance a plant
-needs. Thermal power is not mapped, because a heat duty carries a temperature.
-
-Use `register_resource` for what the table does not cover. Its `offset` is a
-delay in steps; nothing sets it yet.
+A resource is anything a plant balances, like a water stream, a fuel or
+electricity. {func}`~flexops.core.registration.iter_resource_terms` lists
+which variables add to or take from each resource, and with what sign, for a
+plant, a network, a unit or the whole model. It doesn't build any constraints.
+It reads the power, fuel and boundary registrations units already make, so a
+unit never registers the same variable twice.
+{meth}`~flexops.core.ops_block.OpsBlockData.register_resource` covers anything
+else. See {doc}`resources` for the sign table and how a balance uses these
+terms.
 
 ### Property packages, a parameter block plus state blocks
 

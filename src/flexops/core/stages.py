@@ -323,7 +323,7 @@ def _limit(value):
 
 
 def _optional_limit(value):
-    """Return a spec limit as a Pyomo value, passing ``None`` through."""
+    """Return a spec limit as a Pyomo value, or ``None`` if it's unset."""
     return None if value is None else _limit(value)
 
 
@@ -390,11 +390,7 @@ def _pairs(model, ctx: BuildContext, first: str, second: str) -> list[tuple]:
 
 
 def stage_resources(model, spec: FlowsheetSpec, ctx: BuildContext) -> None:
-    """Add each resource element's balance to its plant or network.
-
-    Runs after the logic stage so every unit, status and registration exists
-    when terms are collected, and before the state stage so fixes can name the
-    balance's variables.
+    """Add a balance for each resource element to its plant or network.
 
     Args:
         model: The model with built units and logic.

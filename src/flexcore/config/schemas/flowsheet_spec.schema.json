@@ -983,7 +983,7 @@
     },
     "ResourceElement": {
       "additionalProperties": false,
-      "description": "A balance on one named resource over a plant or network. The balance sums the signed contributions of every unit below its parent. A flow resource has no memory: each step's net contribution is bounded by lower and upper, and with neither it is zero, a strict node balance. A stock resource accumulates: its level starts at initial and adds the time step times the net contribution each step.",
+      "description": "A balance on one named resource over a plant or network.",
       "properties": {
         "initial": {
           "anyOf": [
@@ -998,7 +998,7 @@
             }
           ],
           "default": null,
-          "description": "Level at the first time point. Required for a stock and not allowed for a flow. A number is in units.",
+          "description": "Level at the first time point. Required for a stock, not allowed for a flow. A bare number is in units.",
           "title": "Initial"
         },
         "kind": {
@@ -1019,11 +1019,11 @@
             }
           ],
           "default": null,
-          "description": "Lower bound on the net contribution (flow) or level (stock). A number is in units.",
+          "description": "Lower bound on the net contribution for a flow, or on the level for a stock. A bare number is in units.",
           "title": "Lower"
         },
         "name": {
-          "description": "Dotted path of the balance block on the model; its parent must be a plant or network element.",
+          "description": "Dotted path of the balance block. Its parent has to be a plant or network.",
           "title": "Name",
           "type": "string"
         },
@@ -1037,17 +1037,17 @@
             }
           ],
           "default": null,
-          "description": "Name of the resource to balance, as units register it. Omitted: the last segment of name.",
+          "description": "Resource to balance, as units register it. Defaults to the last part of name.",
           "title": "Resource"
         },
         "stock": {
           "default": false,
-          "description": "True for a resource whose level accumulates over time.",
+          "description": "True if the resource's level accumulates over time.",
           "title": "Stock",
           "type": "boolean"
         },
         "units": {
-          "description": "Units the balance is written in: a rate for a flow resource, a level for a stock.",
+          "description": "Units of the balance, a rate for a flow resource or a quantity for a stock.",
           "title": "Units",
           "type": "string"
         },
@@ -1064,7 +1064,7 @@
             }
           ],
           "default": null,
-          "description": "Upper bound on the net contribution (flow) or level (stock). A number is in units.",
+          "description": "Upper bound on the net contribution for a flow, or on the level for a stock. A bare number is in units.",
           "title": "Upper"
         }
       },
@@ -1279,7 +1279,7 @@
         },
         "max_count": {
           "default": 1,
-          "description": "Identical trains the unit stands for. Above 1, status is an integer count and the output limits apply per train.",
+          "description": "Number of identical trains this unit represents. Above 1, status is an integer count and output limits apply per train.",
           "minimum": 1,
           "title": "Max Count",
           "type": "integer"
@@ -1306,7 +1306,7 @@
             }
           ],
           "default": null,
-          "description": "Fewest trains allowed to run when any run, between 2 and max_count. Omitted: any count from 0 to max_count.",
+          "description": "Fewest trains that can run when any are running, from 2 to max_count. Leave out to allow any count from 0 to max_count.",
           "title": "Min Count On"
         },
         "min_output": {

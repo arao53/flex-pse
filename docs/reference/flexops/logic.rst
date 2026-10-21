@@ -20,19 +20,31 @@ Status
 Counted trains
 ~~~~~~~~~~~~~~
 
-Pass ``max_count=n`` to :func:`~flexops.logic.status.add_status` to let one unit
-stand for ``n`` identical trains. ``status[t]`` is then an integer count in
-``0..n`` and the output limits apply per running train, so a unit with
-``min_output = 10`` and ``max_output = 100`` and two trains running may deliver
-between 20 and 200. ``min_count_on=m`` forbids running fewer than ``m`` trains
-when any run. :func:`~flexops.logic.unit_commitment.add_startup_shutdown`
-counts the trains started and stopped, and :func:`relax` relaxes a count to a
-real in ``[0, n]``.
+Pass ``max_count=n`` to :func:`~flexops.logic.status.add_status` when one unit
+stands for ``n`` identical trains with the same limits. ``status[t]`` becomes
+an integer count in ``0..n`` and the output limits apply per running train.
+With ``min_output = 10``, ``max_output = 100`` and two trains running, the unit
+can deliver between 20 and 200. One count instead of ``n`` binaries means the
+solver doesn't search through equivalent orderings of the same trains. Trains
+with different limits have to stay separate units.
 
-Trains with different limits stay separate units. A counted unit cannot be used
-with ``add_conditional``, ``add_startup_delay`` or
-``register_parallel_group(order_status=True)``, which read status as on/off;
-they raise ``FlexConfigError``.
+``min_count_on=m`` stops the unit from running between 1 and ``m - 1``
+trains. It adds a binary ``status_on[t]`` that's 1 when any train runs, with
+``m * status_on[t] <= status[t] <= n * status_on[t]``.
+
+:func:`~flexops.logic.unit_commitment.add_startup_shutdown` counts the trains
+started and stopped at each step, and ``min_downtime`` compares against
+``n - status[t]`` instead of ``1 - status[t]``. :func:`relax` turns a count
+into a real in ``[0, n]``. It only changes variable domains, never
+constraints, bounds or fixed values, so warm starts and references held
+elsewhere survive. With the default ``max_count=1`` you get the same binary
+model as before.
+
+``add_conditional``, ``add_startup_delay`` and
+``register_parallel_group(order_status=True)`` compare status to 0 and 1,
+which means something different for a count (``1 - status`` can go negative).
+They raise ``FlexConfigError`` on a counted unit instead of building the wrong
+model.
 
 Commitment and timing
 ---------------------

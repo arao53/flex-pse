@@ -431,19 +431,19 @@ class StatusElement(_StrictModel):
     max_count: int = Field(
         default=1,
         ge=1,
-        description="Identical trains the unit stands for. Above 1, status is "
-        "an integer count and the output limits apply per train.",
+        description="Number of identical trains this unit represents. Above 1, "
+        "status is an integer count and output limits apply per train.",
     )
     min_count_on: int | None = Field(
         default=None,
-        description="Fewest trains allowed to run when any run, between 2 and "
-        "max_count. Omitted: any count from 0 to max_count.",
+        description="Fewest trains that can run when any are running, from 2 to "
+        "max_count. Leave out to allow any count from 0 to max_count.",
     )
     name: str | None = _label_field()
 
     @model_validator(mode="after")
     def _count_limits_consistent(self) -> "StatusElement":
-        """Require min_count_on to lie in 2..max_count."""
+        """Check that min_count_on is between 2 and max_count."""
         if self.min_count_on is not None and not (
             2 <= self.min_count_on <= self.max_count
         ):
@@ -606,52 +606,45 @@ class ObjectiveElement(_StrictModel):
 
 
 class ResourceElement(_StrictModel):
-    """A balance on one named resource over a plant or network.
-
-    The balance sums the signed contributions of every unit below its parent.
-    A flow resource has no memory: each step's net contribution is bounded by
-    lower and upper, and with neither it is zero, a strict node balance. A stock
-    resource accumulates: its level starts at initial and adds the time step
-    times the net contribution each step.
-    """
+    """A balance on one named resource over a plant or network."""
 
     kind: Literal["resource"]
     name: str = Field(
-        description="Dotted path of the balance block on the model; its parent "
-        "must be a plant or network element."
+        description="Dotted path of the balance block. Its parent has to be a "
+        "plant or network."
     )
     resource: str | None = Field(
         default=None,
-        description="Name of the resource to balance, as units register it. "
-        "Omitted: the last segment of name.",
+        description="Resource to balance, as units register it. Defaults to the "
+        "last part of name.",
     )
     units: str = Field(
-        description="Units the balance is written in: a rate for a flow "
-        "resource, a level for a stock."
+        description="Units of the balance, a rate for a flow resource or a "
+        "quantity for a stock."
     )
     stock: bool = Field(
         default=False,
-        description="True for a resource whose level accumulates over time.",
+        description="True if the resource's level accumulates over time.",
     )
     lower: float | Quantity | None = Field(
         default=None,
-        description="Lower bound on the net contribution (flow) or level "
-        "(stock). A number is in units.",
+        description="Lower bound on the net contribution for a flow, or on the "
+        "level for a stock. A bare number is in units.",
     )
     upper: float | Quantity | None = Field(
         default=None,
-        description="Upper bound on the net contribution (flow) or level "
-        "(stock). A number is in units.",
+        description="Upper bound on the net contribution for a flow, or on the "
+        "level for a stock. A bare number is in units.",
     )
     initial: float | Quantity | None = Field(
         default=None,
-        description="Level at the first time point. Required for a stock and "
-        "not allowed for a flow. A number is in units.",
+        description="Level at the first time point. Required for a stock, not "
+        "allowed for a flow. A bare number is in units.",
     )
 
     @model_validator(mode="after")
     def _consistent(self) -> "ResourceElement":
-        """Require a parent, initial only for a stock, and lower <= upper."""
+        """Check for a parent, initial only on a stock, and lower <= upper."""
         if "." not in self.name:
             raise ValueError(
                 f"resource {self.name!r}: name the balance under a plant or "

@@ -215,9 +215,9 @@ Resource balances
 
 .. currentmodule:: flexops.core.resources
 
-A ``resource`` element, or a direct call, adds a balance on one named resource
-to a plant or network, built from the terms
-:func:`~flexops.core.registration.iter_resource_terms` collects. See
+:func:`add_resource_balance` adds a balance on one named resource to a plant or
+network, using the terms :func:`~flexops.core.registration.iter_resource_terms`
+collects. A ``resource`` element calls it during the build. See
 :doc:`/explanation/resources`.
 
 .. autofunction:: add_resource_balance

@@ -42,7 +42,7 @@ class RollingStateKind(enum.StrEnum):
 
 
 def status_max_count(unit: Any) -> int:
-    """Return how many identical trains ``unit``'s status counts (``1`` if binary).
+    """Return how many trains ``unit``'s status counts, or 1 for a binary status.
 
     Args:
         unit: A unit block, with or without ``add_status`` applied.
@@ -54,16 +54,11 @@ def status_max_count(unit: Any) -> int:
 
 
 def require_binary_status(unit: Any, *, used_by: str) -> None:
-    """Refuse a counted unit in logic that reads ``status`` as on/off.
-
-    ``add_conditional``, ``add_startup_delay`` and ``register_parallel_group``
-    compare status values to 0 and 1. For a count of trains those comparisons
-    mean something different (and ``1 - status`` goes negative), so they are
-    rejected instead of silently building the wrong model.
+    """Raise if ``unit`` has a counted status, for logic that reads status as on/off.
 
     Args:
-        unit: The unit whose status is about to be used.
-        used_by: Name of the calling helper, for the error message.
+        unit: Unit whose status is about to be used.
+        used_by: Name of the calling helper, used in the error message.
 
     Raises:
         FlexConfigError: If ``unit`` was built with ``max_count > 1``.
@@ -115,16 +110,14 @@ def _track_binary(
 
     The registry is a plain Python list (never a Pyomo component), created
     lazily on first use so any UC piece may be the first applied to a unit.
-    Each entry carries the var's own pair of domains, because an integer count
-    of ``n`` identical trains must relax to ``[0, n]``, not to ``[0, 1]``.
 
     Args:
         unit: The unit block the binary lives on.
-        binary: The discrete ``Var`` to track for ``relax``/``unrelax``.
-        discrete: The domain ``unrelax`` restores. ``pyo.Binary`` by default.
-        relaxed: The domain ``relax`` sets. ``pyo.UnitInterval`` by default;
-            a count variable passes ``pyo.NonNegativeReals`` and keeps its
-            ``(0, n)`` bounds.
+        binary: Discrete ``Var`` to track for ``relax``/``unrelax``.
+        discrete: Domain ``unrelax`` restores. ``pyo.Binary`` by default.
+        relaxed: Domain ``relax`` sets. ``pyo.UnitInterval`` by default. A
+            count passes ``pyo.NonNegativeReals`` and keeps its ``(0, n)``
+            bounds.
     """
     binaries = getattr(unit, _BINARIES_ATTR, None)
     if binaries is None:
@@ -134,11 +127,8 @@ def _track_binary(
 
 
 def _set_domain(binary: pyo.Var, domain: Any) -> None:
-    """Set the domain of every data object of a (possibly indexed) discrete Var.
-
-    Bounds are separate from the domain in Pyomo, so a count's ``(0, n)`` bounds
-    survive the switch.
-    """
+    """Set the domain of every data object of a (possibly indexed) discrete Var."""
+    # bounds are separate from the domain, so a count keeps its (0, n) bounds
     for data in binary.values() if binary.is_indexed() else (binary,):
         data.domain = domain
 
@@ -166,21 +156,6 @@ def add_status(
     Call at most once per unit (v0 uses the fixed component names ``status`` /
     ``status_min_link`` / ``status_max_link``).
 
-    **Counted units.** With ``max_count = n > 1`` one unit stands for ``n``
-    identical trains that share the same limits. ``status[t]`` becomes an
-    integer count in ``{0, ..., n}``, and the same two links now bound
-    ``output_var[t]`` between ``min_output * status[t]`` and ``max_output *
-    status[t]``: the combined output of ``status[t]`` running trains. The
-    default ``max_count = 1`` builds exactly the binary structure above.
-
-    A count lets the solver treat the trains as interchangeable, which removes
-    the symmetry that per-train binaries create. Trains with different limits
-    must stay separate units.
-
-    If ``min_count_on = m`` is given, the plant may not run between one and
-    ``m - 1`` trains: ``status_on[t]`` (Binary) marks "any train running" and
-    ``m * status_on[t] <= status[t] <= n * status_on[t]``.
-
     Args:
         unit: The unit block to attach the status structure to.
         output_var: The time-indexed output ``Var`` (e.g. a power draw) gated by
@@ -189,14 +164,13 @@ def add_status(
             ``output_var`` (e.g. ``0 * pyunits.kW``).
         max_output: Maximum output when on, a units-carrying quantity matching
             ``output_var``. For a counted unit, the limit of one train.
-        max_count: Number of identical trains the unit stands for. ``1``
-            (default) keeps ``status`` a Binary.
-        min_count_on: Smallest number of trains allowed to run when any run.
-            ``None`` (default) allows every count from ``0`` to ``max_count``.
-            Must satisfy ``2 <= min_count_on <= max_count``.
+        max_count: Number of identical trains the unit represents. ``1``
+            (default) keeps ``status`` binary.
+        min_count_on: Fewest trains that can run when any are running, from
+            2 to ``max_count``. ``None`` (default) allows any count.
 
     Returns:
-        The attached ``status`` Var: Binary, or integer-valued in
+        The attached ``status`` Var. Binary, or an integer in
         ``[0, max_count]`` when ``max_count > 1``.
 
     Raises:
@@ -217,7 +191,7 @@ def add_status(
             field="min_count_on",
             value=min_count_on,
         )
-    # Defaults are left out of the record so existing specs emit unchanged.
+    # leave defaults out so existing specs emit unchanged
     counted_fields: dict[str, int] = {}
     if max_count > 1:
         counted_fields["max_count"] = max_count
@@ -263,7 +237,7 @@ def add_status(
     if max_count == 1:
         _track_binary(unit, status)
     else:
-        # A relaxed count is a real in [0, n]; the (0, n) bounds stay on the Var.
+        # a relaxed count is a real in [0, n], the bounds stay on the Var
         _track_binary(
             unit,
             status,
@@ -282,7 +256,7 @@ def add_status(
 
         @unit.Constraint(
             tb.time_index,
-            doc="Running at all means at least min_count_on trains are running.",
+            doc="If any train runs, at least min_count_on trains run.",
         )
         def status_on_min(_b, t):
             return minimum_running * status_on[t] <= status[t]
@@ -299,14 +273,7 @@ def add_status(
 
 
 def relax(unit: Any) -> None:
-    """Relax every logic-attached discrete Var on ``unit``.
-
-    Binaries go to ``pyo.UnitInterval``; an integer status count goes to
-    ``pyo.NonNegativeReals`` with its ``[0, n]`` bounds kept. A first-class,
-    live-model domain switch (LP relaxation of the unit's discrete structure):
-    it changes only variable domains -- never constraints, bounds, or fixed
-    values -- so warm starts and references held elsewhere (costing,
-    aggregation) survive. A no-op if the unit has no tracked binaries.
+    """Relax every logic-attached discrete Var on ``unit`` to a continuous domain.
 
     Args:
         unit: The unit whose tracked binaries to relax.
@@ -316,11 +283,7 @@ def relax(unit: Any) -> None:
 
 
 def unrelax(unit: Any) -> None:
-    """Restore integrality of every logic-attached Var on ``unit``.
-
-    Binaries return to ``pyo.Binary`` and status counts to
-    ``pyo.NonNegativeIntegers``. The exact inverse of :func:`relax`
-    (domain-only). A no-op if the unit has no tracked binaries.
+    """Restore integrality of every logic-attached Var on ``unit``, undoing ``relax``.
 
     Args:
         unit: The unit whose tracked binaries to restore to integrality.

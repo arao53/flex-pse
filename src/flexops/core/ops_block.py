@@ -577,23 +577,14 @@ class OpsBlockData(UnitModelBlockData):
     ) -> None:
         """Register a variable's signed contribution to a named resource.
 
-        Power, fuel and boundary flows reach a resource balance without this
-        call (see :func:`~flexops.core.registration.iter_resource_terms`).
-        Use it for anything else a unit adds to or takes from a resource, such
-        as a recovered stream or a utility the unit does not meter itself.
-
-        Sign convention: a positive ``coeff`` **supplies** the resource and a
-        negative one **consumes** it. The term at step ``t`` is
-        ``coeff * var[t - offset]``.
-
         Args:
-            var: The time-indexed Pyomo ``Var``/``Reference``, over exactly this
-                unit's time points.
-            resource: The resource's name (e.g. ``"brine"``), the key its terms
-                are collected under.
-            coeff: Signed coefficient, in the resource's units per ``var``'s.
-            offset: Delay in steps, ``>= 0``. Terms before the horizon starts
-                contribute nothing.
+            var: Time-indexed Pyomo ``Var`` or ``Reference`` over this unit's
+                time points.
+            resource: Name the term is collected under (e.g. ``"brine"``).
+            coeff: Signed coefficient in resource units per ``var`` unit.
+                Positive supplies the resource, negative consumes it.
+            offset: Delay in steps, ``>= 0``. The term at ``t`` is
+                ``coeff * var[t - offset]``.
 
         Raises:
             FlexConfigError: If ``resource`` is empty, ``coeff`` is not a

@@ -97,9 +97,9 @@ stage, and is either **mutable** (it can be changed on a built model) or not:
 
 Within the logic stage, kinds build in {data}`~flexops.core.stages.LOGIC_ORDER`:
 status first, because startup, conditional and parallel logic hang off a
-status binary, and logic between units last. The `resources` stage follows the
-logic stage because a resource balance sums what units and their logic have
-registered, and it precedes `state` so a `fix` can name a balance's variables.
+status binary, and logic between units last. The `resources` stage runs after
+`logic`, since a balance sums what units and their logic registered, and
+before `state`, so a `fix` can name a balance's variables.
 **Costing is processed last because `cost_process` aggregates whatever is
 registered when it runs**: every power term a unit, a surrogate or an extension
 registers has to exist by then.

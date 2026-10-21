@@ -46,11 +46,6 @@ def add_startup_shutdown(
       n - status_var[t]``, window sized by ``min_downtime``, where ``n`` is the
       unit's ``max_count`` (``1`` for a binary status).
 
-    For a counted unit (``max_count = n > 1``) ``startup[t]`` and
-    ``shutdown[t]`` are integers in ``0..n``: the number of trains started or
-    stopped at ``t``. This is the aggregated form for identical trains. At
-    ``n = 1`` every constraint is the binary form above.
-
     At the defaults (``min_uptime=1, min_downtime=1``) each window is the
     single point ``{t}``, so these reduce exactly to the tightening bounds
     ``startup[t] <= status_var[t]`` and ``shutdown[t] <= 1 - status_var[t]``.
@@ -66,9 +61,9 @@ def add_startup_shutdown(
 
     Args:
         unit: The unit block to attach the transition structure to.
-        status_var: The unit's time-indexed ``status`` Var (from
-            :func:`~flexops.logic.status.add_status`): a Binary, or a count
-            when the unit was built with ``max_count > 1``.
+        status_var: The unit's time-indexed ``status`` Var from
+            :func:`~flexops.logic.status.add_status`. Binary, or a count when
+            the unit was built with ``max_count > 1``.
         min_uptime: Minimum number of steps the unit must stay on after a
             startup. Must be ``>= 1``; ``1`` means no additional requirement
             beyond the instant the unit turns on.
@@ -77,8 +72,8 @@ def add_startup_shutdown(
 
     Returns:
         The attached ``(startup, shutdown)`` Vars, each indexed over
-        ``t >= 1``. Binary, or integer-valued in ``[0, max_count]`` for a
-        counted unit.
+        ``t >= 1``. Binary, or the number of trains started or stopped (an
+        integer in ``[0, max_count]``) for a counted unit.
 
     Raises:
         FlexConfigError: If ``min_uptime`` or ``min_downtime`` is ``< 1``.

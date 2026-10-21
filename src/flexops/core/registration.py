@@ -304,15 +304,15 @@ class BoundaryRecord:
 
 @dataclass
 class ResourceRecord:
-    """An explicitly registered contribution to a named resource.
+    """A contribution to a named resource added with ``register_resource``.
 
     Attributes:
-        var: The live time-indexed Pyomo ``Var``/``Reference``.
-        name: The variable's local name on its unit block.
-        resource: The resource's name, the key its terms are collected under.
-        coeff: Signed coefficient: positive supplies the resource, negative
+        var: Time-indexed Pyomo ``Var`` or ``Reference``.
+        name: Local name of the variable on its unit block.
+        resource: Name the term is collected under.
+        coeff: Signed coefficient. Positive supplies the resource, negative
             consumes it.
-        offset: Time offset in steps. The term at ``t`` uses ``var[t - offset]``.
+        offset: Delay in steps. The term at ``t`` uses ``var[t - offset]``.
     """
 
     var: Any
@@ -324,15 +324,15 @@ class ResourceRecord:
 
 @dataclass
 class ResourceTerm:
-    """One signed contribution of a variable to a resource, as seen by a balance.
+    """One variable's signed contribution to a resource, as a balance sees it.
 
     Attributes:
-        resource: The resource's name.
-        var: The live time-indexed Pyomo ``Var``/``Reference``.
-        coeff: Signed coefficient: positive supplies the resource, negative
+        resource: Name of the resource.
+        var: Time-indexed Pyomo ``Var`` or ``Reference``.
+        coeff: Signed coefficient. Positive supplies the resource, negative
             consumes it.
-        offset: Time offset in steps.
-        unit: The block that registered the variable, for error messages.
+        offset: Delay in steps.
+        unit: Block that registered the variable, used in error messages.
     """
 
     resource: str
@@ -359,9 +359,9 @@ class IORegistry:
         relations: Registered swappable relationships (see
             :class:`RelationRecord`).
         boundary: Registered boundary flows (feeds and products).
-        resources: Explicit contributions to named resources. Power, fuel and
-            boundary registrations are translated by
-            :func:`iter_resource_terms` and are not repeated here.
+        resources: Contributions added with ``register_resource``. Power,
+            fuel and boundary terms come from their own registrations (see
+            :func:`iter_resource_terms`).
     """
 
     io_variables: list[IOVariableRecord] = field(default_factory=list)
@@ -440,32 +440,16 @@ def iter_swapped_relations(model) -> Iterator[tuple[Any, RelationRecord]]:
 
 
 def iter_resource_terms(block) -> dict[str, list[ResourceTerm]]:
-    """Collect every unit's signed contribution to each named resource.
-
-    The resource-task-network view of what units already register: a positive
-    coefficient supplies the resource and a negative one consumes it. Nothing
-    is registered twice. Power, fuel and boundary registrations stay the single
-    source of truth and are translated here:
-
-    * ``register_boundary_flow(kind=FEED)``: its ``resource``, coefficient +1.
-    * ``register_boundary_flow(kind=PRODUCT)``: its ``resource``, coefficient -1.
-    * ``register_power(kind=ELECTRICAL)``: ``"electricity"``, coefficient -1.
-    * ``register_fuel_usage(var, fuel_name)``: ``fuel_name``, coefficient -1.
-    * ``register_resource(var, resource=..., coeff=..., offset=...)``: as given.
-
-    An electrical draw is positive, so it consumes electricity, and an export
-    is negative, so it supplies it. Thermal power is not mapped: a heat duty
-    carries a temperature, and summing heat at different temperatures needs its
-    own design.
+    """Collect every unit's signed contribution to each resource under ``block``.
 
     Args:
-        block: A plant, a network, a unit (indexed or not) or the model. Every
-            registered block below it is read once.
+        block: A plant, network, unit (indexed or not) or the whole model.
+            Each registered block below it is read once.
 
     Returns:
-        ``{resource: [ResourceTerm, ...]}`` with keys in sorted order. Terms
-        appear in model order, with explicit registrations after the derived
-        ones for the same block.
+        ``{resource: [ResourceTerm, ...]}`` with resources sorted by name.
+        Terms are in model order, and a block's ``register_resource`` terms
+        come after the ones from its power, fuel and boundary registrations.
     """
     terms: dict[str, list[ResourceTerm]] = {}
     seen: set[int] = set()

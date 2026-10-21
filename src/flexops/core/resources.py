@@ -1,22 +1,4 @@
-"""Resource balances: one equation per named resource, built from registered terms.
-
-A resource-task network treats everything a plant balances (water, fuel,
-electricity, a storage level) as a resource with a level, and units as tasks
-that add to or take from it. :func:`add_resource_balance` builds that equation
-for one resource over a plant or network from the signed terms
-:func:`~flexops.core.registration.iter_resource_terms` collects.
-
-Two kinds of resource are supported.
-
-* **Flow** (``stock=False``): nothing accumulates. ``net[t]`` equals the sum of
-  the terms at ``t`` and is bounded by ``lower`` and ``upper``. With neither
-  bound it is zero, a strict node balance.
-* **Stock** (``stock=True``): the level accumulates the way a
-  :class:`~flexops.unit_models.storage.tank.Tank` does. ``level[0]`` is
-  ``initial``; for ``t >= 1``, ``level[t] = level[t-1] + dt * sum of the terms
-  at t``. Flows at ``t = 0`` do not count, because ``initial`` is the level at
-  the start of that step.
-"""
+"""Resource balances on a plant or network, built from registered resource terms."""
 
 import pyomo.environ as pyo
 from pyomo.core.base.units_container import UnitsError
@@ -31,13 +13,13 @@ from flexops.logic._records import record
 
 
 def _to_level(value, units, *, field: str):
-    """Return ``value`` as a float magnitude in ``units``, or ``None``.
+    """Return ``value`` as a float in ``units``, or ``None``.
 
     Args:
-        value: ``None``, a bare number (taken to be in ``units`` already) or a
-            units-carrying Pyomo expression.
-        units: The Pyomo units to express it in.
-        field: Name of the argument, for the error message.
+        value: ``None``, a bare number already in ``units``, or a Pyomo
+            expression with units.
+        units: Pyomo units to convert to.
+        field: Name of the argument, used in the error message.
 
     Returns:
         The magnitude in ``units``, or ``None`` if ``value`` is ``None``.
@@ -62,19 +44,17 @@ def _to_level(value, units, *, field: str):
 
 
 def _arc_connected_ids(scope) -> set[int]:
-    """Return the ids of every variable on a port that an Arc connects.
-
-    Both active arcs and arcs that were expanded into equalities count: either
-    way the flow across them is already conserved.
+    """Return the ids of every variable on a port an Arc connects.
 
     Args:
-        scope: The block whose model holds the arcs.
+        scope: Block whose model holds the arcs.
 
     Returns:
         ``id()`` of each Var data object found on a connected port.
     """
     ids: set[int] = set()
     for arc in scope.model().component_data_objects(Arc, descend_into=True):
+        # an expanded arc still conserves its flow
         if not (arc.active or arc.expanded_block is not None):
             continue
         for port in (arc.source, arc.destination):
@@ -85,16 +65,12 @@ def _arc_connected_ids(scope) -> set[int]:
 
 
 def _reject_arc_flows(scope, resource: str, terms: list[ResourceTerm]) -> None:
-    """Refuse a term whose variable is a flow an Arc already conserves.
-
-    Balancing it again counts the same flow twice. A resource should be made of
-    metered boundary flows, power, fuel and explicit terms, not of the two ends
-    of a connection.
+    """Raise if a term's variable is a flow an Arc already conserves.
 
     Args:
-        scope: The plant or network the balance is built on.
-        resource: The resource's name, for the message.
-        terms: The terms about to be summed.
+        scope: Plant or network the balance is built on.
+        resource: Name of the resource, used in the message.
+        terms: Terms about to be summed.
 
     Raises:
         FlexConfigError: If a term's variable sits on a connected port.
@@ -126,35 +102,20 @@ def add_resource_balance(
     upper=None,
     initial=None,
 ):
-    """Add the balance of one named resource to a plant or network.
-
-    Sums the signed terms every unit below ``scope`` registered for
-    ``resource`` (see :func:`~flexops.core.registration.iter_resource_terms`)
-    and builds a sub-block ``scope.<local_name>``:
-
-    * flow: ``net[t] == sum(coeff * var[t - offset])``, with ``net`` bounded by
-      ``lower`` and ``upper``;
-    * stock: ``level[0] == initial`` and, for ``t >= 1``, ``level[t] ==
-      level[t-1] + dt * sum(coeff * var[t - offset])``, with ``level`` bounded.
-
-    A term at ``t - offset < 0`` contributes nothing; every offset is ``0``
-    today, so this only matters once a unit registers a delay. Every term is
-    converted to ``units`` with ``pyunits.convert``, so power in kW and flow in
-    m³/hr can share a balance when ``units`` and the coefficients make them
-    commensurable.
+    """Add a balance on one named resource to a plant or network.
 
     Args:
-        scope: The plant or network to balance.
-        local_name: Name of the sub-block to add to ``scope``.
-        resource: The resource to collect, as units registered it.
-        units: Units of ``net`` (a rate) or ``level`` (a quantity), as
-            ``parse_units`` reads them.
-        stock: Whether the resource accumulates over time.
-        lower: Lower bound on ``net`` or ``level``: a number in ``units`` or a
-            quantity. For a flow, ``None`` with ``upper`` also ``None`` means
-            zero; otherwise ``None`` leaves that side unbounded.
-        upper: Upper bound, like ``lower``.
-        initial: Level at the first time point, for a stock only.
+        scope: Plant or network to balance.
+        local_name: Name of the sub-block added to ``scope``.
+        resource: Resource to collect, as units registered it.
+        units: Units of ``net`` (a rate) or ``level`` (a quantity), in
+            ``parse_units`` syntax.
+        stock: True if the resource accumulates over time.
+        lower: Lower bound on ``net`` or ``level``, a number in ``units`` or a
+            quantity. For a flow with no ``upper`` either, ``None`` means zero.
+            Otherwise ``None`` leaves that side open.
+        upper: Upper bound, same rules as ``lower``.
+        initial: Level at the first time point. Stock only.
 
     Returns:
         The new sub-block.
@@ -210,20 +171,17 @@ def add_resource_balance(
     scope.add_component(local_name, block)
 
     def summed(t, *, per_step: bool):
-        """Return the terms at ``t`` as one expression in ``level_units``.
-
-        Each term is converted on its own, so a dimension mismatch names the
-        unit that registered it. A term whose ``t - offset`` is before the
-        horizon starts adds nothing.
-        """
+        """Return the terms at ``t`` as one expression in ``level_units``."""
         pieces = []
         for term in terms:
             index = t - term.offset
+            # skip terms that land before the horizon starts
             if index not in term.var:
                 continue
             raw = term.coeff * term.var[index]
             if per_step:
                 raw = tb.dt * raw
+            # convert each term on its own so an error names its unit
             try:
                 pieces.append(pyunits.convert(raw, to_units=level_units))
             except UnitsError as exc:
@@ -250,18 +208,17 @@ def add_resource_balance(
             initialize=_to_level(initial, level_units, field="initial"),
             mutable=True,
             units=level_units,
-            doc="Initial level, level[0] (rolling-horizon initial state).",
+            doc="Initial level, level[0], registered as rolling horizon state.",
         )
         tb.register_initial_state(block.initial)
 
-        @block.Constraint(doc="Initial condition: level[0] equals initial.")
+        @block.Constraint(doc="level[0] equals initial.")
         def initial_level(b):
             return b.level[0] == b.initial
 
         @block.Constraint(
             list(tb.time_index)[1:],
-            doc="Level difference equation: level[t] = level[t-1] + dt * "
-            "(sum of the resource's terms at t).",
+            doc="level[t] = level[t-1] + dt * (sum of the terms at t).",
         )
         def balance(b, t):
             return b.level[t] == b.level[t - 1] + summed(t, per_step=True)
@@ -277,7 +234,7 @@ def add_resource_balance(
 
         @block.Constraint(
             tb.time_index,
-            doc="Net equals the sum of the resource's terms at t.",
+            doc="net[t] equals the sum of the terms at t.",
         )
         def balance(b, t):
             return b.net[t] == summed(t, per_step=False)
@@ -287,11 +244,8 @@ def add_resource_balance(
 
 
 def _record_balance(scope, block, resource, units, stock, lower, upper, initial):
-    """Record the call on the model so ``emit_model`` writes it back as an element.
-
-    Defaults are left out (a flow, no bounds, the resource named after its
-    block), so a spec that never set them emits unchanged.
-    """
+    """Record the call so ``emit_model`` can write it back as a resource element."""
+    # leave defaults out so a spec that never set them emits unchanged
     fields = {"name": block.getname(fully_qualified=True), "units": units}
     if resource != block.local_name:
         fields["resource"] = resource
