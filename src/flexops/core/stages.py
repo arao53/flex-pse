@@ -327,6 +327,12 @@ def _optional_limit(value):
     return None if value is None else _limit(value)
 
 
+def _require_status(member, kind: str) -> None:
+    """Raise if ``member`` has no status for logic of ``kind`` to use."""
+    if member.find_component("status") is None:
+        raise FlexConfigError(f"{kind} on {member.name!r} needs a status element.")
+
+
 def _add_unit_logic(member, element) -> None:
     """Build one unit-level logic element on one unit member."""
     if element.kind == "status":
