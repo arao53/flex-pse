@@ -52,6 +52,7 @@ KINDS: dict[str, tuple[str, bool]] = {
     "startup_delay": ("logic", False),
     "conditional": ("logic", False),
     "parallel_group": ("logic", False),
+    "resource": ("resources", False),
     "dispatch": ("state", True),
     "fix": ("state", True),
     "unfix": ("state", True),
@@ -613,6 +614,80 @@ class ObjectiveElement(_StrictModel):
     )
 
 
+class ResourceElement(_StrictModel):
+    """A balance on one named resource over a plant or network.
+
+    The balance sums the signed contributions of every unit below its parent.
+    A flow resource has no memory: each step's net contribution is bounded by
+    lower and upper, and with neither it is zero, a strict node balance. A stock
+    resource accumulates: its level starts at initial and adds the time step
+    times the net contribution each step.
+    """
+
+    kind: Literal["resource"]
+    name: str = Field(
+        description="Dotted path of the balance block on the model; its parent "
+        "must be a plant or network element."
+    )
+    resource: str | None = Field(
+        default=None,
+        description="Name of the resource to balance, as units register it. "
+        "Omitted: the last segment of name.",
+    )
+    units: str = Field(
+        description="Units the balance is written in: a rate for a flow "
+        "resource, a level for a stock."
+    )
+    stock: bool = Field(
+        default=False,
+        description="True for a resource whose level accumulates over time.",
+    )
+    lower: float | Quantity | None = Field(
+        default=None,
+        description="Lower bound on the net contribution (flow) or level "
+        "(stock). A number is in units.",
+    )
+    upper: float | Quantity | None = Field(
+        default=None,
+        description="Upper bound on the net contribution (flow) or level "
+        "(stock). A number is in units.",
+    )
+    initial: float | Quantity | None = Field(
+        default=None,
+        description="Level at the first time point. Required for a stock and "
+        "not allowed for a flow. A number is in units.",
+    )
+
+    @model_validator(mode="after")
+    def _consistent(self) -> "ResourceElement":
+        """Require a parent, initial only for a stock, and lower <= upper."""
+        if "." not in self.name:
+            raise ValueError(
+                f"resource {self.name!r}: name the balance under a plant or "
+                "network, e.g. 'site.gas_balance'."
+            )
+        if self.stock and self.initial is None:
+            raise ValueError(
+                f"resource {self.name!r}: a stock needs an initial level; set "
+                "initial."
+            )
+        if not self.stock and self.initial is not None:
+            raise ValueError(
+                f"resource {self.name!r}: a flow has no initial level; remove "
+                "initial, or set stock to true."
+            )
+        if (
+            isinstance(self.lower, float)
+            and isinstance(self.upper, float)
+            and self.lower > self.upper
+        ):
+            raise ValueError(
+                f"resource {self.name!r}: lower ({self.lower}) is above upper "
+                f"({self.upper})."
+            )
+        return self
+
+
 Element = Annotated[
     TimeElement
     | PropertyPackageElement
@@ -630,6 +705,7 @@ Element = Annotated[
     | StartupDelayElement
     | ConditionalElement
     | ParallelGroupElement
+    | ResourceElement
     | DispatchElement
     | FixElement
     | UnfixElement
@@ -646,6 +722,7 @@ NAMED_KINDS = (
     "plant",
     "set",
     "unit",
+    "resource",
     "objective",
 )
 """Kinds whose element name must be unique."""
@@ -655,6 +732,7 @@ PARENT_KINDS: dict[str, tuple[str, ...]] = {
     "plant": ("network",),
     "set": ("plant", "network"),
     "unit": ("plant", "network"),
+    "resource": ("plant", "network"),
 }
 """Kinds of element each kind may sit under; the model root is always allowed."""
 
@@ -684,6 +762,7 @@ TARGET_FIELDS: dict[str, tuple[str, ...]] = {
     "startup_delay": ("unit",),
     "conditional": ("unit",),
     "parallel_group": ("units",),
+    "resource": ("name",),
 }
 """Kind -> the fields that say what an element sets; two equal targets clash."""
 

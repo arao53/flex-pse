@@ -981,6 +981,101 @@
       "title": "RampElement",
       "type": "object"
     },
+    "ResourceElement": {
+      "additionalProperties": false,
+      "description": "A balance on one named resource over a plant or network. The balance sums the signed contributions of every unit below its parent. A flow resource has no memory: each step's net contribution is bounded by lower and upper, and with neither it is zero, a strict node balance. A stock resource accumulates: its level starts at initial and adds the time step times the net contribution each step.",
+      "properties": {
+        "initial": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "#/$defs/Quantity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Level at the first time point. Required for a stock and not allowed for a flow. A number is in units.",
+          "title": "Initial"
+        },
+        "kind": {
+          "const": "resource",
+          "title": "Kind",
+          "type": "string"
+        },
+        "lower": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "#/$defs/Quantity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Lower bound on the net contribution (flow) or level (stock). A number is in units.",
+          "title": "Lower"
+        },
+        "name": {
+          "description": "Dotted path of the balance block on the model; its parent must be a plant or network element.",
+          "title": "Name",
+          "type": "string"
+        },
+        "resource": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Name of the resource to balance, as units register it. Omitted: the last segment of name.",
+          "title": "Resource"
+        },
+        "stock": {
+          "default": false,
+          "description": "True for a resource whose level accumulates over time.",
+          "title": "Stock",
+          "type": "boolean"
+        },
+        "units": {
+          "description": "Units the balance is written in: a rate for a flow resource, a level for a stock.",
+          "title": "Units",
+          "type": "string"
+        },
+        "upper": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "#/$defs/Quantity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Upper bound on the net contribution (flow) or level (stock). A number is in units.",
+          "title": "Upper"
+        }
+      },
+      "required": [
+        "kind",
+        "name",
+        "units"
+      ],
+      "title": "ResourceElement",
+      "type": "object"
+    },
     "SetElement": {
       "additionalProperties": false,
       "description": "A set of members that units and connections can be indexed over.",
@@ -1537,6 +1632,7 @@
             "plant": "#/$defs/PlantElement",
             "property_package": "#/$defs/PropertyPackageElement",
             "ramp": "#/$defs/RampElement",
+            "resource": "#/$defs/ResourceElement",
             "set": "#/$defs/SetElement",
             "startup_delay": "#/$defs/StartupDelayElement",
             "startup_shutdown": "#/$defs/StartupShutdownElement",
@@ -1596,6 +1692,9 @@
           },
           {
             "$ref": "#/$defs/ParallelGroupElement"
+          },
+          {
+            "$ref": "#/$defs/ResourceElement"
           },
           {
             "$ref": "#/$defs/DispatchElement"

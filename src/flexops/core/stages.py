@@ -29,9 +29,10 @@ from flexcore.exceptions import FlexConfigError
 from flexops import logic
 from flexops.core.extensions import resolve_extension
 from flexops.core.fixing import FixReport, apply_state
-from flexops.core.network_block import NetworkBlock
+from flexops.core.network_block import NetworkBlock, NetworkBlockData
 from flexops.core.ops_block import OpsBlockData
-from flexops.core.plant_block import PlantBlock
+from flexops.core.plant_block import PlantBlock, PlantBlockData
+from flexops.core.resources import add_resource_balance
 from flexops.core.time_block import TimeBlock
 from flexops.core.units import parse_units
 from flexops.costing import FlexCosting
@@ -314,6 +315,11 @@ def _limit(value):
     return value if isinstance(value, float) else value.value * parse_units(value.units)
 
 
+def _optional_limit(value):
+    """Return a spec limit as a Pyomo value, passing ``None`` through."""
+    return None if value is None else _limit(value)
+
+
 def _add_unit_logic(member, element) -> None:
     """Build one unit-level logic element on one unit member."""
     if element.kind == "status":
@@ -362,6 +368,44 @@ def _pairs(model, ctx: BuildContext, first: str, second: str) -> list[tuple]:
             value=first,
         )
     return list(zip(firsts, seconds, strict=True))
+
+
+def stage_resources(model, spec: FlowsheetSpec, ctx: BuildContext) -> None:
+    """Add each resource element's balance to its plant or network.
+
+    Runs after the logic stage so every unit, status and registration exists
+    when terms are collected, and before the state stage so fixes can name the
+    balance's variables.
+
+    Args:
+        model: The model with built units and logic.
+        spec: The validated spec.
+        ctx: The shared build context.
+
+    Raises:
+        FlexConfigError: If the parent is not a plant or network, the resource
+            has no registered terms, or its units do not fit its terms.
+    """
+    for element in elements_of(spec, "resource"):
+        parent = model.find_component(parent_name(element.name))
+        if not isinstance(parent, (PlantBlockData, NetworkBlockData)):
+            raise FlexConfigError(
+                f"Resource {element.name!r} needs a plant or network as its "
+                f"parent, but {parent_name(element.name)!r} is not one.",
+                field="name",
+                value=element.name,
+            )
+        local_name = element.name.rpartition(".")[2]
+        add_resource_balance(
+            parent,
+            local_name,
+            resource=element.resource or local_name,
+            units=element.units,
+            stock=element.stock,
+            lower=_optional_limit(element.lower),
+            upper=_optional_limit(element.upper),
+            initial=_optional_limit(element.initial),
+        )
 
 
 def stage_state(model, spec: FlowsheetSpec, ctx: BuildContext) -> None:
@@ -451,6 +495,7 @@ STAGES = (
     stage_surrogates,
     stage_ramping,
     stage_logic,
+    stage_resources,
     stage_state,
     stage_extensions,
     stage_costing,

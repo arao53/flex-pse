@@ -7,6 +7,7 @@ from pyomo.network import Arc
 import flexops as fo
 from flexcore.config.schema import UnitCommitmentConfig
 from flexops import logic
+from flexops.core.resources import add_resource_balance
 from flexops.costing import currency_units
 from flexops.logic import (
     add_conditional,
@@ -480,6 +481,45 @@ def counted_trains() -> pyo.ConcreteModel:
     return m
 
 
+# --- resource_balances ---
+
+
+def resource_balances() -> pyo.ConcreteModel:
+    """A water stock and an electricity import cap on a feed, pump and product."""
+    m = pyo.ConcreteModel(name="resource_balances")
+    m.time_block = fo.TimeBlock(
+        start_date="2025-01-01", end_date="2025-01-01T08:00", time_step=1 * pyunits.hr
+    )
+    m.properties = fo.SimpleAqueousFlow()
+    m.site = fo.PlantBlock(time_block=m.time_block)
+    m.site.well = fo.Feed(property_package=m.properties, resource_name="water")
+    m.site.pump = fo.Pump(
+        property_package=m.properties,
+        energy_intensity=0.5 * pyunits.kWh / pyunits.m**3,
+    )
+    m.site.supply = fo.Product(property_package=m.properties, resource_name="water")
+    # A stock: what the well gives minus what the supply takes accumulates.
+    add_resource_balance(
+        m.site,
+        "water",
+        resource="water",
+        units="m^3",
+        stock=True,
+        lower=0.0,
+        upper=500.0 * pyunits.m**3,
+        initial=120.0,
+    )
+    # A flow: net electricity is capped at a 50 kW import.
+    add_resource_balance(
+        m.site,
+        "grid_cap",
+        resource="electricity",
+        units="kW",
+        lower=-50.0 * pyunits.kW,
+    )
+    return m
+
+
 # --- long_prices ---
 
 N_POINTS = 3000
@@ -812,6 +852,7 @@ CASES = {
     "network_two_plants": (network_two_plants, False, "unit"),
     "pump_scheduling": (pump_scheduling, True, "unit"),
     "ramp_and_bypass": (ramp_and_bypass, False, "unit"),
+    "resource_balances": (resource_balances, False, "unit"),
     "surrogate_and_dispatch": (surrogate_and_dispatch, False, "unit"),
     "two_property_packages": (two_property_packages, False, "unit"),
     "units_on_model": (units_on_model, True, "unit"),
