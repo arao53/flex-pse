@@ -15,9 +15,11 @@ from collections.abc import Iterator
 from dataclasses import dataclass, field
 from typing import Any
 
+import pyomo.environ as pyo
+
 from flexcore.config.schema import SurrogateSpec
 from flexcore.exceptions import FlexConfigError
-from flexcore.nomenclature import PowerKind
+from flexcore.nomenclature import ELECTRICITY_RESOURCE, PowerKind
 
 
 class CoefficientRegistry:
@@ -301,6 +303,46 @@ class BoundaryRecord:
 
 
 @dataclass
+class ResourceRecord:
+    """An explicitly registered contribution to a named resource.
+
+    Attributes:
+        var: The live time-indexed Pyomo ``Var``/``Reference``.
+        name: The variable's local name on its unit block.
+        resource: The resource's name, the key its terms are collected under.
+        coeff: Signed coefficient: positive supplies the resource, negative
+            consumes it.
+        offset: Time offset in steps. The term at ``t`` uses ``var[t - offset]``.
+    """
+
+    var: Any
+    name: str
+    resource: str
+    coeff: float
+    offset: int
+
+
+@dataclass
+class ResourceTerm:
+    """One signed contribution of a variable to a resource, as seen by a balance.
+
+    Attributes:
+        resource: The resource's name.
+        var: The live time-indexed Pyomo ``Var``/``Reference``.
+        coeff: Signed coefficient: positive supplies the resource, negative
+            consumes it.
+        offset: Time offset in steps.
+        unit: The block that registered the variable, for error messages.
+    """
+
+    resource: str
+    var: Any
+    coeff: float
+    offset: int
+    unit: Any
+
+
+@dataclass
 class IORegistry:
     """Container for everything a unit block registers.
 
@@ -317,6 +359,9 @@ class IORegistry:
         relations: Registered swappable relationships (see
             :class:`RelationRecord`).
         boundary: Registered boundary flows (feeds and products).
+        resources: Explicit contributions to named resources. Power, fuel and
+            boundary registrations are translated by
+            :func:`iter_resource_terms` and are not repeated here.
     """
 
     io_variables: list[IOVariableRecord] = field(default_factory=list)
@@ -326,6 +371,7 @@ class IORegistry:
     intensity_basis: dict[PowerKind, str] = field(default_factory=dict)
     relations: list[RelationRecord] = field(default_factory=list)
     boundary: list[BoundaryRecord] = field(default_factory=list)
+    resources: list[ResourceRecord] = field(default_factory=list)
 
     def is_empty(self) -> bool:
         """Return True if nothing has been registered on this block."""
@@ -336,6 +382,7 @@ class IORegistry:
             or self.fuel
             or self.relations
             or self.boundary
+            or self.resources
         )
 
 
@@ -390,3 +437,59 @@ def iter_swapped_relations(model) -> Iterator[tuple[Any, RelationRecord]]:
         for record in registry.relations:
             if record.fitted is not None:
                 yield block, record
+
+
+def iter_resource_terms(block) -> dict[str, list[ResourceTerm]]:
+    """Collect every unit's signed contribution to each named resource.
+
+    The resource-task-network view of what units already register: a positive
+    coefficient supplies the resource and a negative one consumes it. Nothing
+    is registered twice. Power, fuel and boundary registrations stay the single
+    source of truth and are translated here:
+
+    * ``register_boundary_flow(kind=FEED)``: its ``resource``, coefficient +1.
+    * ``register_boundary_flow(kind=PRODUCT)``: its ``resource``, coefficient -1.
+    * ``register_power(kind=ELECTRICAL)``: ``"electricity"``, coefficient -1.
+    * ``register_fuel_usage(var, fuel_name)``: ``fuel_name``, coefficient -1.
+    * ``register_resource(var, resource=..., coeff=..., offset=...)``: as given.
+
+    An electrical draw is positive, so it consumes electricity, and an export
+    is negative, so it supplies it. Thermal power is not mapped: a heat duty
+    carries a temperature, and summing heat at different temperatures needs its
+    own design.
+
+    Args:
+        block: A plant, a network, a unit (indexed or not) or the model. Every
+            registered block below it is read once.
+
+    Returns:
+        ``{resource: [ResourceTerm, ...]}`` with keys in sorted order. Terms
+        appear in model order, with explicit registrations after the derived
+        ones for the same block.
+    """
+    terms: dict[str, list[ResourceTerm]] = {}
+    seen: set[int] = set()
+    blocks = [block, *block.component_data_objects(pyo.Block, descend_into=True)]
+    for candidate in blocks:
+        if id(candidate) in seen:
+            continue
+        seen.add(id(candidate))
+        registry = getattr(candidate, "_io_registry", None)
+        if not isinstance(registry, IORegistry):
+            continue
+
+        def add(resource, var, coeff, offset=0, _unit=candidate):
+            terms.setdefault(resource, []).append(
+                ResourceTerm(resource, var, coeff, offset, _unit)
+            )
+
+        for rec in registry.boundary:
+            add(rec.resource, rec.var, 1.0 if rec.kind is BoundaryKind.FEED else -1.0)
+        for rec in registry.power:
+            if rec.kind is PowerKind.ELECTRICAL:
+                add(ELECTRICITY_RESOURCE, rec.var, -1.0)
+        for rec in registry.fuel:
+            add(rec.fuel_name, rec.var, -1.0)
+        for rec in registry.resources:
+            add(rec.resource, rec.var, rec.coeff, rec.offset)
+    return {resource: terms[resource] for resource in sorted(terms)}
