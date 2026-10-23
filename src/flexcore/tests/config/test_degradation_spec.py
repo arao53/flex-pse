@@ -3,14 +3,13 @@
 import pytest
 from pydantic import ValidationError
 
-from flexcore.config.io import load_model_config
 from flexcore.config.schema import (
-    CURRENT_SCHEMA_VERSION,
     DegradationSpec,
     DegradationTerm,
     DegradationTermSpec,
-    UnitConfig,
 )
+from flexcore.config.spec import FlowsheetSpec
+from flexcore.tests.config.test_spec import rejects, spec_dict, unit
 
 
 def _variation(**overrides) -> DegradationTermSpec:
@@ -113,33 +112,39 @@ def test_spec_rejects_negative_horizon_limits_and_empty_period(overrides):
         DegradationSpec(name="wear", terms=[_variation()], **overrides)
 
 
-@pytest.mark.unit
-def test_unit_config_defaults_to_no_degradation():
-    """A unit carries no degradation penalty unless one is configured."""
-    assert UnitConfig(unit_model_class="Pump").degradation == []
-
-
-@pytest.mark.unit
-def test_unit_config_rejects_duplicate_degradation_names():
-    """Two penalties on one unit cannot share a name (their components would clash)."""
-    spec = DegradationSpec(name="wear", terms=[_variation()])
-    with pytest.raises(ValidationError):
-        UnitConfig(unit_model_class="Pump", degradation=[spec, spec])
-
-
-@pytest.mark.unit
-def test_previous_schema_version_with_degradation_free_units_migrates():
-    """A 0.0.3 document (which predates degradation) loads at the current version."""
-    data = {
-        "schema_version": "0.0.3",
-        "time": {
-            "start_date": "2025-07-08",
-            "end_date": "2025-07-09",
-            "time_step": "1 hr",
-        },
-        "costing": {"tariff_source": "tariff.json"},
-        "plant": {"name": "demo", "units": {"pump": {"unit_model_class": "Pump"}}},
+def _element(**overrides) -> dict:
+    """A valid degradation element dict on unit 'tank', with any field overridden."""
+    fields = {
+        "kind": "degradation",
+        "unit": "tank",
+        "name": "wear",
+        "terms": [{"kind": "variation", "variable": "speed", "price": 2.0}],
     }
-    loaded = load_model_config(data)
-    assert loaded.schema_version == CURRENT_SCHEMA_VERSION == "0.0.4"
-    assert loaded.plant.units["pump"].degradation == []
+    return {**fields, **overrides}
+
+
+@pytest.mark.unit
+def test_degradation_element_bills_the_only_costing_by_default():
+    """A degradation element validates and defaults to the model's only costing."""
+    spec = FlowsheetSpec.model_validate(spec_dict(unit("tank"), _element()))
+    (element,) = spec.of_kind("degradation")
+    assert element.costing_package == "auto"
+
+
+@pytest.mark.unit
+def test_degradation_element_rejects_duplicate_names_on_a_unit():
+    """Two penalties on one unit cannot share a name (their components would clash)."""
+    rejects(
+        spec_dict(unit("tank"), _element(), _element()),
+        "degradation on 'tank' is set twice",
+    )
+
+
+@pytest.mark.unit
+def test_degradation_element_rejects_unknown_unit_and_costing():
+    """A degradation element must name an existing unit and costing element."""
+    rejects(spec_dict(_element()), "no such unit element")
+    rejects(
+        spec_dict(unit("tank"), _element(costing_package="nope")),
+        "costing 'nope' is not an element",
+    )

@@ -11,6 +11,7 @@ from pyomo.environ import units as pyunits
 from flexcore.config.schema import DegradationSpec, DegradationTerm, DegradationTermSpec
 from flexcore.exceptions import FlexConfigError
 from flexcore.logger import get_logger
+from flexops.logic._records import record
 from flexops.logic.status import RollingStateKind, _register_rolling_state
 
 _log = get_logger(__name__)
@@ -137,6 +138,12 @@ def add_degradation(
             unit.name,
             name,
         )
+    record(
+        unit,
+        "degradation",
+        **spec.model_dump(mode="json", include=set(DegradationSpec.model_fields)),
+        costing_package=None if costing is None else costing.local_name,
+    )
     return rate, total
 
 

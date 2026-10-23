@@ -162,21 +162,24 @@ spec = DegradationSpec(
 rate, total = add_degradation(m.plant.ro, spec, costing=m.costing)
 ```
 
-The same penalty in a config sits under the unit's `degradation` list:
+The same penalty in a spec is a `degradation` element that names its unit:
 
 ```json
-"degradation": [
-  {
-    "name": "membrane_wear",
-    "terms": [
-      {"kind": "variation", "variable": "outlet_state.pressure", "price": 40.0, "deadband": 0.2},
-      {"kind": "exceedance", "variable": "outlet_state.pressure", "price": 15.0, "upper": 60.0}
-    ],
-    "covered_cost": 500.0,
-    "period_hours": 730.0
-  }
-]
+{
+  "kind": "degradation",
+  "unit": "plant.ro",
+  "name": "membrane_wear",
+  "terms": [
+    {"kind": "variation", "variable": "outlet_state.pressure", "price": 40.0, "deadband": 0.2},
+    {"kind": "exceedance", "variable": "outlet_state.pressure", "price": 15.0, "upper": 60.0}
+  ],
+  "covered_cost": 500.0,
+  "period_hours": 730.0
+}
 ```
+
+`costing_package` defaults to `"auto"`, the model's only costing element; set it
+to `null` to leave the wear unbilled.
 
 Values are in the variable's own units (the example assumes pressure is
 declared in bar), and prices are in the model currency.

@@ -1,11 +1,8 @@
 """The versioned flex-pse config schema (pydantic v2, the schema authority).
 
-A whole flex-pse model and run are built from a single version-controlled
-config artifact (``flexops.build_model(config)``): the TimeBlock,
-properties, costing, and the network/plant/unit tree all come from one
-:class:`ModelConfig`. These pydantic models are the **authority** for that
-config; JSON is the canonical and only on-disk format (see
-:mod:`flexcore.config.io`).
+These are the shared building blocks of the flat
+:class:`~flexcore.config.spec.FlowsheetSpec`; JSON is the canonical and only
+on-disk format (see :mod:`flexcore.config.io`).
 
 Every field carries a ``description`` (it renders into the docs) and every model
 forbids unknown keys (an undocumented key does not get to exist). Only the
@@ -20,10 +17,7 @@ line-break art — rendering is the documentation builder's job.
 import enum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
-
-CURRENT_SCHEMA_VERSION = "0.0.4"
-"""str: the semantic schema version this build writes and validates against."""
+from pydantic import BaseModel, ConfigDict, Field, NonNegativeFloat, model_validator
 
 
 class _StrictModel(BaseModel):
@@ -85,14 +79,6 @@ class SurrogateSpec(_StrictModel):
         "Opaque to the schema; see the flexops.surrogates reference page for "
         "each class's data contract.",
     )
-    source: str | None = Field(
-        default=None,
-        description="Optional path to a JSON file supplying this "
-        "relationship's data, for a relationship too large to inline or not "
-        "expressible inline at all. A relative path resolves against the "
-        "directory of the config file that names it. Anything the file "
-        "supplies replaces what is written inline here.",
-    )
     provenance: dict[str, Any] = Field(
         default_factory=dict,
         description="Free-form fit metadata (metrics, data window, versions).",
@@ -125,29 +111,19 @@ class UnitCommitmentConfig(_StrictModel):
         description="Whether the unit has an on/off status binary (a tank sets "
         "this False).",
     )
-    startup_shutdown: bool = Field(
-        default=False,
-        description="Whether to build startup/shutdown transition logic.",
+
+
+class PropertyPackageSpec(_StrictModel):
+    """A property package the model builds, by class name and options."""
+
+    property_class: str = Field(
+        description="Name of a flexops property-package class, e.g. "
+        "'SimpleAqueousFlow' or 'SimpleGasFlow'."
     )
-    dwell: bool = Field(
-        default=False,
-        description="Whether to build minimum up/down-time (dwell) constraints.",
-    )
-    min_up: int | None = Field(
-        default=None,
-        description="Minimum number of steps the unit must stay up once started.",
-    )
-    min_down: int | None = Field(
-        default=None,
-        description="Minimum number of steps the unit must stay down once stopped.",
-    )
-    delays: dict[str, Any] | None = Field(
-        default=None,
-        description="Upstream-linked startup-delay specification.",
-    )
-    conditional: dict[str, Any] | None = Field(
-        default=None,
-        description="Conditional status implications between units.",
+    options: dict[str, Any] = Field(
+        default_factory=dict,
+        description="Keyword options passed to the property-package constructor, "
+        "e.g. {'has_pressure': true}.",
     )
 
 
@@ -267,60 +243,15 @@ class UnitConfig(_StrictModel):
         default=None,
         description="Optional fitted energy/IO relationship for the unit.",
     )
-    unit_commitment: UnitCommitmentConfig = Field(
-        default_factory=UnitCommitmentConfig,
-        description="Per-unit unit-commitment configuration.",
+    unit_commitment: UnitCommitmentConfig | None = Field(
+        default=None,
+        description="Per-unit unit-commitment configuration. Unset (null) "
+        "leaves the unit model's own default in force (a battery or tank has "
+        "no status binary unless asked for one).",
     )
     external_dispatch: ExternalDispatchSpec | None = Field(
         default=None,
         description="Optional external (DERMS) dispatch source for the unit.",
-    )
-    degradation: list[DegradationSpec] = Field(
-        default_factory=list,
-        description="Priced degradation penalties on the unit's variables.",
-    )
-
-    @model_validator(mode="after")
-    def _check_unique_degradation_names(self) -> "UnitConfig":
-        """Reject two degradation penalties sharing a name on one unit."""
-        names = [spec.name for spec in self.degradation]
-        if len(names) != len(set(names)):
-            raise ValueError(f"Degradation names must be unique, got {names}.")
-        return self
-
-
-class ArcSpec(_StrictModel):
-    """A directed connection between two unit (or plant) ports."""
-
-    source: str = Field(description="Source endpoint as a 'unit.port' string.")
-    destination: str = Field(
-        description="Destination endpoint as a 'unit.port' string."
-    )
-
-
-class PlantConfig(_StrictModel):
-    """A named collection of unit models and the arcs between them."""
-
-    name: str = Field(description="Human-readable plant name.")
-    units: dict[str, UnitConfig] = Field(
-        description="Units of the plant, keyed by their attribute name."
-    )
-    arcs: list[ArcSpec] = Field(
-        default_factory=list,
-        description="Arcs connecting unit ports within the plant.",
-    )
-
-
-class NetworkConfig(_StrictModel):
-    """A named collection of plants and the inter-plant arcs between them."""
-
-    name: str = Field(description="Human-readable network name.")
-    plants: dict[str, PlantConfig] = Field(
-        description="Plants of the network, keyed by their attribute name."
-    )
-    arcs: list[ArcSpec] = Field(
-        default_factory=list,
-        description="Arcs connecting plant ports across the network.",
     )
 
 
@@ -388,6 +319,19 @@ class CostingConfig(_StrictModel):
         "carrier priced needs no tariff at all. Each price is flat over the horizon "
         "or given per time point.",
     )
+    export_prices: dict[str, PriceSpec] | None = Field(
+        default=None,
+        description="Optional prices paid for exports, keyed like energy_prices "
+        "('electrical' or a fuel name). Each key needs a matching energy_prices "
+        "entry and must not exceed it at any time point. A carrier left out "
+        "credits exports at its import price.",
+    )
+    decomposition_type: str | None = Field(
+        default=None,
+        description="Optional EECO decomposition of net electrical power and fuel "
+        "usage into imports and exports on the tariff path (e.g. 'linear'), so the "
+        "tariff's export charges apply. Passed straight to EECO.",
+    )
     currency: str = Field(
         default="USD",
         description="Currency basis to use when no tariff is given; a tariff's own "
@@ -396,6 +340,14 @@ class CostingConfig(_StrictModel):
     dr: DRConfig | None = Field(
         default=None,
         description="Optional demand-response container (containers-only in v0).",
+    )
+    consumption_estimate: dict[Literal["electric", "gas"], NonNegativeFloat] | None = (
+        Field(
+            default=None,
+            description="Estimated total consumption over the horizon, keyed by EECO "
+            "utility ('electric'/'gas'; kWh / m^3). EECO needs it to price any tier "
+            "other than a flat top tier.",
+        )
     )
     fixed_operating_cost: float = Field(
         default=0.0,
@@ -445,42 +397,5 @@ class CostingConfig(_StrictModel):
             raise ValueError(
                 "costing needs a pricing source: set tariff_source, or give at "
                 "least one entry in energy_prices."
-            )
-        return self
-
-
-# Architecture references: the config artifact is plan/01_architecture.md §2.3.
-class ModelConfig(_StrictModel):
-    """The top-level config artifact the whole model and run are built from."""
-
-    schema_version: str = Field(
-        pattern=r"^\d+\.\d+\.\d+$",
-        description="Semantic schema version of this config, an X.Y.Z string; "
-        "mandatory, no default.",
-    )
-    time: TimeConfig = Field(description="The discrete-time horizon.")
-    properties: dict[str, Any] = Field(
-        default_factory=dict,
-        description="Property-package specification (kept loose at schema "
-        "version 0.0.1).",
-    )
-    costing: CostingConfig = Field(description="Tariff/DR/solve options.")
-    network: NetworkConfig | None = Field(
-        default=None,
-        description="A network of plants; mutually exclusive with 'plant'.",
-    )
-    plant: PlantConfig | None = Field(
-        default=None,
-        description="A single plant of units; mutually exclusive with 'network'.",
-    )
-
-    @model_validator(mode="after")
-    def _exactly_one_topology(self) -> "ModelConfig":
-        """Require exactly one of ``network`` or ``plant`` (pitfall 10)."""
-        if (self.network is None) == (self.plant is None):
-            raise ValueError(
-                "Set exactly one of 'network' or 'plant' on ModelConfig "
-                f"(got network={self.network is not None}, "
-                f"plant={self.plant is not None})."
             )
         return self

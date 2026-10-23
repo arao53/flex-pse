@@ -49,6 +49,13 @@ nitpick_ignore = [
     # pydantic documents its validation error under pydantic_core, so the name
     # config-facing Raises: entries use has no intersphinx target.
     ("py:exc", "pydantic.ValidationError"),
+    # pydantic's NonNegativeFloat is Annotated[float, annotated_types.Ge(0)],
+    # and annotated_types has no intersphinx target.
+    ("py:class", "annotated_types.Ge"),
+    # A Field(pattern=...) renders its pydantic metadata, which has no target.
+    ("py:class", "_PydanticGeneralMetadata"),
+    ("py:class", "FieldInfo"),
+    ("py:class", "NoneType"),
 ]
 
 # autodoc renders the subscripted generics in a pydantic model's constructor
