@@ -2,9 +2,7 @@
 
 import pyomo.environ as pyo
 import pytest
-from pyomo.environ import units as pyunits
 
-from flexcore.exceptions import FlexConfigError
 from flexcore.solvers import ProblemClass, classify
 from flexops.testing import UnitModelTestHarness, dummy_time_block
 from flexops.unit_models import Chiller, SpaceCooling
@@ -57,57 +55,8 @@ def test_space_cooling_is_lp():
 
 
 @pytest.mark.unit
-def test_chiller_constant_cop_is_lp_and_part_load_is_nlp():
+def test_chiller_defaults_to_cop_of_five():
     m = dummy_time_block(3)
     m.unit = Chiller()
+    assert pyo.value(m.unit.cop) == pytest.approx(5.0)
     assert classify(m) is ProblemClass.LP
-    m.part_load = Chiller(
-        cop_coefficients=(0.0, 0.0, 1.0, 0.5), rated_load=50 * pyunits.kW
-    )
-    assert classify(m) is ProblemClass.NLP
-
-
-@pytest.mark.unit
-def test_chiller_part_load_requires_rated_load():
-    m = dummy_time_block(3)
-    with pytest.raises(FlexConfigError) as err:
-        m.unit = Chiller(cop_coefficients=(0.0, 0.0, 1.0, 0.0))
-    assert err.value.field == "rated_load"
-
-
-@pytest.mark.unit
-def test_chiller_wet_bulb_coefficient_requires_wet_bulb():
-    m = dummy_time_block(3)
-    with pytest.raises(FlexConfigError) as err:
-        m.unit = Chiller(cop_coefficients=(0.0, 0.05, 0.0, 0.0))
-    assert err.value.field == "wet_bulb_temperature"
-
-
-@pytest.mark.unit
-def test_chiller_rejects_wet_bulb_of_wrong_length():
-    m = dummy_time_block(3)
-    with pytest.raises(FlexConfigError) as err:
-        m.unit = Chiller(
-            cop_coefficients=(0.0, 0.05, 0.0, 0.0), wet_bulb_temperature=[290.0]
-        )
-    assert err.value.field == "wet_bulb_temperature"
-
-
-@pytest.mark.unit
-def test_chiller_rejects_wrong_number_of_cop_coefficients():
-    m = dummy_time_block(3)
-    with pytest.raises(FlexConfigError) as err:
-        m.unit = Chiller(cop_coefficients=(0.0, 0.0, 0.0))
-    assert err.value.field == "cop_coefficients"
-
-
-@pytest.mark.unit
-def test_chiller_cop_uses_ambient_temperatures():
-    m = dummy_time_block(3)
-    m.unit = Chiller(
-        cop=2.0,
-        cop_coefficients=(0.15, 0.06, 0.0, 0.0),
-        wet_bulb_temperature=[290.0, 295.0, 300.0],
-    )
-    expected = 2.0 + 0.15 * 280.15 - 0.06 * 295.0
-    assert pyo.value(m.unit.operating_cop[1]) == pytest.approx(expected)

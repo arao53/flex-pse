@@ -51,41 +51,6 @@ class SpaceCoolingData(OpsBlockData):
             doc="Step-mean heat the unit removes.",
         )
         self.register_io_variable(self.cooling_load, role="input")
-        self._build_parameters(tb)
-        self.operating_cop = pyo.Expression(
-            tb.time_index, rule=self._cop_rule, doc="Operating COP."
-        )
-        self.power_compressor = pyo.Var(
-            tb.time_index,
-            initialize=0.0,
-            bounds=(0, None),
-            units=pyunits.kW,
-            doc="Step-mean compressor power.",
-        )
-        self.power_compressor_relation = pyo.Constraint(
-            tb.time_index,
-            rule=lambda b, t: b.power_compressor[t] * b.operating_cop[t]
-            == b.cooling_load[t],
-            doc="Compressor power * COP == cooling load.",
-        )
-        self.register_relation(
-            self.power_compressor_relation, target=self.power_compressor
-        )
-        power = self.declare_power(nm.PowerKind.ELECTRICAL)
-        self.register_io_variable(power, role="output")
-        self.power_electrical_definition = pyo.Constraint(
-            tb.time_index,
-            rule=lambda b, t: power[t]
-            == b.power_compressor[t] + b.ancillary_intensity * b.cooling_load[t],
-            doc="Draw: compressor power plus ancillary_intensity * cooling load.",
-        )
-
-    def _build_parameters(self, tb) -> None:
-        """Declare the COP and ancillary intensity.
-
-        Args:
-            tb: The model's TimeBlock.
-        """
         self.declare_process_parameter(
             "cop",
             self.config.cop,
@@ -100,15 +65,26 @@ class SpaceCoolingData(OpsBlockData):
             "Fan and pump power per kW of cooling load.",
             bounds=(0, 1),
         )
-
-    def _cop_rule(self, b, t):
-        """Return the operating COP at step ``t``: the constant ``cop``.
-
-        Args:
-            b: This unit.
-            t: The time step.
-
-        Returns:
-            The COP expression.
-        """
-        return b.cop
+        self.power_compressor = pyo.Var(
+            tb.time_index,
+            initialize=0.0,
+            bounds=(0, None),
+            units=pyunits.kW,
+            doc="Step-mean compressor power.",
+        )
+        self.power_compressor_relation = pyo.Constraint(
+            tb.time_index,
+            rule=lambda b, t: b.power_compressor[t] * b.cop == b.cooling_load[t],
+            doc="Compressor power * COP == cooling load.",
+        )
+        self.register_relation(
+            self.power_compressor_relation, target=self.power_compressor
+        )
+        power = self.declare_power(nm.PowerKind.ELECTRICAL)
+        self.register_io_variable(power, role="output")
+        self.power_electrical_definition = pyo.Constraint(
+            tb.time_index,
+            rule=lambda b, t: power[t]
+            == b.power_compressor[t] + b.ancillary_intensity * b.cooling_load[t],
+            doc="Draw: compressor power plus ancillary_intensity * cooling load.",
+        )

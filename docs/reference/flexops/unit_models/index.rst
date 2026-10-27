@@ -256,9 +256,8 @@ on/off status, which gates both its draw and the heat it releases.
 Cooling units remove a ``cooling_load`` input at a coefficient of performance,
 plus fan and pump power proportional to the load. They have no ports: a
 flowsheet sets each load, for example to the summed ``air_heat`` of the servers a
-space-cooling unit serves. ``SpaceCooling`` uses a constant COP and is an LP.
-``Chiller`` adds an optional COP curve in chilled-water and wet-bulb
-temperature, which stays an LP, and in part load, which makes it an NLP.
+space-cooling unit serves. Both use a constant COP and are LPs;
+``SpaceCooling`` defaults to a COP of 3 and ``Chiller`` to 5.
 
 .. autosummary::
    :toctree: generated

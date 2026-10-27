@@ -55,7 +55,6 @@ Every time-indexed quantity is the **mean over one TimeBlock step**, and
 | {math}`L_t` | cooling load | kW | input | `cooling_load[t]` |
 | {math}`\mathrm{COP}` | coefficient of performance | – | fitted parameter | `cop` |
 | {math}`\kappa` | fan and pump power per kW of cooling load | – | fitted parameter | `ancillary_intensity` |
-| {math}`b_1 \dots b_4` | chiller COP curve coefficients | 1/K, – | fitted parameter | `cop_b1` … `cop_b4` |
 
 "Fitted parameter" means a fixed value in a schedule optimization that
 parameter estimation can regress from plant data.
@@ -133,53 +132,33 @@ the ungated build. The unit keeps `allows_status_element = False`, since a spec
 
 ## Cooling units
 
-### Space cooling
-
-`SpaceCooling` removes its cooling load at a constant COP, plus fan and pump
-power proportional to the load:
+Both cooling units remove their cooling load at a constant COP, plus fan and
+pump power proportional to the load:
 
 ```{math}
-P^{comp}_t\,\mathrm{COP}_t = L_t, \qquad P_t = P^{comp}_t + \kappa\,L_t
+P^{comp}_t\,\mathrm{COP} = L_t, \qquad P_t = P^{comp}_t + \kappa\,L_t
 ```
 
-with {math}`\mathrm{COP}_t = \mathrm{COP}`. `power_compressor_relation` is
-registered for a surrogate swap. The defaults, a COP of 3 and
-{math}`\kappa = 0.05`, are illustrative placeholders, not values from a
-source; calibrate both to the equipment.
-
-### Chiller
-
-`Chiller` uses the same balance with a default COP of 5 (also a placeholder)
-and an optional COP curve:
-
-```{math}
-\mathrm{COP}_t = \mathrm{COP} + b_1\,T^{chw} - b_2\,T^{wb}_t + b_3\,\mathrm{PLR}_t - b_4\,\mathrm{PLR}_t^2,
-\qquad \mathrm{PLR}_t = L_t / L_{rated}
-```
-
-The wet-bulb term needs `wet_bulb_temperature` and is built only when
-{math}`b_2 \ne 0`; the part-load terms need `rated_load` and are built only
-when {math}`b_3` or {math}`b_4` is non-zero. With {math}`b_1 = b_2` the
-temperature terms reduce to {math}`b_1 (T^{chw} - T^{wb})`, a linear
-dependence on lift. The curve is a simple placeholder form; calibrate its
-coefficients to the plant.
+`power_compressor_relation` is registered, so a fitted COP curve can replace
+it. `SpaceCooling` (for example a CRAH or CRAC) defaults to a COP of 3 and
+`Chiller` to a COP of 5, both with {math}`\kappa = 0.05`. These defaults are
+illustrative placeholders, not values from a source; calibrate them to the
+equipment.
 
 ## Problem class
 
-With the defaults (a linear server curve or data utilization, constant COP or a
-temperature-only COP curve), every unit is an **LP**. Non-zero {math}`b_3` or
-{math}`b_4` makes a chiller an **NLP**, because the part-load ratio depends on
-the load. Server status makes the model a MILP (or MINLP).
+With a linear server curve or data utilization, every unit is an **LP**.
+Server status makes the model a MILP.
 
 ## Assumptions and limits
 
 - Server power, heat and cooling are quasi-steady at the time step; thermal
   inertia of room air and equipment is neglected.
 - Within-step variation is not represented. A nonlinear curve (power-law
-  exponent, fan cube law, part-load COP) applied to a step mean is biased low
+  exponent, fan cube law) applied to a step mean is biased low
   when its input varies inside the step, so prefer short steps or near-linear
   curves when inputs fluctuate.
-- Airflows, wet-bulb and chilled-water temperatures are exogenous.
+- Airflows are exogenous, and COP does not vary with temperature or part load.
 - No server inlet temperature, air mixing or leakage power; no economizer,
   chiller staging or thermal storage.
 

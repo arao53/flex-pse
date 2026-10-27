@@ -113,12 +113,7 @@ def datacenter() -> pyo.ConcreteModel:
     m.site.crah = fo.SpaceCooling(
         cop=4.0, ancillary_intensity=0.08, costing_package=m.costing
     )
-    m.site.chiller = fo.Chiller(
-        cop=7.0,
-        cop_coefficients=(0.1, 0.1, 0.0, 0.0),
-        wet_bulb_temperature=[292.0, 293.0, 294.0, 293.0],
-        costing_package=m.costing,
-    )
+    m.site.chiller = fo.Chiller(cop=5.5, costing_package=m.costing)
     m.site.crah.cooling_load.fix(25.0)
     m.site.chiller.cooling_load.fix(32.0)
     m.costing.cost_process()
