@@ -40,9 +40,12 @@ from flexops.unit_models import (
     Tank,
     WaterElectrolyzer,
 )
-from flexops.unit_models.electrolyzer import ElectrolyzerTechnology, ProductPhase
-from flexops.unit_models.mixer import MixerTemperatureRule
+from flexops.unit_models.base.mixer import MixerTemperatureRule
 from flexops.unit_models.powergeneration.combustor import CombustorPowerRelation
+from flexops.unit_models.watertreatment.electrolyzer import (
+    ElectrolyzerTechnology,
+    ProductPhase,
+)
 
 __version__ = _dist_version("flex-pse")
 
