@@ -234,6 +234,40 @@ port builds from ``gas_property_package`` unless it is given its own package
    WaterElectrolyzer
    CO2Electrolyzer
 
+.. currentmodule:: flexops.unit_models.datacenter.server
+
+``Server`` is one server of a data center, with no fluid ports and every
+quantity a mean over the time step (see :doc:`/explanation/datacenter_model`).
+Its IT power rises from idle to peak with utilization, plus fan power, and its
+draw adds a PDU loss. Utilization is data or a live time-indexed component
+built elsewhere, such as a curtailment decision. Its heat leaves to room air
+(``air_heat``) and a liquid loop (``liquid_heat``). A server can carry its own
+on/off status, which gates both its draw and the heat it releases.
+
+.. autosummary::
+   :toctree: generated
+   :template: autosummary/unit_model.rst
+   :nosignatures:
+
+   Server
+
+.. currentmodule:: flexops.unit_models.cooling
+
+Cooling units remove a ``cooling_load`` input at a coefficient of performance,
+plus fan and pump power proportional to the load. They have no ports: a
+flowsheet sets each load, for example to the summed ``air_heat`` of the servers a
+space-cooling unit serves. ``SpaceCooling`` uses a constant COP and is an LP.
+``Chiller`` adds an optional COP curve in chilled-water and wet-bulb
+temperature, which stays an LP, and in part load, which makes it an NLP.
+
+.. autosummary::
+   :toctree: generated
+   :template: autosummary/unit_model.rst
+   :nosignatures:
+
+   SpaceCooling
+   Chiller
+
 Boundary blocks
 ---------------
 

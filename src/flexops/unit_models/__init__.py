@@ -7,6 +7,8 @@ vocabularies live on their own modules and on the top-level ``flexops``.
 
 from flexops.unit_models.base import DIDOBlock, SIDOBlock, SISOBlock
 from flexops.unit_models.constant_intensity import ConstantEnergyIntensityModel
+from flexops.unit_models.cooling import Chiller, SpaceCooling
+from flexops.unit_models.datacenter import Server
 from flexops.unit_models.electrolyzer import (
     CO2Electrolyzer,
     Electrolyzer,
@@ -29,6 +31,7 @@ from flexops.unit_models.wastewater.digestor import Digestor
 __all__ = [
     "BatteryModel",
     "CO2Electrolyzer",
+    "Chiller",
     "Combustor",
     "ConstantEnergyIntensityModel",
     "DIDOBlock",
@@ -44,6 +47,8 @@ __all__ = [
     "ReverseOsmosis",
     "SIDOBlock",
     "SISOBlock",
+    "Server",
+    "SpaceCooling",
     "Splitter",
     "Tank",
     "WaterElectrolyzer",

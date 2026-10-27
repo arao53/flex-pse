@@ -37,6 +37,8 @@ from flexops.unit_models.base.dido import DIDOBlock
 from flexops.unit_models.base.sido import SIDOBlock
 from flexops.unit_models.base.siso import SISOBlock
 from flexops.unit_models.constant_intensity import ConstantEnergyIntensityModel
+from flexops.unit_models.cooling import Chiller, SpaceCooling
+from flexops.unit_models.datacenter import Server
 from flexops.unit_models.electrolyzer import (
     CO2Electrolyzer,
     Electrolyzer,
@@ -163,6 +165,25 @@ def _build_digestor():
     return m, m.unit
 
 
+def _build_server():
+    m = dummy_time_block(3)
+    m.unit = Server(
+        utilization=[0.5, 0.6, 0.7],
+        idle_power=4 * pyunits.kW,
+        peak_power=12 * pyunits.kW,
+        fan_rated_power=0.3 * pyunits.kW,
+        rated_airflow=1.0 * pyunits.kg / pyunits.s,
+        airflow=[0.9, 0.9, 0.9],
+    )
+    return m, m.unit
+
+
+def _build_cooling(cls):
+    m = dummy_time_block(3)
+    m.unit = cls()
+    return m, m.unit
+
+
 def _build_electrolyzer(cls):
     m = dummy_time_block(3)
     m._gas_pkg = SimpleGasFlow()
@@ -190,6 +211,9 @@ _BUILDERS: dict[type, Callable[[], tuple[Any, Any]]] = {
     Electrolyzer: lambda: _build_electrolyzer(Electrolyzer),
     WaterElectrolyzer: lambda: _build_electrolyzer(WaterElectrolyzer),
     CO2Electrolyzer: lambda: _build_electrolyzer(CO2Electrolyzer),
+    Server: _build_server,
+    SpaceCooling: lambda: _build_cooling(SpaceCooling),
+    Chiller: lambda: _build_cooling(Chiller),
 }
 
 
