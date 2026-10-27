@@ -69,15 +69,6 @@ AUTO = "auto"
 PACKAGE_REF = "$package"
 """Key of a construction option ``{"$package": name}`` naming a package element."""
 
-SELF_STATUS_CLASSES = {"BatteryModel"}
-"""Unit classes that build their own status when unit_commitment.status is true.
-
-See ``BatteryModel.build`` in ``flexops/unit_models/storage/battery.py``.
-"""
-
-NO_STATUS_CLASSES = {"Tank", "BatteryModel"}
-"""Unit classes a status element may not target, since they manage their own."""
-
 
 def _like(model: type[_StrictModel], name: str):
     """Return a Field with the default and description of ``model``'s field."""
@@ -934,11 +925,7 @@ class FlowsheetSpec(_StrictModel):
 
     @model_validator(mode="after")
     def _logic_is_consistent(self) -> "FlowsheetSpec":
-        """Require logic to name units, find a status, and never repeat."""
-        units = {el.name: el for el in self.of_kind("unit")}
-
-        def unit_of(member: str):
-            return units[member.partition("[")[0]]
+        """Require logic to name units and never repeat."""
 
         def refs(el) -> list[str]:
             if el.kind == "parallel_group":
@@ -954,36 +941,6 @@ class FlowsheetSpec(_StrictModel):
                     members[ref] = self._members(ref)
                 except ValueError as exc:
                     raise ValueError(f"{el.kind}: {exc}") from None
-
-        with_status = set()
-        for el in self.of_kind("status"):
-            unit_class = units[el.unit.partition("[")[0]].unit_model_class
-            if unit_class in NO_STATUS_CLASSES:
-                raise ValueError(
-                    f"status on {el.unit!r}: {unit_class} manages its own status; "
-                    "set unit_commitment.status on the unit instead."
-                )
-            with_status.update(members[el.unit])
-
-        def has_status(member: str) -> bool:
-            unit = unit_of(member)
-            own = unit.unit_commitment is not None and unit.unit_commitment.status
-            return member in with_status or (
-                unit.unit_model_class in SELF_STATUS_CLASSES and own
-            )
-
-        needs_status = {"startup_shutdown", "startup_delay", "conditional"}
-        for el in logic:
-            if el.kind in needs_status or (
-                el.kind == "parallel_group" and el.order_status
-            ):
-                for ref in refs(el):
-                    missing = [m for m in members[ref] if not has_status(m)]
-                    if missing:
-                        raise ValueError(
-                            f"{el.kind} on {ref!r} needs a status element on "
-                            f"{missing[0]!r}."
-                        )
 
         seen = set()
         for el in logic:
