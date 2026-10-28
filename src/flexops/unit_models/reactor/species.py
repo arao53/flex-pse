@@ -84,9 +84,9 @@ class SpeciesReactorData(ReactorBaseData):
         ConfigValue(
             default=None,
             domain=_fractions_domain,
-            description="Fraction of each feed entering each compartment,"
-            "one per compartment, summing to 1. Feed entering later compartments"
-            "bypasses the earlier ones (channeling). None sends all feed"
+            description="Fraction of each feed entering each compartment, "
+            "one per compartment, summing to 1. Feed entering later compartments "
+            "bypasses the earlier ones (channeling). None sends all feed "
             "into compartment 1.",
         ),
     )

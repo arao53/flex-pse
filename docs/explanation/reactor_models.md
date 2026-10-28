@@ -45,17 +45,23 @@ two models share:
 ## Species reactor: residence-time compartments
 
 The species reactor follows the residence-time-distribution reactor model.
-The real vessel is replaced by a plug-flow path discretized into `N` equal,
-well-mixed compartments, and the feed enters through side feeds along that
-path:
+The vessel is a forward-only series of `N` equal, well-mixed compartments;
+material never flows from a later compartment back to an earlier one. The
+feed enters through side feeds along that series, and feed entering
+compartment `i` passes through the remaining `N - i + 1` compartments:
 
-- Feed that enters early, in compartment 1, travels every compartment and
-  represents **back-mixing**.
-- Feed that enters late, in compartment `N`, leaves almost at once and
-  represents **channeling**.
+- Feed into compartment 1 sees every compartment: the longest and narrowest
+  residence time, closest to **plug flow**.
+- Feed into compartment `N` sees one compartment: a short, broad residence
+  time, as for a single CSTR. This represents **channeling** (bypass).
 
 The split of the feed across compartments is therefore the residence-time
-distribution itself. Feed species are `inlet_names`, product species are
+distribution itself. Back-mixing is not a reverse flow in this model. It is
+represented by the spread of that distribution: the more evenly the feed is
+split, and the more of it enters near the outlet, the more back-mixed the
+reactor behaves.
+
+Feed species are `inlet_names`, product species are
 `outlet_names`, and each species `s` has a holdup in each compartment `i`:
 
 ```

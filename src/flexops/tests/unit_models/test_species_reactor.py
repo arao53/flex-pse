@@ -157,15 +157,21 @@ def test_inert_feed_conserves_flow_and_holdup_at_steady_state():
 
 @pytest.mark.component
 @pytest.mark.needs_highs
-def test_channeling_responds_faster_than_back_mixing():
+def test_feed_into_last_compartment_responds_faster_than_feed_into_first():
     outlet_at_first_step = {}
-    for label, fractions in (("back_mixing", (1, 0, 0)), ("channeling", (0, 0, 1))):
+    for label, fractions in (
+        ("first_compartment", (1, 0, 0)),
+        ("last_compartment", (0, 0, 1)),
+    ):
         m, unit = _reactor(
             n=3, n_compartments=3, rtd_fractions=fractions, rate_constants={"feed": 0.0}
         )
         _solve_with_feed(m, unit, {"feed": [100.0] * 3})
         outlet_at_first_step[label] = pyo.value(unit.flow_out_product[1])
-    assert outlet_at_first_step["channeling"] > outlet_at_first_step["back_mixing"]
+    assert (
+        outlet_at_first_step["last_compartment"]
+        > outlet_at_first_step["first_compartment"]
+    )
 
 
 @pytest.mark.component
