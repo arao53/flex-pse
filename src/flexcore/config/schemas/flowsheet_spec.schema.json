@@ -526,7 +526,7 @@
         },
         "window": {
           "default": 1,
-          "description": "Variation only: number of steps back the change is measured.",
+          "description": "Variation only: number of steps back the change is measured. Each move falls in window overlapping windows, so the charge is divided by window to keep price per unit of change.",
           "minimum": 1,
           "title": "Window",
           "type": "integer"

@@ -150,28 +150,38 @@ class DegradationTermSpec(_StrictModel):
     )
     price: float = Field(
         ge=0,
+        allow_inf_nan=False,
         description="Cost in the model currency per unit of change for variation, "
         "or per unit of the variable held for one hour for the other kinds.",
     )
     deadband: float = Field(
         default=0.0,
         ge=0,
+        allow_inf_nan=False,
         description="Free amount per step, in the variable's units; only the "
         "excess beyond it is charged (a deadband). Not used by exceedance.",
     )
     window: int = Field(
         default=1,
         ge=1,
-        description="Variation only: number of steps back the change is measured.",
+        description="Variation only: number of steps back the change is measured. "
+        "Each move falls in window overlapping windows, so the charge is divided "
+        "by window to keep price per unit of change.",
     )
     reference: float | None = Field(
-        default=None, description="Deviation only (required): the target value."
+        default=None,
+        allow_inf_nan=False,
+        description="Deviation only (required): the target value.",
     )
     lower: float | None = Field(
-        default=None, description="Exceedance only: the charge-free lower bound."
+        default=None,
+        allow_inf_nan=False,
+        description="Exceedance only: the charge-free lower bound.",
     )
     upper: float | None = Field(
-        default=None, description="Exceedance only: the charge-free upper bound."
+        default=None,
+        allow_inf_nan=False,
+        description="Exceedance only: the charge-free upper bound.",
     )
 
     @model_validator(mode="after")
@@ -192,6 +202,8 @@ class DegradationTermSpec(_StrictModel):
                 raise ValueError("An exceedance term requires lower and/or upper.")
             if self.deadband:
                 raise ValueError("An exceedance term's bounds are its deadband.")
+            if None not in (self.lower, self.upper) and self.lower > self.upper:
+                raise ValueError("An exceedance term's lower exceeds its upper.")
         if self.kind is not DegradationTerm.VARIATION and self.window != 1:
             raise ValueError("window is only used by a variation term.")
         return self
@@ -207,18 +219,21 @@ class DegradationSpec(_StrictModel):
     covered_cost: float = Field(
         default=0.0,
         ge=0,
+        allow_inf_nan=False,
         description="Free wear cost per period, in the model currency; only cost "
         "beyond it is charged.",
     )
     horizon_budget: float | None = Field(
         default=None,
         ge=0,
+        allow_inf_nan=False,
         description="Optional hard cap on wear cost per period, in the model "
         "currency.",
     )
     period_hours: float | None = Field(
         default=None,
         gt=0,
+        allow_inf_nan=False,
         description="Length of the period covered_cost and horizon_budget "
         "are stated for (e.g. 730 for a month); they are prorated to the modeled "
         "horizon. None means they are stated for the modeled horizon.",

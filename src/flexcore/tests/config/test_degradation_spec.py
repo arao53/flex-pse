@@ -86,6 +86,42 @@ def test_term_rejects_fields_belonging_to_another_kind(overrides):
 
 
 @pytest.mark.unit
+def test_exceedance_rejects_a_lower_bound_above_the_upper():
+    """An inverted band would charge wear at every value, so it is rejected."""
+    with pytest.raises(ValidationError):
+        DegradationTermSpec(
+            kind=DegradationTerm.EXCEEDANCE, variable="p", price=1.0, lower=5, upper=2
+        )
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("value", [float("inf"), float("nan")])
+@pytest.mark.parametrize(
+    "fields, field",
+    [
+        ({"kind": DegradationTerm.VARIATION}, "price"),
+        ({"kind": DegradationTerm.VARIATION}, "deadband"),
+        ({"kind": DegradationTerm.DEVIATION}, "reference"),
+        ({"kind": DegradationTerm.EXCEEDANCE, "upper": 1.0}, "lower"),
+        ({"kind": DegradationTerm.EXCEEDANCE, "lower": 0.0}, "upper"),
+    ],
+)
+def test_term_rejects_non_finite_values(fields, field, value):
+    """inf and nan never reach the solver as coefficients."""
+    with pytest.raises(ValidationError):
+        DegradationTermSpec(**{"variable": "p", "price": 1.0, **fields, field: value})
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize("value", [float("inf"), float("nan")])
+@pytest.mark.parametrize("field", ["covered_cost", "horizon_budget", "period_hours"])
+def test_spec_rejects_non_finite_values(field, value):
+    """Horizon limits and the period must be finite numbers."""
+    with pytest.raises(ValidationError):
+        DegradationSpec(name="wear", terms=[_variation()], **{field: value})
+
+
+@pytest.mark.unit
 def test_window_is_only_for_variation():
     """Only a variation term compares against an earlier step."""
     with pytest.raises(ValidationError):

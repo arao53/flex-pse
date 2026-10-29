@@ -116,6 +116,29 @@ def test_variation_window_compares_endpoints_and_skips_missing_history():
 
 
 @pytest.mark.unit
+def test_variation_window_charges_a_step_once_per_unit_of_change():
+    """A step lands in w overlapping windows; dividing by w charges it once."""
+    m, unit = _unit()
+    rate, total = add_degradation(unit, _spec(_term(window=3, price=1.0)))
+    _set(unit.wear_0_quantity, [0.0, 0.0, 0.0, 10.0, 10.0, 10.0])
+    for t in (3, 4, 5):
+        unit.wear_0_excess[t].set_value(10.0)
+
+    for t in range(_N):
+        calculate_variable_from_constraint(rate[t], unit.wear_rate_relation[t])
+    calculate_variable_from_constraint(total, unit.wear_total_relation)
+    assert pyo.value(total) == pytest.approx(10.0)
+
+
+@pytest.mark.unit
+def test_variation_first_step_is_free_without_history():
+    """No history precedes the horizon, so the move into t=0 carries no term."""
+    m, unit = _unit()
+    add_degradation(unit, _spec())
+    assert 0 not in unit.wear_0_excess
+
+
+@pytest.mark.unit
 def test_deviation_charges_distance_from_the_reference_beyond_the_deadband():
     """|q - reference| - deadband, floored at zero, on every step."""
     m, unit = _unit()
@@ -224,6 +247,22 @@ def test_billed_rate_spreads_the_billable_amount_evenly():
 
 
 @pytest.mark.unit
+def test_proration_and_billed_rate_follow_a_dt_update():
+    """Horizon length is read from the live dt, so a dt update keeps billing exact."""
+    m, unit = _unit()
+    add_degradation(unit, _spec(covered_cost=10.0, period_hours=3.0))
+    m.time_block.dt.set_value(2 * pyo.value(m.time_block.dt))
+    horizon_hr = 2 * _HORIZON_HR
+    unit.wear_total.set_value(12.0)
+
+    unit.wear_billable.set_value(12.0 - 10.0 * horizon_hr / 3.0)
+    assert _satisfied(unit.wear_billable_floor)
+    unit.wear_billable.set_value(6.0)
+    billed = sum(pyo.value(unit.wear_billed_rate[t]) * 2 * _DT_HR for t in range(_N))
+    assert billed == pytest.approx(6.0)
+
+
+@pytest.mark.unit
 def test_prices_and_limits_update_in_place():
     """Prices, deadbands and horizon limits are registered mutable parameters."""
     m, unit = _unit()
@@ -296,6 +335,19 @@ def test_costing_registers_the_billed_series_as_a_scalar_cost():
 
 
 @pytest.mark.unit
+def test_costing_after_cost_process_raises():
+    """A scalar cost registered after cost_process would be silently unbilled."""
+    m, unit = _unit()
+    usd = currency_units("USD")
+    m.costing = FlexCosting(
+        time_block=m.time_block, energy_prices={"electrical": 0.1 * usd / pyunits.kWh}
+    )
+    m.costing.cost_process()
+    with pytest.raises(FlexConfigError, match="cost_process"):
+        add_degradation(unit, _spec(), costing=m.costing)
+
+
+@pytest.mark.unit
 def test_unpriced_unbudgeted_penalty_warns(caplog):
     """Without a price or budget nothing drives the hinges tight; say so."""
     m, unit = _unit()
@@ -319,6 +371,17 @@ def test_unknown_variable_raises():
     m, unit = _unit()
     with pytest.raises(FlexConfigError):
         add_degradation(unit, _spec(_term(variable="nope")))
+
+
+@pytest.mark.unit
+def test_variable_not_indexed_by_time_alone_raises():
+    """A scalar or (t, phase)-indexed variable is rejected, not a bare KeyError."""
+    m, unit = _unit()
+    unit.cap = pyo.Var(units=pyunits.kW)
+    unit.phased = pyo.Var(m.time_block.time_index, ["a", "b"], units=pyunits.kW)
+    for name in ("cap", "phased"):
+        with pytest.raises(FlexConfigError, match="time"):
+            add_degradation(unit, _spec(_term(variable=name)))
 
 
 def _solve_against_demand(spec: DegradationSpec) -> tuple[list[float], float]:

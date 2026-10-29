@@ -34,11 +34,13 @@ def add_degradation(
 
     Raises:
         FlexConfigError: If ``unit`` already has a penalty named ``spec.name``,
-            or a term names a variable that is not on ``unit``.
+            a term names a variable that is not on ``unit`` or not indexed by
+            time alone, or ``costing`` has already run ``cost_process()``.
 
     Warning:
         The hinge Vars equal the wear only when a price or budget pushes them
-        down; without ``costing`` or ``horizon_budget`` their values are loose.
+        down; without ``costing`` or ``horizon_budget``, or while wear is below
+        ``covered_cost``, their values are loose.
     """
     name = spec.name
     if unit.find_component(f"{name}_rate") is not None:
@@ -46,6 +48,13 @@ def add_degradation(
             f"{unit.name!r} already has a degradation penalty named {name!r}.",
             field="name",
             value=name,
+        )
+    if costing is not None and costing.find_component("opex") is not None:
+        raise FlexConfigError(
+            f"Call add_degradation on {unit.name!r} before cost_process(); "
+            f"{costing.name!r} has already collected its scalar costs.",
+            field="costing_package",
+            value=costing.name,
         )
     tb = unit._find_time_block()
     time = tb.time_index
@@ -62,10 +71,8 @@ def add_degradation(
 
     def _rate_rule(_b, t):
         charged = sum(
-            pyunits.convert(
-                price * excess[t] / (tb.dt if per_step else 1), to_units=per_hour
-            )
-            for price, excess, per_step in terms
+            pyunits.convert(price * excess[t] / divisor, to_units=per_hour)
+            for price, excess, divisor in terms
             if t in excess
         )
         return rate[t] == charged
@@ -92,8 +99,9 @@ def add_degradation(
         ),
     )
 
-    horizon_hours = len(time) * pyo.value(pyunits.convert(tb.dt, pyunits.hr))
-    scale = 1.0 if spec.period_hours is None else horizon_hours / spec.period_hours
+    horizon = pyunits.convert(tb.horizon, to_units=pyunits.hr)
+    period = None if spec.period_hours is None else spec.period_hours * pyunits.hr
+    scale = 1.0 if period is None else horizon / period
     covered = _add_param(unit, f"{name}_covered_cost", spec.covered_cost)
     unit.add_component(
         f"{name}_billable",
@@ -119,7 +127,7 @@ def add_degradation(
         f"{name}_billed_rate",
         pyo.Expression(
             time,
-            rule=lambda _b, t: billable / (horizon_hours * pyunits.hr),
+            rule=lambda _b, t: billable / horizon,
             doc="Billable wear cost spread evenly over the horizon.",
         ),
     )
@@ -157,14 +165,24 @@ def _add_term(unit, prefix: str, term: DegradationTermSpec, tb):
         tb: The unit's TimeBlock.
 
     Returns:
-        ``(price, excess, per_step)``: the price Param, the hinge Var, and
-        whether the excess is a per-step amount (variation) or a level.
+        ``(price, excess, divisor)``: the price Param, the hinge Var, and what
+        ``price * excess`` is divided by to give a rate (``dt * window`` for a
+        variation, 1 for a level).
+
+    Raises:
+        FlexConfigError: If the variable is not indexed by the time index alone.
     """
     var = unit.resolve_variable(term.variable, field="variable")
+    time = tb.time_index
+    if not var.is_indexed() or set(var.index_set()) != set(time):
+        raise FlexConfigError(
+            f"{term.variable!r} on {unit.name!r} must be indexed by time alone.",
+            field="variable",
+            value=term.variable,
+        )
     var_units = pyunits.get_units(var)
     if var_units is None:
         var_units = pyunits.dimensionless
-    time = tb.time_index
     per_step = term.kind is DegradationTerm.VARIATION
 
     unit.add_component(
@@ -215,7 +233,7 @@ def _add_term(unit, prefix: str, term: DegradationTermSpec, tb):
             f"{prefix}_{side}",
             pyo.Constraint(index, rule=lambda _b, t, f=body: e[t] >= f(t)),
         )
-    return price, e, per_step
+    return price, e, tb.dt * w if per_step else 1
 
 
 def _add_param(unit, name: str, value: float, units=pyunits.dimensionless):

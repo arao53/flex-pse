@@ -31,11 +31,17 @@ nominal for an hour costs four times as much as for 15 minutes. The wear
 cost rate (in currency per hour) is therefore
 
 ```{math}
-r[t] = \sum_{\text{variation}} \frac{p_k\, e_k[t]}{\Delta t}
+r[t] = \sum_{\text{variation}} \frac{p_k\, e_k[t]}{w_k\,\Delta t}
      + \sum_{\text{other kinds}} p_k\, e_k[t],
 \qquad
 C = \sum_t r[t]\,\Delta t .
 ```
+
+A variation term with `window` {math}`w > 1` compares each step with the one
+{math}`w` steps earlier, so the deadband {math}`a` is the free change over
+{math}`w` steps rather than one. The windows overlap, so a single move falls
+in {math}`w` of them; dividing by {math}`w` charges it once per unit of
+change.
 
 Prices are stated directly in currency per unit of the driver (for example
 dollars per kW of change). That is the number an operator or maintenance
@@ -116,16 +122,22 @@ examples:
   reference 0.
 - **Depth-of-discharge battery wear.** Swap the quantity to a piecewise fit
   of the damage curve {math}`\psi(s)` and use a `variation` term. The penalty then
-  charges {math}`\lvert\psi(s_t) - \psi(s_{t-1})\rvert`. This is exact but no
-  longer convex, so the model becomes a MILP or a nonconvex NLP.
+  charges {math}`\lvert\psi(s_t) - \psi(s_{t-1})\rvert`. This approximates
+  cycle-depth damage: it matches a rainflow count only for cycles that start
+  at the state of charge {math}`\psi` is measured from. It is also no longer
+  convex, so the model becomes a MILP or a nonconvex NLP.
 
 ## Caveats
 
 - **Tightness.** Each hinge is an inequality. It equals the true excess only
   while a price or a budget pushes it down. A penalty that is neither billed
-  nor budgeted logs a warning, because its values would be loose.
+  nor budgeted logs a warning, because its values would be loose. Wear below
+  `covered_cost` is free, so `wear_rate` and `wear_total` are loose there
+  too; read the billed cost, or recompute the excess from the solved
+  variables, when reporting wear.
 - **The first step.** A variation term has no history before the horizon,
-  so steps {math}`t < w` carry no charge. The watched quantity is registered as
+  so steps {math}`t < w` carry no charge, and the optimizer may place a
+  large move there. The watched quantity is registered as
   rolling state so a rolling-horizon driver can carry the last values into
   the next window.
 - **Scaling.** Keep prices so a horizon's wear cost is of the same order as
