@@ -29,9 +29,10 @@ from flexcore.exceptions import FlexConfigError
 from flexops import logic
 from flexops.core.extensions import resolve_extension
 from flexops.core.fixing import FixReport, apply_state
-from flexops.core.network_block import NetworkBlock
+from flexops.core.network_block import NetworkBlock, NetworkBlockData
 from flexops.core.ops_block import OpsBlockData
-from flexops.core.plant_block import PlantBlock
+from flexops.core.plant_block import PlantBlock, PlantBlockData
+from flexops.core.resources import add_resource_balance
 from flexops.core.time_block import TimeBlock
 from flexops.core.units import parse_units
 from flexops.costing import FlexCosting
@@ -224,6 +225,26 @@ def stage_topology(model, spec: FlowsheetSpec, ctx: BuildContext) -> None:
         pyo.TransformationFactory("network.expand_arcs").apply_to(model)
 
 
+def stage_degradation(model, spec: FlowsheetSpec, ctx: BuildContext) -> None:
+    """Add each degradation penalty to every member of its unit, before surrogates.
+
+    Args:
+        model: The model with built units.
+        spec: The validated spec.
+        ctx: The shared build context.
+
+    Raises:
+        FlexConfigError: If a term's variable is not on its unit.
+    """
+    for element in elements_of(spec, "degradation"):
+        choice = element.costing_package
+        if choice == AUTO:
+            choice = spec.of_kind("costing")[0].name
+        costing = None if choice is None else model.find_component(choice)
+        for member in _members(model, ctx, element.unit):
+            logic.add_degradation(member, element, costing=costing)
+
+
 def stage_surrogates(model, spec: FlowsheetSpec, ctx: BuildContext) -> None:
     """Swap each surrogate element's relation into its unit.
 
@@ -270,13 +291,18 @@ def stage_logic(model, spec: FlowsheetSpec, ctx: BuildContext) -> None:
         ctx: The shared build context.
 
     Raises:
-        FlexConfigError: If a variable is not on its unit, or two indexed units
-            paired by a cross-unit element have different member counts.
+        FlexConfigError: If a variable is not on its unit, two indexed units
+            paired by a cross-unit element have different member counts, a
+            ``status`` targets a unit that manages its own, or logic that needs
+            a status names a unit without one.
     """
     for kind in LOGIC_ORDER:
         for element in elements_of(spec, kind):
             if kind == "parallel_group":
                 units = [m for u in element.units for m in _members(model, ctx, u)]
+                if element.order_status:
+                    for unit in units:
+                        _require_status(unit, kind)
                 logic.register_parallel_group(
                     units,
                     variables=element.variables,
@@ -285,6 +311,8 @@ def stage_logic(model, spec: FlowsheetSpec, ctx: BuildContext) -> None:
             elif kind in ("conditional", "startup_delay"):
                 other = element.implies if kind == "conditional" else element.upstream
                 for unit, partner in _pairs(model, ctx, element.unit, other):
+                    _require_status(unit, kind)
+                    _require_status(partner, kind)
                     if kind == "conditional":
                         logic.add_conditional(unit, partner, then=element.state)
                     else:
@@ -314,20 +342,39 @@ def _limit(value):
     return value if isinstance(value, float) else value.value * parse_units(value.units)
 
 
+def _optional_limit(value):
+    """Return a spec limit as a Pyomo value, or ``None`` if it's unset."""
+    return None if value is None else _limit(value)
+
+
+def _require_status(member, kind: str) -> None:
+    """Raise if ``member`` has no status for logic of ``kind`` to use."""
+    if member.find_component("status") is None:
+        raise FlexConfigError(f"{kind} on {member.name!r} needs a status element.")
+
+
 def _add_unit_logic(member, element) -> None:
     """Build one unit-level logic element on one unit member."""
     if element.kind == "status":
+        if not member.allows_status_element:
+            raise FlexConfigError(
+                f"status on {member.name!r}: this unit manages its own status; "
+                "set unit_commitment.status on the unit instead."
+            )
         logic.add_status(
             member,
             _variable(member, element),
             _limit(element.min_output),
             _limit(element.max_output),
+            max_count=element.max_count,
+            min_count_on=element.min_count_on,
         )
     elif element.kind == "bypass":
         logic.add_bypass(member, _variable(member, element), _limit(element.max))
     elif element.kind == "dwell":
         logic.add_dwell(_variable(member, element), element.k)
     else:
+        _require_status(member, element.kind)
         logic.add_startup_shutdown(
             member, member.status, element.min_up, element.min_down
         )
@@ -360,6 +407,40 @@ def _pairs(model, ctx: BuildContext, first: str, second: str) -> list[tuple]:
             value=first,
         )
     return list(zip(firsts, seconds, strict=True))
+
+
+def stage_resources(model, spec: FlowsheetSpec, ctx: BuildContext) -> None:
+    """Add a balance for each resource element to its plant or network.
+
+    Args:
+        model: The model with built units and logic.
+        spec: The validated spec.
+        ctx: The shared build context.
+
+    Raises:
+        FlexConfigError: If the parent is not a plant or network, the resource
+            has no registered terms, or its units do not fit its terms.
+    """
+    for element in elements_of(spec, "resource"):
+        parent = model.find_component(parent_name(element.name))
+        if not isinstance(parent, (PlantBlockData, NetworkBlockData)):
+            raise FlexConfigError(
+                f"Resource {element.name!r} needs a plant or network as its "
+                f"parent, but {parent_name(element.name)!r} is not one.",
+                field="name",
+                value=element.name,
+            )
+        local_name = element.name.rpartition(".")[2]
+        add_resource_balance(
+            parent,
+            local_name,
+            resource=element.resource or local_name,
+            units=element.units,
+            stock=element.stock,
+            lower=_optional_limit(element.lower),
+            upper=_optional_limit(element.upper),
+            initial=_optional_limit(element.initial),
+        )
 
 
 def stage_state(model, spec: FlowsheetSpec, ctx: BuildContext) -> None:
@@ -446,9 +527,11 @@ def stage_costing(model, spec: FlowsheetSpec, ctx: BuildContext) -> None:
 STAGES = (
     stage_declare,
     stage_topology,
+    stage_degradation,
     stage_surrogates,
     stage_ramping,
     stage_logic,
+    stage_resources,
     stage_state,
     stage_extensions,
     stage_costing,

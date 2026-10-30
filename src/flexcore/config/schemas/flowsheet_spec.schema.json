@@ -362,6 +362,184 @@
       "title": "DRConfig",
       "type": "object"
     },
+    "DegradationElement": {
+      "additionalProperties": false,
+      "description": "A priced degradation (wear) penalty on a unit's variables.",
+      "properties": {
+        "costing_package": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": "auto",
+          "description": "Name of the costing element the wear cost is billed to. 'auto' means the model's only one; null leaves it unbilled.",
+          "title": "Costing Package"
+        },
+        "covered_cost": {
+          "default": 0.0,
+          "description": "Free wear cost per period, in the model currency; only cost beyond it is charged.",
+          "minimum": 0,
+          "title": "Covered Cost",
+          "type": "number"
+        },
+        "horizon_budget": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Optional hard cap on wear cost per period, in the model currency.",
+          "title": "Horizon Budget"
+        },
+        "kind": {
+          "const": "degradation",
+          "title": "Kind",
+          "type": "string"
+        },
+        "name": {
+          "description": "Name of the penalty, unique on its unit.",
+          "title": "Name",
+          "type": "string"
+        },
+        "period_hours": {
+          "anyOf": [
+            {
+              "exclusiveMinimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Length of the period covered_cost and horizon_budget are stated for (e.g. 730 for a month); they are prorated to the modeled horizon. None means they are stated for the modeled horizon.",
+          "title": "Period Hours"
+        },
+        "terms": {
+          "description": "The priced wear drivers that are summed.",
+          "items": {
+            "$ref": "#/$defs/DegradationTermSpec"
+          },
+          "minItems": 1,
+          "title": "Terms",
+          "type": "array"
+        },
+        "unit": {
+          "description": "Name of the unit element, or 'name[i]' for one member of an indexed unit.",
+          "title": "Unit",
+          "type": "string"
+        }
+      },
+      "required": [
+        "name",
+        "terms",
+        "kind",
+        "unit"
+      ],
+      "title": "DegradationElement",
+      "type": "object"
+    },
+    "DegradationTerm": {
+      "description": "Which wear driver a DegradationTermSpec charges for.",
+      "enum": [
+        "variation",
+        "deviation",
+        "exceedance",
+        "throughput"
+      ],
+      "title": "DegradationTerm",
+      "type": "string"
+    },
+    "DegradationTermSpec": {
+      "additionalProperties": false,
+      "description": "One priced wear driver of a unit variable, valued in that variable's units.",
+      "properties": {
+        "deadband": {
+          "default": 0.0,
+          "description": "Free amount per step, in the variable's units; only the excess beyond it is charged (a deadband). Not used by exceedance.",
+          "minimum": 0,
+          "title": "Deadband",
+          "type": "number"
+        },
+        "kind": {
+          "$ref": "#/$defs/DegradationTerm",
+          "description": "Wear driver: variation (change from window steps earlier), deviation (distance from reference), exceedance (excursion outside lower/upper), or throughput (the variable itself)."
+        },
+        "lower": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Exceedance only: the charge-free lower bound.",
+          "title": "Lower"
+        },
+        "price": {
+          "description": "Cost in the model currency per unit of change for variation, or per unit of the variable held for one hour for the other kinds.",
+          "minimum": 0,
+          "title": "Price",
+          "type": "number"
+        },
+        "reference": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Deviation only (required): the target value.",
+          "title": "Reference"
+        },
+        "upper": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Exceedance only: the charge-free upper bound.",
+          "title": "Upper"
+        },
+        "variable": {
+          "description": "Name of the time-indexed variable on the unit (dotted names into a sub-block resolve).",
+          "title": "Variable",
+          "type": "string"
+        },
+        "window": {
+          "default": 1,
+          "description": "Variation only: number of steps back the change is measured. Each move falls in window overlapping windows, so the charge is divided by window to keep price per unit of change.",
+          "minimum": 1,
+          "title": "Window",
+          "type": "integer"
+        }
+      },
+      "required": [
+        "kind",
+        "variable",
+        "price"
+      ],
+      "title": "DegradationTermSpec",
+      "type": "object"
+    },
     "DispatchElement": {
       "additionalProperties": false,
       "description": "Values an external controller sets for one variable of a unit.",
@@ -981,6 +1159,101 @@
       "title": "RampElement",
       "type": "object"
     },
+    "ResourceElement": {
+      "additionalProperties": false,
+      "description": "A balance on one named resource over a plant or network.",
+      "properties": {
+        "initial": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "#/$defs/Quantity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Level at the first time point. Required for a stock, not allowed for a flow. A bare number is in units.",
+          "title": "Initial"
+        },
+        "kind": {
+          "const": "resource",
+          "title": "Kind",
+          "type": "string"
+        },
+        "lower": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "#/$defs/Quantity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Lower bound on the net contribution for a flow, or on the level for a stock. A bare number is in units.",
+          "title": "Lower"
+        },
+        "name": {
+          "description": "Dotted path of the balance block. Its parent has to be a plant or network.",
+          "title": "Name",
+          "type": "string"
+        },
+        "resource": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Resource to balance, as units register it. Defaults to the last part of name.",
+          "title": "Resource"
+        },
+        "stock": {
+          "default": false,
+          "description": "True if the resource's level accumulates over time.",
+          "title": "Stock",
+          "type": "boolean"
+        },
+        "units": {
+          "description": "Units of the balance, a rate for a flow resource or a quantity for a stock.",
+          "title": "Units",
+          "type": "string"
+        },
+        "upper": {
+          "anyOf": [
+            {
+              "type": "number"
+            },
+            {
+              "$ref": "#/$defs/Quantity"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Upper bound on the net contribution for a flow, or on the level for a stock. A bare number is in units.",
+          "title": "Upper"
+        }
+      },
+      "required": [
+        "kind",
+        "name",
+        "units"
+      ],
+      "title": "ResourceElement",
+      "type": "object"
+    },
     "SetElement": {
       "additionalProperties": false,
       "description": "A set of members that units and connections can be indexed over.",
@@ -1182,6 +1455,13 @@
           "title": "Kind",
           "type": "string"
         },
+        "max_count": {
+          "default": 1,
+          "description": "Number of identical trains this unit represents. Above 1, status is an integer count and output limits apply per train.",
+          "minimum": 1,
+          "title": "Max Count",
+          "type": "integer"
+        },
         "max_output": {
           "anyOf": [
             {
@@ -1193,6 +1473,19 @@
           ],
           "description": "Output when on, upper limit: a number or a quantity.",
           "title": "Max Output"
+        },
+        "min_count_on": {
+          "anyOf": [
+            {
+              "type": "integer"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "description": "Fewest trains that can run when any are running, from 2 to max_count. Leave out to allow any count from 0 to max_count.",
+          "title": "Min Count On"
         },
         "min_output": {
           "anyOf": [
@@ -1507,6 +1800,7 @@
             "bypass": "#/$defs/BypassElement",
             "conditional": "#/$defs/ConditionalElement",
             "costing": "#/$defs/CostingElement",
+            "degradation": "#/$defs/DegradationElement",
             "dispatch": "#/$defs/DispatchElement",
             "dwell": "#/$defs/DwellElement",
             "extension": "#/$defs/ExtensionElement",
@@ -1517,6 +1811,7 @@
             "plant": "#/$defs/PlantElement",
             "property_package": "#/$defs/PropertyPackageElement",
             "ramp": "#/$defs/RampElement",
+            "resource": "#/$defs/ResourceElement",
             "set": "#/$defs/SetElement",
             "startup_delay": "#/$defs/StartupDelayElement",
             "startup_shutdown": "#/$defs/StartupShutdownElement",
@@ -1576,6 +1871,12 @@
           },
           {
             "$ref": "#/$defs/ParallelGroupElement"
+          },
+          {
+            "$ref": "#/$defs/ResourceElement"
+          },
+          {
+            "$ref": "#/$defs/DegradationElement"
           },
           {
             "$ref": "#/$defs/DispatchElement"

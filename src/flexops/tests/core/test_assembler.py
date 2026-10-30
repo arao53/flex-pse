@@ -179,9 +179,11 @@ def test_stages_order_is_fixed():
     assert [stage.__name__.removeprefix("stage_") for stage in STAGES] == [
         "declare",
         "topology",
+        "degradation",
         "surrogates",
         "ramping",
         "logic",
+        "resources",
         "state",
         "extensions",
         "costing",

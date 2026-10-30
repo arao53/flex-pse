@@ -132,6 +132,7 @@ def _power_max_kw(configured, fallback_kw: float | None) -> float | None:
 class BatteryModelData(OpsBlockData):
     """A battery: SOC dynamics, fixable capacity, DERMS dispatch (module docstring)."""
 
+    allows_status_element = False
     CONFIG = OpsBlockData.CONFIG()
     CONFIG.get("unit_commitment").set_default_value(UnitCommitmentConfig(status=False))
     CONFIG.declare(

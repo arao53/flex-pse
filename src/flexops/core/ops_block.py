@@ -25,6 +25,7 @@ constraints; FlexParameterize drives this.
 import enum
 import numbers
 from collections.abc import Sequence
+from typing import ClassVar
 
 import pyomo.environ as pyo
 from idaes.core import UnitModelBlockData, declare_process_block_class
@@ -50,8 +51,10 @@ from flexops.core.registration import (
     ParameterRecord,
     PowerRecord,
     RelationRecord,
+    ResourceRecord,
 )
 from flexops.core.time_block import TimeBlockData, find_time_block
+from flexops.logic.status import require_no_intercept, status_max_count
 from flexops.surrogates import Surrogate, surrogate_from_spec
 
 
@@ -210,6 +213,10 @@ class OpsBlockData(UnitModelBlockData):
     #: its own generic vocabulary here; a physical subclass renames any subset by
     #: passing ``naming_dict`` to the base ``build()``, which registers it.
     _component_names: dict[str, str] = {}
+
+    #: Whether a spec ``status`` element may target this unit; ``False`` for
+    #: units that manage their own status.
+    allows_status_element: ClassVar[bool] = True
 
     def create_stream_naming_convention(self, naming_dict: dict[str, str]) -> None:
         """Register this unit's role -> Pyomo component name mapping.
@@ -564,6 +571,76 @@ class OpsBlockData(UnitModelBlockData):
             )
         self._io_registry.boundary.append(
             BoundaryRecord(var=var, name=var.local_name, resource=resource, kind=kind)
+        )
+
+    def register_resource(
+        self, var, *, resource: str, coeff: float = 1.0, offset: int = 0
+    ) -> None:
+        """Register a variable's signed contribution to a named resource.
+
+        Args:
+            var: Time-indexed Pyomo ``Var`` or ``Reference`` over this unit's
+                time points.
+            resource: Name the term is collected under (e.g. ``"brine"``).
+            coeff: Signed coefficient in resource units per ``var`` unit.
+                Positive supplies the resource, negative consumes it.
+            offset: Delay in steps, ``>= 0``. The term at ``t`` is
+                ``coeff * var[t - offset]``.
+
+        Raises:
+            FlexConfigError: If ``resource`` is empty, ``coeff`` is not a
+                number, ``offset`` is not a non-negative integer, ``var``
+                is not indexed over this unit's time points, or ``var`` is
+                already registered to ``resource`` with the same ``offset``.
+        """
+        if not resource:
+            raise FlexConfigError(
+                "register_resource requires a non-empty resource (e.g. "
+                "'brine'); it is the key the terms are collected under.",
+                field="resource",
+                value=resource,
+            )
+        if isinstance(coeff, bool) or not isinstance(coeff, numbers.Real):
+            raise FlexConfigError(
+                f"register_resource requires a numeric coeff, got {coeff!r}.",
+                field="coeff",
+                value=coeff,
+            )
+        if isinstance(offset, bool) or not isinstance(offset, int) or offset < 0:
+            raise FlexConfigError(
+                f"register_resource requires offset to be an integer >= 0, "
+                f"got {offset!r}.",
+                field="offset",
+                value=offset,
+            )
+        time_index = set(self._find_time_block().time_index)
+        if not var.is_indexed() or set(var.keys()) != time_index:
+            raise FlexConfigError(
+                f"register_resource requires {var.name!r} to be indexed over "
+                "this unit's time points. Pass a time-indexed Var, or a "
+                "pyo.Reference that slices out the time index.",
+                field="var",
+                value=var.name,
+            )
+        if any(
+            (rec.var, rec.resource, rec.offset) == (var, resource, offset)
+            for rec in self._io_registry.resources
+        ):
+            raise FlexConfigError(
+                f"{var.name!r} is already registered to resource {resource!r} "
+                f"with offset {offset}; a second term would count it twice. "
+                "Register it once with the combined coeff.",
+                field="var",
+                value=var.name,
+            )
+        self._io_registry.resources.append(
+            ResourceRecord(
+                var=var,
+                name=var.local_name,
+                resource=resource,
+                coeff=float(coeff),
+                offset=offset,
+            )
         )
 
     # -- stream state blocks + ports (property package) --------------------
@@ -947,8 +1024,9 @@ class OpsBlockData(UnitModelBlockData):
             auxiliary Vars).
 
         Raises:
-            FlexConfigError: If ``relation_name`` was never registered, or a
-                declared input variable is not found on the unit.
+            FlexConfigError: If ``relation_name`` was never registered, a
+                declared input variable is not found on the unit, or the unit
+                counts trains and ``surrogate`` has a constant term.
         """
         record = next(
             (r for r in self._io_registry.relations if r.name == relation_name), None
@@ -965,6 +1043,7 @@ class OpsBlockData(UnitModelBlockData):
             )
         for name in surrogate.input_variables:
             self.resolve_variable(name, field="input_variables")
+        require_no_intercept(self, relation_name, surrogate, status_max_count(self))
 
         (record.fitted if record.fitted is not None else record.constraint).deactivate()
         for component in record.components:
@@ -997,6 +1076,7 @@ class OpsBlockData(UnitModelBlockData):
 
         record.swap_count += 1
         record.spec = getattr(surrogate, "spec", None)
+        record.surrogate = surrogate
         fitted_name = (
             "fitted" if record.swap_count == 1 else f"fitted_{record.swap_count}"
         )
@@ -1529,12 +1609,14 @@ class OpsBlockData(UnitModelBlockData):
         resolved against ``flexops.unit_models``. Persisted construction
         options carry their units as data: a value written
         ``{"value": 0.5, "units": "kWh/m^3"}`` becomes a units-carrying Pyomo
-        expression, anything else passes through unchanged -- including a plain
-        string naming an enum member (``"detail": "polarization"``), which the
-        receiving ``ConfigValue``'s own domain then validates. Runtime-only
-        options that cannot be serialized (``property_package``,
-        ``costing_package``) are supplied by the caller through ``kwargs``,
-        which wins over the config on a key collision.
+        expression, as does each such value inside a mapping option
+        (``heating_values``); anything else passes through unchanged --
+        including a plain string naming an enum member
+        (``"detail": "polarization"``), which the receiving ``ConfigValue``'s
+        own domain then validates. Runtime-only options that cannot be
+        serialized (``property_package``, ``costing_package``) are supplied by
+        the caller through ``kwargs``, which wins over the config on a key
+        collision.
 
         Args:
             cfg: A ``UnitConfig``, or a mapping/path to validate into one.
@@ -1567,10 +1649,12 @@ class OpsBlockData(UnitModelBlockData):
                 field="unit_model_class",
                 value=cfg.unit_model_class,
             )
-        options = {
-            name: parse_quantity(value, strict=False)
-            for name, value in cfg.construction_options.items()
-        }
+        options = {}
+        for name, value in cfg.construction_options.items():
+            if isinstance(value, dict) and set(value) != {"value", "units"}:
+                # A mapping option (e.g. heating_values) holds quantities as values.
+                value = {k: parse_quantity(v, strict=False) for k, v in value.items()}
+            options[name] = parse_quantity(value, strict=False)
         if cfg.unit_commitment is not None:
             options["unit_commitment"] = cfg.unit_commitment
         return block_class(
