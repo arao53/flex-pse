@@ -54,6 +54,7 @@ from flexops.core.registration import (
     ResourceRecord,
 )
 from flexops.core.time_block import TimeBlockData, find_time_block
+from flexops.logic.status import require_no_intercept, status_max_count
 from flexops.surrogates import Surrogate, surrogate_from_spec
 
 
@@ -1023,8 +1024,9 @@ class OpsBlockData(UnitModelBlockData):
             auxiliary Vars).
 
         Raises:
-            FlexConfigError: If ``relation_name`` was never registered, or a
-                declared input variable is not found on the unit.
+            FlexConfigError: If ``relation_name`` was never registered, a
+                declared input variable is not found on the unit, or the unit
+                counts trains and ``surrogate`` has a constant term.
         """
         record = next(
             (r for r in self._io_registry.relations if r.name == relation_name), None
@@ -1041,6 +1043,7 @@ class OpsBlockData(UnitModelBlockData):
             )
         for name in surrogate.input_variables:
             self.resolve_variable(name, field="input_variables")
+        require_no_intercept(self, relation_name, surrogate, status_max_count(self))
 
         (record.fitted if record.fitted is not None else record.constraint).deactivate()
         for component in record.components:
@@ -1073,6 +1076,7 @@ class OpsBlockData(UnitModelBlockData):
 
         record.swap_count += 1
         record.spec = getattr(surrogate, "spec", None)
+        record.surrogate = surrogate
         fitted_name = (
             "fitted" if record.swap_count == 1 else f"fitted_{record.swap_count}"
         )

@@ -230,3 +230,52 @@ def test_min_count_on_holds_in_a_solve():
     pyo.assert_optimal_termination(get_solver(model=m, prefer="highs").solve(m))
 
     assert [round(pyo.value(status[t])) for t in status] == [0, 2, 2, 2]
+
+
+def _multilinear_power(intercept: float):
+    """Return a multilinear Pump power relation with the given constant term."""
+    from flexops.surrogates.multilinear import MultilinearSurrogate
+
+    return MultilinearSurrogate(
+        {
+            "input_variables": {"flow_out": "m^3/hr"},
+            "output_variables": {"power_electrical": "kW"},
+            "coefficients": {"flow_out": 0.4, "intercept": intercept},
+        }
+    )
+
+
+@pytest.mark.unit
+def test_counting_a_unit_with_a_relation_intercept_raises():
+    """A constant term would be counted once, not once per running train."""
+    m = dummy_time_block(4)
+    m.unit = Pump(property_package=m.properties)
+    m.unit.swap_relation("power_electrical_relation", _multilinear_power(5.0))
+
+    with pytest.raises(FlexConfigError, match="constant term") as excinfo:
+        add_status(m.unit, m.unit.power_electrical, 0.0, 100.0, max_count=3)
+
+    assert excinfo.value.field == "max_count"
+    assert not hasattr(m.unit, "status")
+
+
+@pytest.mark.unit
+def test_swapping_an_intercept_onto_a_counted_unit_raises():
+    """The check also holds when the relation is swapped after counting."""
+    m, unit, _status = _counted_pump(max_count=3)
+    relation = unit.power_electrical_relation
+
+    with pytest.raises(FlexConfigError, match="constant term"):
+        unit.swap_relation("power_electrical_relation", _multilinear_power(5.0))
+
+    assert relation.active
+
+
+@pytest.mark.unit
+@pytest.mark.parametrize(("intercept", "max_count"), [(0.0, 3), (5.0, 1)])
+def test_zero_intercept_or_single_train_is_accepted(intercept, max_count):
+    m = dummy_time_block(4)
+    m.unit = Pump(property_package=m.properties)
+    m.unit.swap_relation("power_electrical_relation", _multilinear_power(intercept))
+
+    add_status(m.unit, m.unit.power_electrical, 0.0, 100.0, max_count=max_count)

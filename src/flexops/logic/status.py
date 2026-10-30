@@ -74,6 +74,34 @@ def require_binary_status(unit: Any, *, used_by: str) -> None:
         )
 
 
+def require_no_intercept(
+    unit: Any, relation_name: str, surrogate: Any, max_count: int
+) -> None:
+    """Raise if a unit counting several trains would carry a constant term.
+
+    Args:
+        unit: The unit block the relation is on.
+        relation_name: Local name of the relation, used in the message.
+        surrogate: The relation's :class:`~flexops.surrogates.base.Surrogate`.
+        max_count: Number of trains the unit represents.
+
+    Raises:
+        FlexConfigError: If ``max_count > 1`` and ``surrogate.intercept`` is
+            nonzero.
+    """
+    # TODO(#140): scale the intercept by the running count, then remove this guard
+    if max_count == 1 or surrogate.intercept == 0.0:
+        return
+    raise FlexConfigError(
+        f"{unit.name!r} counts {max_count} trains, but relation "
+        f"{relation_name!r} has a constant term ({surrogate.intercept}). The "
+        "constant would be counted once instead of once per running train. Fit "
+        "the relation with an intercept of 0, or build one unit per train.",
+        field="max_count",
+        value=max_count,
+    )
+
+
 def _register_rolling_state(
     unit: Any, var: pyo.Var, k: int, kind: RollingStateKind
 ) -> None:
@@ -175,8 +203,9 @@ def add_status(
         ``[0, max_count]`` when ``max_count > 1``.
 
     Raises:
-        FlexConfigError: If ``max_count < 1``, or ``min_count_on`` is outside
-            ``[2, max_count]``.
+        FlexConfigError: If ``max_count < 1``, ``min_count_on`` is outside
+            ``[2, max_count]``, or ``max_count > 1`` and a swapped relation on
+            the unit has a constant term.
     """
     if max_count < 1:
         raise FlexConfigError(
@@ -192,6 +221,9 @@ def add_status(
             field="min_count_on",
             value=min_count_on,
         )
+    for relation in unit._io_registry.relations:
+        if relation.surrogate is not None:
+            require_no_intercept(unit, relation.name, relation.surrogate, max_count)
     # leave defaults out so existing specs emit unchanged
     counted_fields: dict[str, int] = {}
     if max_count > 1:

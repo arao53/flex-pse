@@ -267,6 +267,7 @@ class RelationRecord:
             here so ``switch_surrogate_block`` can reactivate them.
         spec: The spec the current surrogate was built from, or ``None`` for a
             surrogate built by hand (which a spec can't describe).
+        surrogate: The current surrogate object, or ``None`` before a swap.
     """
 
     constraint: Any
@@ -279,6 +280,7 @@ class RelationRecord:
     surrogate_block: Any = None
     surrogate_blocks: list = field(default_factory=list)
     spec: SurrogateSpec | None = None
+    surrogate: Any = None
 
 
 @dataclass

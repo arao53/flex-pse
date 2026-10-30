@@ -46,6 +46,12 @@ which means something different for a count (``1 - status`` can go negative).
 They raise ``FlexConfigError`` on a counted unit instead of building the wrong
 model.
 
+A counted unit is exact only when its relations scale with the trains. A
+multilinear relation with a nonzero ``intercept`` would add that constant once
+instead of once per running train, so ``add_status(max_count > 1)`` and a
+later ``swap_relation`` both raise ``FlexConfigError`` for it. Fit the relation
+with an intercept of 0, or build one unit per train.
+
 Commitment and timing
 ---------------------
 
