@@ -39,7 +39,7 @@ inside it:
 
 ```json
 {
-  "schema_version": "0.1.1",
+  "schema_version": "0.1.0",
   "name": "waterfacility",
   "elements": [
     {"kind": "unit", "name": "waterfacility.plant",

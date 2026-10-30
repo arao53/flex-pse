@@ -144,6 +144,8 @@ def test_bound_with_the_wrong_dimension_is_a_config_error():
         ({"stock": True}, "initial"),
         ({"initial": 3.0}, "initial"),
         ({"lower": 5.0, "upper": 1.0}, "lower"),
+        ({"stock": True, "initial": 20.0, "upper": 10.0}, "initial"),
+        ({"stock": True, "initial": -1.0, "lower": 0.0}, "initial"),
     ],
 )
 def test_inconsistent_arguments_raise(kwargs, field):

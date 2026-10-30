@@ -211,3 +211,22 @@ def test_bad_counts_raise_naming_the_field(kwargs, field):
 
     assert excinfo.value.field == field
     assert not hasattr(m.unit, "status")
+
+
+@pytest.mark.component
+@pytest.mark.needs_highs
+def test_min_count_on_holds_in_a_solve():
+    """Demand one train could meet runs two, since one alone is below the minimum."""
+    from flexcore.solvers import get_solver
+
+    m, unit, status = _counted_pump(max_count=3, min_count_on=2)
+    demand = [0.0, 50.0, 50.0, 50.0]
+
+    @m.Constraint(m.time_block.time_index)
+    def meet_demand(b, t):
+        return unit.power_electrical[t] >= demand[t] * pyunits.kW
+
+    m.cost = pyo.Objective(expr=sum(status[t] for t in status))
+    pyo.assert_optimal_termination(get_solver(model=m, prefer="highs").solve(m))
+
+    assert [round(pyo.value(status[t])) for t in status] == [0, 2, 2, 2]

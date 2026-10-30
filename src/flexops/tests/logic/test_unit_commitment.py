@@ -321,3 +321,26 @@ def test_counted_unit_matches_three_ordered_trains():
         return [unit]
 
     assert solve(counted) == pytest.approx(solve(three_trains))
+
+
+@pytest.mark.component
+@pytest.mark.needs_highs
+def test_counted_min_uptime_holds_in_a_solve():
+    """Two trains started for one step keep running for min_uptime steps."""
+    from flexcore.solvers import get_solver
+
+    m = dummy_time_block(_N)
+    m.unit = Pump(property_package=m.properties)
+    status = add_status(m.unit, m.unit.power_electrical, 0.0, 100.0, max_count=2)
+    add_startup_shutdown(m.unit, status, min_uptime=3)
+    status[0].fix(0)
+    demand = [0.0, 150.0, 0.0, 0.0, 0.0, 0.0]
+
+    @m.Constraint(m.time_block.time_index)
+    def meet_demand(b, t):
+        return m.unit.power_electrical[t] >= demand[t]
+
+    m.cost = pyo.Objective(expr=sum(status[t] for t in status))
+    pyo.assert_optimal_termination(get_solver(model=m, prefer="highs").solve(m))
+
+    assert [round(pyo.value(status[t])) for t in status] == [0, 2, 2, 2, 0, 0]

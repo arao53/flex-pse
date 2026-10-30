@@ -123,8 +123,9 @@ def add_resource_balance(
     Raises:
         FlexConfigError: If no unit registered ``resource`` (the message lists
             what is registered), a stock has no ``initial`` or a flow has one,
-            ``lower`` is above ``upper``, a term cannot be converted to
-            ``units``, or a term is a flow on a port an Arc connects.
+            ``lower`` is above ``upper``, a stock's ``initial`` is outside
+            them, a term cannot be converted to ``units``, or a term is a flow
+            on a port an Arc connects.
     """
     if stock and initial is None:
         raise FlexConfigError(
@@ -164,6 +165,17 @@ def add_resource_balance(
             f"({upper_value}).",
             field="lower",
             value=lower_value,
+        )
+    initial_value = _to_level(initial, level_units, field="initial")
+    if initial_value is not None and not (
+        (lower_value is None or initial_value >= lower_value)
+        and (upper_value is None or initial_value <= upper_value)
+    ):
+        raise FlexConfigError(
+            f"Resource {resource!r}: initial ({initial_value}) is outside "
+            f"[{lower_value}, {upper_value}], so level[0] is infeasible.",
+            field="initial",
+            value=initial_value,
         )
     _reject_arc_flows(scope, resource, terms)
 
@@ -205,7 +217,7 @@ def add_resource_balance(
             doc=f"Level of resource {resource!r}.",
         )
         block.initial = pyo.Param(
-            initialize=_to_level(initial, level_units, field="initial"),
+            initialize=initial_value,
             mutable=True,
             units=level_units,
             doc="Initial level, level[0], registered as rolling horizon state.",

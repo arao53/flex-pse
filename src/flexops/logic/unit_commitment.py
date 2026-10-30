@@ -44,7 +44,9 @@ def add_startup_shutdown(
       the trailing ``min_uptime`` steps forces the unit on at ``t``.
     * ``min_downtime[t]``: the mirror, ``sum(shutdown[i] for i in window) <=
       n - status_var[t]``, window sized by ``min_downtime``, where ``n`` is the
-      unit's ``max_count`` (``1`` for a binary status).
+      unit's ``max_count`` (``1`` for a binary status). With ``n > 1`` the
+      trains are interchangeable: a recent startup keeps the count up, so an
+      older train may stop while the new one runs.
 
     At the defaults (``min_uptime=1, min_downtime=1``) each window is the
     single point ``{t}``, so these reduce exactly to the tightening bounds

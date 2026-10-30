@@ -453,7 +453,10 @@ def iter_resource_terms(block) -> dict[str, list[ResourceTerm]]:
     """
     terms: dict[str, list[ResourceTerm]] = {}
     seen: set[int] = set()
-    blocks = [block, *block.component_data_objects(pyo.Block, descend_into=True)]
+    blocks = [
+        block,
+        *block.component_data_objects(pyo.Block, descend_into=True, active=True),
+    ]
     for candidate in blocks:
         if id(candidate) in seen:
             continue

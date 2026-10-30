@@ -245,3 +245,29 @@ def test_renewable_export_supplies_electricity():
 
     assert term.coeff == -1.0
     assert term.var[0].ub == 0
+
+
+@pytest.mark.unit
+def test_deactivated_unit_contributes_no_terms():
+    """A deactivated unit's variables are unconstrained, so they must not balance."""
+    m = _plant()
+    m.plant.burner.deactivate()
+
+    terms = iter_resource_terms(m.plant)
+
+    assert "natural_gas" not in terms
+    assert _signs(terms["raw_water"]) == {"feed": 1.0}
+
+
+@pytest.mark.unit
+def test_registering_the_same_term_twice_raises():
+    """A repeated registration would count the variable twice in a balance."""
+    m = dummy_time_block(3)
+    m.unit = BareUnit()
+    m.unit.flow = pyo.Var(m.time_block.time_index)
+    m.unit.register_resource(m.unit.flow, resource="brine")
+
+    with pytest.raises(FlexConfigError, match="already registered") as excinfo:
+        m.unit.register_resource(m.unit.flow, resource="brine", coeff=2.0)
+
+    assert excinfo.value.field == "var"

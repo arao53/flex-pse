@@ -588,8 +588,9 @@ class OpsBlockData(UnitModelBlockData):
 
         Raises:
             FlexConfigError: If ``resource`` is empty, ``coeff`` is not a
-                number, ``offset`` is not a non-negative integer, or ``var``
-                is not indexed over this unit's time points.
+                number, ``offset`` is not a non-negative integer, ``var``
+                is not indexed over this unit's time points, or ``var`` is
+                already registered to ``resource`` with the same ``offset``.
         """
         if not resource:
             raise FlexConfigError(
@@ -617,6 +618,17 @@ class OpsBlockData(UnitModelBlockData):
                 f"register_resource requires {var.name!r} to be indexed over "
                 "this unit's time points. Pass a time-indexed Var, or a "
                 "pyo.Reference that slices out the time index.",
+                field="var",
+                value=var.name,
+            )
+        if any(
+            (rec.var, rec.resource, rec.offset) == (var, resource, offset)
+            for rec in self._io_registry.resources
+        ):
+            raise FlexConfigError(
+                f"{var.name!r} is already registered to resource {resource!r} "
+                f"with offset {offset}; a second term would count it twice. "
+                "Register it once with the combined coeff.",
                 field="var",
                 value=var.name,
             )

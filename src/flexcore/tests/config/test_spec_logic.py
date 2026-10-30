@@ -310,8 +310,12 @@ def test_resource_accepts_a_stock_and_quantities():
         ({"stock": True}, ("needs an initial level",)),
         ({"initial": 1.0}, ("a flow has no initial level",)),
         ({"lower": 5.0, "upper": 1.0}, ("lower (5.0) is above upper (1.0)",)),
+        (
+            {"stock": True, "initial": 20.0, "upper": 10.0},
+            ("initial (20.0) is outside",),
+        ),
     ],
-    ids=["stock_needs_initial", "flow_has_no_initial", "bad_bounds"],
+    ids=["stock_needs_initial", "flow_has_no_initial", "bad_bounds", "bad_initial"],
 )
 def test_resource_rejects_inconsistent_fields(fields, fragments):
     rejects(spec_dict(plant(), resource(**fields)), *fragments)

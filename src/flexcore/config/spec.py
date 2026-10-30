@@ -33,7 +33,7 @@ from flexcore.config.schema import (
     _StrictModel,
 )
 
-SCHEMA_VERSION = "0.1.1"
+SCHEMA_VERSION = "0.1.0"
 """str: the schema version this build writes and validates against."""
 
 KINDS: dict[str, tuple[str, bool]] = {
@@ -658,7 +658,7 @@ class ResourceElement(_StrictModel):
 
     @model_validator(mode="after")
     def _consistent(self) -> "ResourceElement":
-        """Check for a parent, initial only on a stock, and lower <= upper."""
+        """Check for a parent, initial only on a stock, and consistent bounds."""
         if "." not in self.name:
             raise ValueError(
                 f"resource {self.name!r}: name the balance under a plant or "
@@ -682,6 +682,14 @@ class ResourceElement(_StrictModel):
             raise ValueError(
                 f"resource {self.name!r}: lower ({self.lower}) is above upper "
                 f"({self.upper})."
+            )
+        if isinstance(self.initial, float) and (
+            (isinstance(self.lower, float) and self.initial < self.lower)
+            or (isinstance(self.upper, float) and self.initial > self.upper)
+        ):
+            raise ValueError(
+                f"resource {self.name!r}: initial ({self.initial}) is outside "
+                f"lower ({self.lower}) and upper ({self.upper})."
             )
         return self
 
