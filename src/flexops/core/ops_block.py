@@ -25,6 +25,7 @@ constraints; FlexParameterize drives this.
 import enum
 import numbers
 from collections.abc import Sequence
+from typing import ClassVar
 
 import pyomo.environ as pyo
 from idaes.core import UnitModelBlockData, declare_process_block_class
@@ -51,7 +52,9 @@ from flexops.core.registration import (
     PowerRecord,
     RelationRecord,
 )
+from flexops.core.resources import conserve_flow
 from flexops.core.time_block import TimeBlockData, find_time_block
+from flexops.logic.status import require_no_intercept, status_max_count
 from flexops.surrogates import Surrogate, surrogate_from_spec
 
 
@@ -210,6 +213,18 @@ class OpsBlockData(UnitModelBlockData):
     #: its own generic vocabulary here; a physical subclass renames any subset by
     #: passing ``naming_dict`` to the base ``build()``, which registers it.
     _component_names: dict[str, str] = {}
+
+    #: Whether a spec ``status`` element may target this unit; ``False`` for
+    #: units that manage their own status.
+    allows_status_element: ClassVar[bool] = True
+
+    #: Whether this unit closes its plant's power balance without registering an
+    #: edge, so an electricity utility beside it would over-constrain the plant.
+    closes_power_balance: ClassVar[bool] = False
+
+    #: Whether this unit can supply electrical power on site, by generating or
+    #: discharging, so something has to balance it.
+    supplies_power: ClassVar[bool] = False
 
     def create_stream_naming_convention(self, naming_dict: dict[str, str]) -> None:
         """Register this unit's role -> Pyomo component name mapping.
@@ -567,6 +582,38 @@ class OpsBlockData(UnitModelBlockData):
         )
 
     # -- stream state blocks + ports (property package) --------------------
+
+    def add_inlet_port(self, name=None, block=None, doc=None):
+        """Build an inlet port whose flow is conserved over arcs, and record its sign.
+
+        Args:
+            name: Name of the port; ``None`` takes the IDAES default.
+            block: Control volume or state block the port exposes.
+            doc: Port description.
+
+        Returns:
+            The new port.
+        """
+        port = super().add_inlet_port(name=name, block=block, doc=doc)
+        conserve_flow(port, block.params.get_flow_basis_var_name())
+        self._io_registry.port_coeffs[port.local_name] = -1.0
+        return port
+
+    def add_outlet_port(self, name=None, block=None, doc=None):
+        """Build an outlet port whose flow is conserved over arcs, and record its sign.
+
+        Args:
+            name: Name of the port; ``None`` takes the IDAES default.
+            block: Control volume or state block the port exposes.
+            doc: Port description.
+
+        Returns:
+            The new port.
+        """
+        port = super().add_outlet_port(name=name, block=block, doc=doc)
+        conserve_flow(port, block.params.get_flow_basis_var_name())
+        self._io_registry.port_coeffs[port.local_name] = 1.0
+        return port
 
     def add_stream_ports(
         self,
@@ -947,8 +994,9 @@ class OpsBlockData(UnitModelBlockData):
             auxiliary Vars).
 
         Raises:
-            FlexConfigError: If ``relation_name`` was never registered, or a
-                declared input variable is not found on the unit.
+            FlexConfigError: If ``relation_name`` was never registered, a
+                declared input variable is not found on the unit, or the unit
+                counts trains and ``surrogate`` has a constant term.
         """
         record = next(
             (r for r in self._io_registry.relations if r.name == relation_name), None
@@ -965,6 +1013,7 @@ class OpsBlockData(UnitModelBlockData):
             )
         for name in surrogate.input_variables:
             self.resolve_variable(name, field="input_variables")
+        require_no_intercept(self, relation_name, surrogate, status_max_count(self))
 
         (record.fitted if record.fitted is not None else record.constraint).deactivate()
         for component in record.components:
@@ -997,6 +1046,7 @@ class OpsBlockData(UnitModelBlockData):
 
         record.swap_count += 1
         record.spec = getattr(surrogate, "spec", None)
+        record.surrogate = surrogate
         fitted_name = (
             "fitted" if record.swap_count == 1 else f"fitted_{record.swap_count}"
         )
@@ -1529,12 +1579,14 @@ class OpsBlockData(UnitModelBlockData):
         resolved against ``flexops.unit_models``. Persisted construction
         options carry their units as data: a value written
         ``{"value": 0.5, "units": "kWh/m^3"}`` becomes a units-carrying Pyomo
-        expression, anything else passes through unchanged -- including a plain
-        string naming an enum member (``"detail": "polarization"``), which the
-        receiving ``ConfigValue``'s own domain then validates. Runtime-only
-        options that cannot be serialized (``property_package``,
-        ``costing_package``) are supplied by the caller through ``kwargs``,
-        which wins over the config on a key collision.
+        expression, as does each such value inside a mapping option
+        (``heating_values``); anything else passes through unchanged --
+        including a plain string naming an enum member
+        (``"detail": "polarization"``), which the receiving ``ConfigValue``'s
+        own domain then validates. Runtime-only options that cannot be
+        serialized (``property_package``, ``costing_package``) are supplied by
+        the caller through ``kwargs``, which wins over the config on a key
+        collision.
 
         Args:
             cfg: A ``UnitConfig``, or a mapping/path to validate into one.
@@ -1567,10 +1619,12 @@ class OpsBlockData(UnitModelBlockData):
                 field="unit_model_class",
                 value=cfg.unit_model_class,
             )
-        options = {
-            name: parse_quantity(value, strict=False)
-            for name, value in cfg.construction_options.items()
-        }
+        options = {}
+        for name, value in cfg.construction_options.items():
+            if isinstance(value, dict) and set(value) != {"value", "units"}:
+                # A mapping option (e.g. heating_values) holds quantities as values.
+                value = {k: parse_quantity(v, strict=False) for k, v in value.items()}
+            options[name] = parse_quantity(value, strict=False)
         if cfg.unit_commitment is not None:
             options["unit_commitment"] = cfg.unit_commitment
         return block_class(

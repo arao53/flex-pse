@@ -2,6 +2,7 @@
 
 from importlib.metadata import version as _dist_version
 
+from flexcore.config.schema import BalanceType
 from flexcore.nomenclature import PowerKind
 from flexops.core.build import build_model
 from flexops.core.emit import emit_model
@@ -10,13 +11,17 @@ from flexops.core.fixing import FixReport, FixViolation
 from flexops.core.network_block import NetworkBlock
 from flexops.core.plant_block import PlantBlock
 from flexops.core.registration import BoundaryKind
+from flexops.core.resources import Resource, resource_graph, validate_rtn
 from flexops.core.stages import apply_spec
+from flexops.core.task_block import Task
 from flexops.core.time_block import TimeBlock
 from flexops.costing import FlexCosting
 from flexops.properties.simple_aqueous import SimpleAqueousFlow
 from flexops.properties.simple_gas import SimpleGasFlow
+from flexops.properties.simple_utility import SimpleUtility
 from flexops.unit_models import (
     BatteryModel,
+    Boiler,
     CO2Electrolyzer,
     Combustor,
     ConstantEnergyIntensityModel,
@@ -39,12 +44,16 @@ from flexops.unit_models import (
 )
 from flexops.unit_models.electrolyzer import ElectrolyzerTechnology, ProductPhase
 from flexops.unit_models.mixer import MixerTemperatureRule
+from flexops.unit_models.powergeneration.boiler import BoilerType
 from flexops.unit_models.powergeneration.combustor import CombustorPowerRelation
 
 __version__ = _dist_version("flex-pse")
 
 __all__ = [
+    "BalanceType",
     "BatteryModel",
+    "Boiler",
+    "BoilerType",
     "BoundaryKind",
     "CO2Electrolyzer",
     "Combustor",
@@ -65,6 +74,10 @@ __all__ = [
     "MixerTemperatureRule",
     "NetworkBlock",
     "PlantBlock",
+    "Resource",
+    "Task",
+    "resource_graph",
+    "validate_rtn",
     "PowerKind",
     "Product",
     "ProductPhase",
@@ -74,6 +87,7 @@ __all__ = [
     "SISOBlock",
     "SimpleAqueousFlow",
     "SimpleGasFlow",
+    "SimpleUtility",
     "Splitter",
     "Tank",
     "TimeBlock",

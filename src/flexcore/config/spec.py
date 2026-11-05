@@ -21,7 +21,9 @@ from pydantic import (
 )
 
 from flexcore.config.schema import (
+    BalanceType,
     CostingConfig,
+    DegradationSpec,
     DRConfig,
     IOVariableSpec,
     PriceSpec,
@@ -32,7 +34,7 @@ from flexcore.config.schema import (
     _StrictModel,
 )
 
-SCHEMA_VERSION = "0.1.0"
+SCHEMA_VERSION = "0.1.1"
 """str: the schema version this build writes and validates against."""
 
 KINDS: dict[str, tuple[str, bool]] = {
@@ -43,6 +45,7 @@ KINDS: dict[str, tuple[str, bool]] = {
     "plant": ("topology", False),
     "set": ("topology", False),
     "unit": ("topology", False),
+    "degradation": ("degradation", False),
     "surrogate": ("surrogates", True),
     "ramp": ("ramping", False),
     "status": ("logic", False),
@@ -52,6 +55,7 @@ KINDS: dict[str, tuple[str, bool]] = {
     "startup_delay": ("logic", False),
     "conditional": ("logic", False),
     "parallel_group": ("logic", False),
+    "resource": ("resources", False),
     "dispatch": ("state", True),
     "fix": ("state", True),
     "unfix": ("state", True),
@@ -63,20 +67,14 @@ KINDS: dict[str, tuple[str, bool]] = {
 STAGE_ORDER = tuple(dict.fromkeys(stage for stage, _ in KINDS.values()))
 """Build stages in the order the registry lists them."""
 
+UTILITY_PROPERTY_CLASS = "SimpleUtility"
+"""str: the property class that makes a resource a utility; 'auto' never picks it."""
+
 AUTO = "auto"
 """Value of a unit's package field that means the model's only package."""
 
 PACKAGE_REF = "$package"
 """Key of a construction option ``{"$package": name}`` naming a package element."""
-
-SELF_STATUS_CLASSES = {"BatteryModel"}
-"""Unit classes that build their own status when unit_commitment.status is true.
-
-See ``BatteryModel.build`` in ``flexops/unit_models/storage/battery.py``.
-"""
-
-NO_STATUS_CLASSES = {"Tank", "BatteryModel"}
-"""Unit classes a status element may not target, since they manage their own."""
 
 
 def _like(model: type[_StrictModel], name: str):
@@ -193,12 +191,14 @@ class SetElement(_StrictModel):
 
 
 class Connection(_StrictModel):
-    """An arc from a port of the unit that owns it to another unit's port."""
+    """An arc from a unit's port to another unit's port, or its port's resource node."""
 
     port: str = Field(description="Port on the owning unit, e.g. 'outlet'.")
     to: str = Field(
-        description="Destination as '<unit element name>.<port path>'; may "
-        "contain '{i}' for an indexed connection."
+        description="Destination as '<unit element name>.<port path>', which may "
+        "contain '{i}' for an indexed connection, or the name of a stream resource "
+        "element. An inlet then takes from the resource and an outlet supplies it, "
+        "and many ports can share one."
     )
     name: str | None = Field(
         default=None,
@@ -436,6 +436,12 @@ class StatusElement(_StrictModel):
     max_output: float | Quantity = Field(
         description="Output when on, upper limit: a number or a quantity."
     )
+    max_count: int = Field(
+        default=1,
+        ge=1,
+        description="Number of identical trains this unit represents. Above 1, "
+        "status is an integer count and output limits apply per train.",
+    )
     name: str | None = _label_field()
 
 
@@ -552,6 +558,18 @@ class ParallelGroupElement(_StrictModel):
     name: str | None = _label_field()
 
 
+class DegradationElement(DegradationSpec):
+    """A priced degradation (wear) penalty on a unit's variables."""
+
+    kind: Literal["degradation"]
+    unit: str = _unit_field()
+    costing_package: str | None = Field(
+        default=AUTO,
+        description="Name of the costing element the wear cost is billed to. "
+        "'auto' means the model's only one; null leaves it unbilled.",
+    )
+
+
 class ExtensionElement(_StrictModel):
     """A user function that adds constraints or an objective to the model.
 
@@ -590,6 +608,22 @@ class ObjectiveElement(_StrictModel):
     )
 
 
+class ResourceElement(_StrictModel):
+    """A balance on one resource."""
+
+    kind: Literal["resource"]
+    name: str = Field(description="Dotted path of the resource's block.")
+    property_package: str = Field(
+        description="Name of the property_package element that sets the resource's "
+        "units. A SimpleUtility package makes it a utility, collected from what "
+        "units register; any other makes it a stream, reached by arcs."
+    )
+    balance: BalanceType = Field(
+        default=BalanceType.BALANCED,
+        description="How what enters relates to what leaves at each step.",
+    )
+
+
 Element = Annotated[
     TimeElement
     | PropertyPackageElement
@@ -607,6 +641,8 @@ Element = Annotated[
     | StartupDelayElement
     | ConditionalElement
     | ParallelGroupElement
+    | ResourceElement
+    | DegradationElement
     | DispatchElement
     | FixElement
     | UnfixElement
@@ -623,6 +659,7 @@ NAMED_KINDS = (
     "plant",
     "set",
     "unit",
+    "resource",
     "objective",
 )
 """Kinds whose element name must be unique."""
@@ -632,6 +669,7 @@ PARENT_KINDS: dict[str, tuple[str, ...]] = {
     "plant": ("network",),
     "set": ("plant", "network"),
     "unit": ("plant", "network"),
+    "resource": ("plant", "network"),
 }
 """Kinds of element each kind may sit under; the model root is always allowed."""
 
@@ -645,6 +683,7 @@ LOGIC_KINDS = (
     "startup_delay",
     "conditional",
     "parallel_group",
+    "degradation",
 )
 """Kinds that add operating logic to units they name."""
 
@@ -661,6 +700,8 @@ TARGET_FIELDS: dict[str, tuple[str, ...]] = {
     "startup_delay": ("unit",),
     "conditional": ("unit",),
     "parallel_group": ("units",),
+    "resource": ("name",),
+    "degradation": ("unit", "name"),
 }
 """Kind -> the fields that say what an element sets; two equal targets clash."""
 
@@ -800,13 +841,29 @@ class FlowsheetSpec(_StrictModel):
                 )
         return self
 
+    def auto_candidates(self, kind: str) -> list[str]:
+        """Return the names of the elements of ``kind`` that 'auto' may pick.
+
+        Args:
+            kind: The element kind.
+
+        Returns:
+            The element names, leaving out utility property packages.
+        """
+        return [
+            el.name
+            for el in self.of_kind(kind)
+            if getattr(el, "property_class", None) != UTILITY_PROPERTY_CLASS
+        ]
+
     def _check_package(self, label: str, choice: str | None, kind: str) -> None:
         """Raise unless ``choice`` ('auto', None or a name) resolves among ``kind``."""
         names = [el.name for el in self.of_kind(kind)]
-        if choice == AUTO and len(names) != 1:
+        candidates = self.auto_candidates(kind)
+        if choice == AUTO and len(candidates) != 1:
             raise ValueError(
                 f"{label}: {kind} 'auto' needs exactly one {kind} element, but "
-                f"there are {len(names)} ({names}). Name one explicitly"
+                f"there are {len(candidates)} ({candidates}). Name one explicitly"
                 f"{', or set it to null' if kind != 'objective' else ''}."
             )
         if choice not in (None, AUTO) and choice not in names:
@@ -816,10 +873,16 @@ class FlowsheetSpec(_StrictModel):
 
     @model_validator(mode="after")
     def _packages_resolve(self) -> "FlowsheetSpec":
-        """Require each unit's and the objective's packages to resolve."""
+        """Require every unit, degradation and objective package to resolve."""
         for el in self.of_kind("unit"):
             label = f"unit {el.name!r}"
             self._check_package(label, el.property_package, "property_package")
+            self._check_package(label, el.costing_package, "costing")
+        for el in self.of_kind("resource"):
+            label = f"resource {el.name!r}"
+            self._check_package(label, el.property_package, "property_package")
+        for el in self.of_kind("degradation"):
+            label = f"degradation {el.name!r} on {el.unit!r}"
             self._check_package(label, el.costing_package, "costing")
         for el in self.of_kind("objective"):
             if el.expression == "cost":
@@ -858,11 +921,21 @@ class FlowsheetSpec(_StrictModel):
     def _connections_are_consistent(self) -> "FlowsheetSpec":
         """Require resolvable destinations, valid placeholders and one arc per port."""
         units = {el.name: el for el in self.of_kind("unit")}
+        nodes = {el.name for el in self.of_kind("resource")}
         sources, destinations = set(), set()
         for unit in units.values():
             label = f"unit {unit.name!r}"
             for conn in unit.connections:
-                if find_unit(units, conn.to) is None:
+                node = conn.to in nodes
+                if node and (
+                    not conn.directed or conn.index or "{i}" in conn.port + conn.to
+                ):
+                    raise ValueError(
+                        f"{label}: connection to resource node {conn.to!r} must be "
+                        "directed, with no index or '{i}'. An indexed unit connects "
+                        "every member."
+                    )
+                if not node and find_unit(units, conn.to) is None:
                     raise ValueError(
                         f"{label}: connection to {conn.to!r} does not start with "
                         f"a unit element name. Units: {sorted(units)}."
@@ -874,13 +947,15 @@ class FlowsheetSpec(_StrictModel):
                         f"{conn.to!r} needs an index on the connection or the unit."
                     )
                 source = (unit.name, conn.port)
-                if source in sources or conn.to in destinations:
+                # a node connection also takes up the unit's own port
+                destination = f"{unit.name}.{conn.port}" if node else conn.to
+                if source in sources or destination in destinations:
                     raise ValueError(
-                        f"{label}: port {conn.port!r} or destination {conn.to!r} "
+                        f"{label}: port {conn.port!r} or destination {destination!r} "
                         "is already used by another connection; one arc per port."
                     )
                 sources.add(source)
-                destinations.add(conn.to)
+                destinations.add(destination)
         return self
 
     @model_validator(mode="after")
@@ -934,11 +1009,7 @@ class FlowsheetSpec(_StrictModel):
 
     @model_validator(mode="after")
     def _logic_is_consistent(self) -> "FlowsheetSpec":
-        """Require logic to name units, find a status, and never repeat."""
-        units = {el.name: el for el in self.of_kind("unit")}
-
-        def unit_of(member: str):
-            return units[member.partition("[")[0]]
+        """Require logic to name units and never repeat."""
 
         def refs(el) -> list[str]:
             if el.kind == "parallel_group":
@@ -954,36 +1025,6 @@ class FlowsheetSpec(_StrictModel):
                     members[ref] = self._members(ref)
                 except ValueError as exc:
                     raise ValueError(f"{el.kind}: {exc}") from None
-
-        with_status = set()
-        for el in self.of_kind("status"):
-            unit_class = units[el.unit.partition("[")[0]].unit_model_class
-            if unit_class in NO_STATUS_CLASSES:
-                raise ValueError(
-                    f"status on {el.unit!r}: {unit_class} manages its own status; "
-                    "set unit_commitment.status on the unit instead."
-                )
-            with_status.update(members[el.unit])
-
-        def has_status(member: str) -> bool:
-            unit = unit_of(member)
-            own = unit.unit_commitment is not None and unit.unit_commitment.status
-            return member in with_status or (
-                unit.unit_model_class in SELF_STATUS_CLASSES and own
-            )
-
-        needs_status = {"startup_shutdown", "startup_delay", "conditional"}
-        for el in logic:
-            if el.kind in needs_status or (
-                el.kind == "parallel_group" and el.order_status
-            ):
-                for ref in refs(el):
-                    missing = [m for m in members[ref] if not has_status(m)]
-                    if missing:
-                        raise ValueError(
-                            f"{el.kind} on {ref!r} needs a status element on "
-                            f"{missing[0]!r}."
-                        )
 
         seen = set()
         for el in logic:

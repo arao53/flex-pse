@@ -18,10 +18,14 @@ schedule flexible industrial energy operations.
    explanation/time_and_dynamics
    explanation/model_and_block_structure
    explanation/relaxation_policies
+   explanation/solve_strategies
    explanation/config_schema
    explanation/energy_nomenclature
+   explanation/resources
    explanation/reported_cost
    explanation/pass_through_and_bypass
+   explanation/degradation
+   explanation/boiler
    explanation/electrolyzer_model
 
 .. toctree::
